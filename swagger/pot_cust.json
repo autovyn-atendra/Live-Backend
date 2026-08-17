@@ -1,0 +1,462 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "pot_cust API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/pot_cust/savepotcust": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "formData": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/pot_cust/getsavedata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/pot_cust/getPOT_CUST_DTL": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/pot_cust/updatepotcust": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/pot_cust/updatespm": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/pot_cust/inventoryitem": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/pot_cust/deleterow": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/pot_cust/getsendwishemp": {
+      "post": {
+        "tags": [
+          "Pot Customer"
+        ],
+        "description": "Get employees based on occasion date (Birthday, Work Anniversary, Marriage Anniversary, or All) for sending wishes.",
+        "consumes": [
+          "application/json"
+        ],
+        "produces": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "date",
+                "occasion",
+                "loc_code"
+              ],
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "format": "date",
+                  "example": "2026-06-10",
+                  "description": "Date to check Birthday / Anniversary"
+                },
+                "occasion": {
+                  "type": "string",
+                  "enum": [
+                    "1",
+                    "2",
+                    "3",
+                    "4"
+                  ],
+                  "example": "1",
+                  "description": "1 = Birthday, 2 = Work Anniversary, 3 = Marriage Anniversary, 4 = All Occasions"
+                },
+                "loc_code": {
+                  "type": "string",
+                  "example": "1,2,3",
+                  "description": "Branch Location Code(s)"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Status": {
+                  "type": "string",
+                  "example": "true"
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Success"
+                },
+                "Result": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "empcode": {
+                        "type": "string",
+                        "example": "MA001"
+                      },
+                      "empname": {
+                        "type": "string",
+                        "example": "Manish Sharma"
+                      },
+                      "dob": {
+                        "type": "string",
+                        "example": "10/06/1998"
+                      },
+                      "dom": {
+                        "type": "string",
+                        "example": "15/02/2024"
+                      },
+                      "mobileno": {
+                        "type": "string",
+                        "example": "9876543210"
+                      },
+                      "location": {
+                        "type": "integer",
+                        "example": 1
+                      },
+                      "branch": {
+                        "type": "string",
+                        "example": "Jaipur"
+                      },
+                      "labeldivision": {
+                        "type": "string",
+                        "example": "Sales"
+                      },
+                      "currentjoindate": {
+                        "type": "string",
+                        "example": "10/06/2022"
+                      },
+                      "corporatemailid": {
+                        "type": "string",
+                        "example": "manish@company.com"
+                      },
+                      "employeedesignation": {
+                        "type": "string",
+                        "example": "Software Developer"
+                      },
+                      "division": {
+                        "type": "integer",
+                        "example": 2
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Status": {
+                  "type": "string",
+                  "example": "false"
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Error occurred"
+                },
+                "Error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pot_cust/sendwishonwhatsapp": {
+      "post": {
+        "tags": [
+          "Potential Customer"
+        ],
+        "description": "Send WhatsApp wishes to selected employees based on the selected occasion (Birthday, Work Anniversary, Marriage Anniversary).",
+        "consumes": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "empcodes",
+                "occasion"
+              ],
+              "properties": {
+                "empcodes": {
+                  "type": "string",
+                  "example": "MA001,MA002,MA003",
+                  "description": "Comma-separated Employee Codes"
+                },
+                "date": {
+                  "type": "string",
+                  "format": "date",
+                  "example": "2026-06-10",
+                  "description": "Selected date"
+                },
+                "occasion": {
+                  "type": "string",
+                  "enum": [
+                    "1",
+                    "2",
+                    "3"
+                  ],
+                  "example": "1",
+                  "description": "1 = Birthday, 2 = Work Anniversary, 3 = Marriage Anniversary"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Messages sent successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Status": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Messages sent successfully"
+                },
+                "Results": {
+                  "type": "string",
+                  "example": "ok"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error occurred while sending WhatsApp messages",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Status": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Error occurred while fetching data or sending messages"
+                },
+                "Results": {
+                  "type": "string",
+                  "nullable": true,
+                  "example": null
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

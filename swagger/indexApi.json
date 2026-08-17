@@ -1,0 +1,144 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "indexApi API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/upload-photo": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "customPath": {
+                  "example": "any"
+                },
+                "name": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/fetchAllpaths": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/delete-file": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "filePath",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/fetch": {
+      "get": {
+        "description": "",
+        "produces": [
+          null
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "filePath",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

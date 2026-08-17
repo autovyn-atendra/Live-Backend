@@ -1,0 +1,2747 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "MIS_Dashboards API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/MIS_Dashboards/SalesData2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "monthFrom": {
+                  "example": "any"
+                },
+                "monthTo": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/discountDashBoard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "monthFrom": {
+                  "example": "any"
+                },
+                "monthTo": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/discountDashBoard2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/WorkshopDashBoard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "monthFrom": {
+                  "example": "any"
+                },
+                "monthTo": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/modalwisedata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "modalgrp": {
+                  "example": "any"
+                },
+                "monthFrom": {
+                  "example": "any"
+                },
+                "monthTo": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/Modeldaywisemodels": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/modaldaywisedata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "date": {
+                  "example": "any"
+                },
+                "modalgrp": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/AttendanceDash": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/AttendanceDashAbst": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/abstmonthg": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/LateComersg": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/deprtemp": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "DIVISION": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/bankbal": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/cashBal": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/MissPunchDashboard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "monthFrom": {
+                  "example": "any"
+                },
+                "monthTo": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                },
+                "branch": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/nomobile/SalesData": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/SalesData": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/nomobile/WorkshopDashBoard2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/WorkshopDashBoard2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/nomobile/HrDashBoard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/HrDashBoard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/discountDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "discount": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/workshopDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/workshopLabourDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/bodyshopLoadDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/bodyshopLabourDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/bodyshopSparesDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/workshopSparesDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/workshopLabourdiscountDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/bodyshopLabourdiscountDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/workshopSpearsdiscountDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/bodyshopSpearsdiscountDashBoardseva": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/VasDashboard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "monthFrom": {
+                  "example": "any"
+                },
+                "monthTo": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                },
+                "branch": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/sdashboard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "example": "any"
+                },
+                "end": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/VasGlanceExport": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "Loc_Code",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/Stockandbooking": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "state": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/Predata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/newcarsalerepoort": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/excelimportmini": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "user": {
+                  "example": "any"
+                },
+                "branch": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/importformatmini": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Insurance_Import_TEMPLATE.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/newcarrtorepoort": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/newcarrtototalrepoort": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/liveStock": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Valid_From": {
+                  "example": "any"
+                },
+                "Valid_Upto": {
+                  "example": "any"
+                },
+                "State": {
+                  "example": "any"
+                },
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "firstDayOfCurrentMonth": {
+                  "example": "any"
+                },
+                "LastDayOfCurrentMonth": {
+                  "example": "any"
+                },
+                "Status": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/DeliveredStock": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Valid_From": {
+                  "example": "any"
+                },
+                "Valid_Upto": {
+                  "example": "any"
+                },
+                "State": {
+                  "example": "any"
+                },
+                "branch": {
+                  "example": "any"
+                },
+                "firstDayOfCurrentMonth": {
+                  "example": "any"
+                },
+                "LastDayOfCurrentMonth": {
+                  "example": "any"
+                },
+                "Status": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/modelGroups": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/savevahandetails": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "data2": {
+                  "example": "any"
+                },
+                "user": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/updatevahandetails": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "data2": {
+                  "example": "any"
+                },
+                "user": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/importformatdispatch": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Dispatch_Import_TEMPLATE.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/excelimportdispatch": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "user": {
+                  "example": "any"
+                },
+                "branch": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/SaveInternal": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Misc_Name": {
+                  "example": "any"
+                },
+                "Misc_Hod": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/UpdateInternal": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Misc_Name": {
+                  "example": "any"
+                },
+                "Misc_Hod": {
+                  "example": "any"
+                },
+                "misc_code": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/SaveParameter": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "amounts": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/UpdateParameter": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "validfrom": {
+                  "example": "any"
+                },
+                "validTo": {
+                  "example": "any"
+                },
+                "Branch": {
+                  "example": "any"
+                },
+                "amounts": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/findMasterdata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Branch": {
+                  "example": "any"
+                },
+                "validfrom": {
+                  "example": "any"
+                },
+                "validTo": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/workshopDashBoardProfit": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/bodyshopDashBoardProfit": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/stockview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                },
+                "Br_Segment": {
+                  "example": "any"
+                },
+                "Br_Location": {
+                  "example": "any"
+                },
+                "DATE_FROM": {
+                  "example": "any"
+                },
+                "DATE_TO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/workshop_profit_report": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Attendance_Report.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/bodyshop_profit_report": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Attendance_Report.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/Quantative_Dashboard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/findMasters": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/findMastersOnChange": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Channel": {
+                  "example": "any"
+                },
+                "Region": {
+                  "example": "any"
+                },
+                "State": {
+                  "example": "any"
+                },
+                "City": {
+                  "example": "any"
+                },
+                "Branch": {
+                  "example": "any"
+                },
+                "Modl_Grp": {
+                  "example": "any"
+                },
+                "Year": {
+                  "example": "any"
+                },
+                "multi_loc": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/sales_total_discount": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/sales_total_discount_detailed": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/FindMissingBillSeq": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Month": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/MIS_Dashboards/findDashboardsOnChange": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Channel": {
+                  "example": "any"
+                },
+                "Region": {
+                  "example": "any"
+                },
+                "Location": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

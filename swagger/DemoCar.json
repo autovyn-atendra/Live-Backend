@@ -1,0 +1,640 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "DemoCar API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/DemoCar/Demogatepassadd": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/DemoCar/Demogatepassdashboard": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/DemoCar/modelnamefetch": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/DemoCar/demogetpassview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/DemoCar/demogetpassapr1": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/DemoCar/approveby2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/DemoCar/rejectby2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/DemoCar/demogetpassinout": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "utd": {
+                  "example": "any"
+                },
+                "empcode": {
+                  "example": "any"
+                },
+                "TYPE": {
+                  "example": "any"
+                },
+                "VEH_REG": {
+                  "example": "any"
+                },
+                "LAST_KM": {
+                  "example": "any"
+                },
+                "KM": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/DemoCar/demogetpassguardview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "start_date": {
+                  "example": "any"
+                },
+                "end_date": {
+                  "example": "any"
+                },
+                "emp_code": {
+                  "example": "any"
+                },
+                "Status": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/DemoCar/uploadeddocumentOutImage": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "UTD": {
+                  "example": "any"
+                },
+                "name": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/DemoCar/uploadedCarImage": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/DemoCar/getEmpDetails": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "VEH_REG": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/DemoCar/GatepassReport": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "dateFrom": {
+                  "example": "any"
+                },
+                "dateto": {
+                  "example": "any"
+                },
+                "loc_code": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/DemoCar/GatepassRdieWiseReport": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "dateFrom": {
+                  "example": "any"
+                },
+                "dateto": {
+                  "example": "any"
+                },
+                "loc_code": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/DemoCar/uploadedCarImageDirect": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "veh_regno": {
+                  "example": "any"
+                },
+                "name": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/DemoCar/RejectEntry": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "utd": {
+                  "example": "any"
+                },
+                "Location": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/DemoCar/UpdateInOutView": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "dateFrom": {
+                  "example": "any"
+                },
+                "dateto": {
+                  "example": "any"
+                },
+                "loc_code": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/DemoCar/UpdateLastKm": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "utd": {
+                  "example": "any"
+                },
+                "TYPE": {
+                  "example": "any"
+                },
+                "LAST_KM": {
+                  "example": "any"
+                },
+                "VEH_REG": {
+                  "example": "any"
+                },
+                "KM": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

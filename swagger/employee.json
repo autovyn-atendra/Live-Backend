@@ -1,0 +1,1758 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "employee API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+  "/employee/All": {
+  "post": {
+    "tags": [
+      "Employee"
+    ],
+    "description": "Fetch active employee list and available locations. Optionally filter employees by branch/location.",
+    "consumes": [
+      "application/json"
+    ],
+    "parameters": [
+      {
+        "name": "compcode",
+        "in": "header",
+        "required": true,
+        "type": "string",
+        "description": "Company code"
+      },
+      {
+        "name": "name",
+        "in": "header",
+        "required": false,
+        "type": "string",
+        "description": "Logged-in user name"
+      },
+      {
+        "in": "body",
+        "name": "body",
+        "required": false,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "string",
+              "example": "1,2",
+              "description": "Optional branch/location HOD codes for filtering employees"
+            }
+          }
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "description": "Employee data fetched successfully",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "success": {
+              "type": "boolean",
+              "example": true
+            },
+            "data": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "example": "EMP0001"
+                  },
+                  "label": {
+                    "type": "string",
+                    "example": "EMP0001 John Doe"
+                  }
+                }
+              }
+            },
+            "Location": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "example": "1"
+                  },
+                  "label": {
+                    "type": "string",
+                    "example": "Jaipur"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "500": {
+        "description": "Server Error",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "success": {
+              "type": "boolean",
+              "example": false
+            },
+            "message": {
+              "type": "string",
+              "example": "No data found"
+            }
+          }
+        }
+      }
+    }
+  }
+},
+    "/employee/masters": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/employee/EmployeeMasterView": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/excelimport": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/excelimportmini": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/salaryImport": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Created_By": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/importformatsalary": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Salary_import_TEMPLATE.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/importformat": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Excel_import_TEMPLATE.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/importformatmini": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Excel_import_TEMPLATE.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/SmEmplMasters": {
+      "post": {
+        "description": "Get dropdown master data required for Mini Employee Form, including Employee List, Location List, and Employee Designation List.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "multi_loc12": {
+                  "type": "string",
+                  "example": "1,2,3",
+                  "description": "Location codes used for employee filtering"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Master data fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "EMPL": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "example": "Manish Sharma"
+                          },
+                          "value": {
+                            "type": "string",
+                            "example": "MA0001"
+                          }
+                        }
+                      }
+                    },
+                    "LOCATION": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "example": "Jaipur"
+                          },
+                          "value": {
+                            "type": "integer",
+                            "example": 1
+                          }
+                        }
+                      }
+                    },
+                    "EMPLOYEEDESIGNATION": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "example": "Software Developer"
+                          },
+                          "value": {
+                            "type": "string",
+                            "example": "Software Developer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/SmEmplData": {
+      "post": {
+        "description": "Get employee master data based on location",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "multi_loc12": {
+                  "type": "string",
+                  "example": "1,2,3"
+                },
+                "Created_by": {
+                  "type": "string",
+                  "example": "ma0019"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Employee data fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "data": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "SRNO": {
+                        "type": "integer"
+                      },
+                      "EMPCODE": {
+                        "type": "string"
+                      },
+                      "EMPFIRSTNAME": {
+                        "type": "string"
+                      },
+                      "EMPLASTNAME": {
+                        "type": "string"
+                      },
+                      "GENDER": {
+                        "type": "string"
+                      },
+                      "MOBILE_NO": {
+                        "type": "string"
+                      },
+                      "DOB": {
+                        "type": "string",
+                        "format": "date"
+                      },
+                      "EMPLOYEEDESIGNATION": {
+                        "type": "string"
+                      },
+                      "LOCATION": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/PaymentMode": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Driver_Code": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/EmpDisburshmentData": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Location": {
+                  "example": "any"
+                },
+                "month": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                },
+                "EMPCODE": {
+                  "example": "any"
+                },
+                "EMPLOYEETYPE": {
+                  "example": "any"
+                },
+                "UPIPayment": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/UpdateDisbushment": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "Month": {
+                  "example": "any"
+                },
+                "year": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/savemini": {
+      "post": {
+        "description": "Create a new employee using Mini Employee Form. Employee code is auto-generated based on branch/HR Region configuration.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "EmpMst": {
+                  "type": "object",
+                  "required": [
+                    "EMPFIRSTNAME",
+                    "LOCATION",
+                    "MOBILE_NO"
+                  ],
+                  "properties": {
+                    "EMPCODE": {
+                      "type": "string",
+                      "example": "MA0001"
+                    },
+                    "MSPIN": {
+                      "type": "string",
+                      "example": "MS12345"
+                    },
+                    "EMPFIRSTNAME": {
+                      "type": "string",
+                      "example": "Manish"
+                    },
+                    "EMPLASTNAME": {
+                      "type": "string",
+                      "example": "Sharma"
+                    },
+                    "CORPORATEMAILID": {
+                      "type": "string",
+                      "example": "manish@company.com"
+                    },
+                    "LOCATION": {
+                      "type": "string",
+                      "example": "1"
+                    },
+                    "EMPLOYEEDESIGNATION": {
+                      "type": "string",
+                      "example": "Software Developer"
+                    },
+                    "Export_Type": {
+                      "type": "integer",
+                      "example": 1
+                    },
+                    "ServerId": {
+                      "type": "integer",
+                      "example": 1
+                    },
+                    "MOBILE_NO": {
+                      "type": "string",
+                      "example": "9876543210"
+                    },
+                    "Reporting_1": {
+                      "type": "string",
+                      "example": "MA0010"
+                    },
+                    "Reporting_2": {
+                      "type": "string",
+                      "example": "MA0005"
+                    },
+                    "Reporting_3": {
+                      "type": "string",
+                      "example": "MA0001"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Employee created successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Date saved"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Validation or Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Employee already exists"
+                },
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "example": [
+                    "Employee already exists",
+                    "Employee Mobile Number already exists"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employee/AssetDetailsSave": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/UpdateAssets": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/mini/{id}": {
+      "post": {
+        "description": "Get employee details by SRNO",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "integer",
+            "description": "Employee SRNO"
+          },
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Logged-in User Name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Employee details fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "EmpMst": {
+                      "type": "object",
+                      "description": "Employee master record"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Employee not found",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "message": {
+                  "type": "string",
+                  "example": "Employee not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/updatemini/{id}": {
+      "post": {
+        "description": "Update employee details using Mini Employee Form and maintain history in EmployeeMaster_Hst table.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "integer",
+            "description": "Employee SRNO"
+          },
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Created_by": {
+                  "type": "string",
+                  "example": "ma0019"
+                },
+                "EmpMst": {
+                  "type": "object",
+                  "properties": {
+                    "SRNO": {
+                      "type": "integer",
+                      "example": 123
+                    },
+                    "EMPCODE": {
+                      "type": "string",
+                      "example": "MA0001"
+                    },
+                    "MSPIN": {
+                      "type": "string",
+                      "example": "MS12345"
+                    },
+                    "EMPFIRSTNAME": {
+                      "type": "string",
+                      "example": "Manish"
+                    },
+                    "EMPLASTNAME": {
+                      "type": "string",
+                      "example": "Sharma"
+                    },
+                    "CORPORATEMAILID": {
+                      "type": "string",
+                      "example": "manish@company.com"
+                    },
+                    "LOCATION": {
+                      "type": "string",
+                      "example": "1"
+                    },
+                    "EMPLOYEEDESIGNATION": {
+                      "type": "string",
+                      "example": "Software Developer"
+                    },
+                    "MOBILE_NO": {
+                      "type": "string",
+                      "example": "9876543210"
+                    },
+                    "Reporting_1": {
+                      "type": "string",
+                      "example": "MA0010"
+                    },
+                    "Reporting_2": {
+                      "type": "string",
+                      "example": "MA0005"
+                    },
+                    "Reporting_3": {
+                      "type": "string",
+                      "example": "MA0001"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Employee updated successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Date Updated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation Error / Update Failed",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "message": {
+                  "type": "string",
+                  "example": "An error occurred while creating user."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employee/update/{id}": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "formData": {
+                  "example": "any"
+                },
+                "User": {
+                  "example": "any"
+                },
+                "LASTMODI_BY": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          }
+        }
+      }
+    },
+    "/employee/AssetDetailsEmp/{id}": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/GetEmployeeLocation": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/GetEmployeeSave": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Formdata": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/SeparationSave": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Formdata": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/sendOtp": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/excelimportSep": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/BasicEmpdetails/{id}": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/BudgetPredata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/savemanpowerbudget": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branches": {
+                  "example": "any"
+                },
+                "departments": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/Vacant_postion": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/employee/attritionratio": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "DATEFROM": {
+                  "example": "any"
+                },
+                "DATETO": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/BankTransferSheet": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "example": "any"
+                },
+                "location": {
+                  "example": "any"
+                },
+                "SalMnth": {
+                  "example": "any"
+                },
+                "salyear": {
+                  "example": "any"
+                },
+                "PAYMENTMODES": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/employee/PfStructure": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "example": "any"
+                },
+                "location": {
+                  "example": "any"
+                },
+                "SalMnth": {
+                  "example": "any"
+                },
+                "salyear": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/employee/EmpMispuchReason": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/saveAttendanceTracking": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "EmpCode": {
+                  "example": "any"
+                },
+                "EmpName": {
+                  "example": "any"
+                },
+                "EMPLOYEEDESIGNATION": {
+                  "example": "any"
+                },
+                "DIVISION": {
+                  "example": "any"
+                },
+                "Attendance_Date": {
+                  "example": "any"
+                },
+                "EmpTime": {
+                  "example": "any"
+                },
+                "Mispunch_Reason": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/getAttendanceRecords": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/employee/{id}": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/employee/generateCode": {
+      "post": {
+        "description": "Generate a new employee code based on selected branch and HR Region configuration.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "branch"
+              ],
+              "properties": {
+                "branch": {
+                  "type": "string",
+                  "example": "1",
+                  "description": "Selected branch code. Only a single branch is allowed."
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Employee code generated successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "example": "MA0001"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Multiple branches selected",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "example": "Please select a single branch before generating code."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "example": "New Employee Sequence not defined, kindly contact Auto-VYN to set employee code auto generate sequence!"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

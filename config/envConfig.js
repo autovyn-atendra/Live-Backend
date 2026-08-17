@@ -1,0 +1,36 @@
+require("dotenv").config();
+
+const NODE_ENV = process.env.NODE_ENV || "development";
+const env = process.env;
+
+module.exports = {
+    SECRET_KEY: env.SECRET_KEY,
+    SANDBOX_API_KEY: env.SANDBOX_API_KEY,
+    SANDBOX_SECRET_KEY: env.SANDBOX_SECRET_KEY,
+    EICHERAPI_USERNAME: env.EICHERAPI_USERNAME,
+    EICHERAPI_PASSWORD: env.EICHERAPI_PASSWORD,
+    ENCRYPTION_KEY: env.ENCRYPTION_KEY,
+    ENCRYPTION_KEY_RTO: env.ENCRYPTION_KEY_RTO,
+
+    // Whatsapp api credentials
+    CI_WEBHOOK_SECRET: env.CI_WEBHOOK_SECRET,
+    WHATSAPP_API_USERID: env.WHATSAPP_API_USERID,
+    WHATSAPP_API_RPASSWORD: env.WHATSAPP_API_RPASSWORD,
+
+
+    // GST API Credentials VECVL
+    EMAIL_KEY: env.EMAIL_KEY,
+    PFX_PWD_GST: env.PFX_PWD_GST,
+    GST_ASP_ID: env.GST_ASP_ID,
+    GST_SELF: env.GST_SELF,
+
+    // Vendor API Credentials
+    VENDOR_API_KEY: env.VENDOR_API_KEY,
+    VENDOR_CLIENT_ID: env.VENDOR_CLIENT_ID,
+
+    PORT: env.PORT || 5000,
+    SMB_PATH: env.SMB_PATH,
+    NODE_ENV: NODE_ENV,
+    BASE_URL: env.BASE_URL,
+    FILE_UPLOAD_BASE_URL: NODE_ENV === "PROD" ? "http://localhost:5000" : env.FILE_UPLOAD_BASE_URL,
+};

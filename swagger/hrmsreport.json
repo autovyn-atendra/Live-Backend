@@ -1,0 +1,683 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "hrmsreport API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/hrmsreport/attendanceReport": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Attendance_Report.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "emptype",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "empcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "reporttype",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "user_location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/hrmsreport/OtDaysReport": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Over_Time_Sheet.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "emptype",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "empcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "reporttype",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "user_location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/hrmsreport/digitalgatepass": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"GatePass_Report.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "empcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "user_location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/hrmsreport/findMasters": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "multiloc": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/hrmsreport/MobileAttdenceReport": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"MobileAttdenceReport.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "empcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "user_location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/hrmsreport/SalaryReport": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"SalaryReport.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "empcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "user_location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/hrmsreport/SalaryReportWithStatus": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"SalaryReport.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "empcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "user_location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/hrmsreport/AssetEmpReport": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"EmployeeWiseAsset.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/hrmsreport/digitalgatepassdash": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "dateto": {
+                  "example": "any"
+                },
+                "dateFrom": {
+                  "example": "any"
+                },
+                "region": {
+                  "example": "any"
+                },
+                "location": {
+                  "example": "any"
+                },
+                "department": {
+                  "example": "any"
+                },
+                "empcode": {
+                  "example": "any"
+                },
+                "empcodeList": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/hrmsreport/PunchingReport": {
+      "get": {
+        "description": "",
+        "produces": [
+          "attachment; filename=\"Punching_Report.xlsx\""
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateto",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "department",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "empcode",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "user_location",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/hrmsreport/parfoma_report": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "compcode",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

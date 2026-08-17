@@ -1,0 +1,45 @@
+# Common log path
+LOG_FILE=/home/autovyn-erp/logs/cron.log
+
+# 1. De-Allot Chassis — 8:00 AM IST
+0 8 * * * flock -n /tmp/deallot.lock -c 'echo "==== $(date) Deallot ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/deallot >> $LOG_FILE 2>&1'
+
+# 2. Plan Date Reminder (Exec + Customer) — 8:00 AM IST
+0 8 * * * flock -n /tmp/plan-rem.lock -c 'echo "==== $(date) Plan Reminder ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/plan-date-reminder >> $LOG_FILE 2>&1'
+
+# 3. Plan Date Reminder (Approver) — 8:00 AM IST
+0 8 * * * flock -n /tmp/plan-app.lock -c 'echo "==== $(date) Plan Approver ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/plan-date-approver >> $LOG_FILE 2>&1'
+
+# 4. Auto Book — Every 30 minutes
+*/30 * * * * flock -n /tmp/auto-book.lock -c 'echo "==== $(date) Auto Book ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/auto-book >> $LOG_FILE 2>&1'
+
+# 5. Auto Close Gatepass — 12:05 AM IST
+5 0 * * * flock -n /tmp/auto-close.lock -c 'echo "==== $(date) Auto Close GP ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/auto-close-gp >> $LOG_FILE 2>&1'
+
+# 6. Leave Auto Reject — 8:15 AM IST
+15 8 * * * flock -n /tmp/leave-reject.lock -c 'echo "==== $(date) Leave Reject ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/leave-auto-reject >> $LOG_FILE 2>&1'
+
+# 7. Comp Off Laps — 7:45 PM IST
+45 19 * * * flock -n /tmp/comp-off.lock -c 'echo "==== $(date) Comp Off ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/comp-off-laps >> $LOG_FILE 2>&1'
+
+# 8. Carry Forward Leave — 8:30 AM IST
+30 8 * * * flock -n /tmp/carry-forward.lock -c 'echo "==== $(date) Carry Forward ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/carry-forward >> $LOG_FILE 2>&1'
+
+# 9. Self Loan Report — 10:00 AM IST
+0 10 * * * flock -n /tmp/self-loan.lock -c 'echo "==== $(date) Self Loan ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/self-loan >> $LOG_FILE 2>&1'
+
+# 10. Average Discount Report — 10:00 AM IST
+0 10 * * * flock -n /tmp/avg-discount.lock -c 'echo "==== $(date) Avg Discount ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/avg-discount >> $LOG_FILE 2>&1'
+
+# 11. IN/OUT Time Report — 7:00 PM IST
+0 19 * * * flock -n /tmp/inout.lock -c 'echo "==== $(date) InOut ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/inout-report >> $LOG_FILE 2>&1'
+
+# 12. Pending TRF IN Report — 11:00 PM IST
+0 23 * * * flock -n /tmp/trf.lock -c 'echo "==== $(date) Pending TRF ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/pending-trf >> $LOG_FILE 2>&1'
+
+# 13. Employee Duplicate Report — 12:00 PM IST
+0 12 * * * flock -n /tmp/emp-dup.lock -c 'echo "==== $(date) Emp Duplicate ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/emp-duplicate >> $LOG_FILE 2>&1'
+
+# 14. Employee Absent Report — 10:00 AM IST
+0 10 * * * flock -n /tmp/emp-absent.lock -c 'echo "==== $(date) Emp Absent ====" >> $LOG_FILE && /usr/bin/curl -s http://127.0.0.1:5000/scheduler/run/emp-absent >> $LOG_FILE 2>&1'
+

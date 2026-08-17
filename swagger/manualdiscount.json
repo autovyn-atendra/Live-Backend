@@ -1,0 +1,622 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "manualdiscount API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/manualdiscount/discountdashboard": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/discountdashboarddata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/viewDiscountReport": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/discountreportUserwise": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/discountreportBranchwise": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/findvarient": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/savediscountapproval": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/viewdiscountapproaldata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/approveby2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/rejectby2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/findone": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "branch": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/manualdiscount/reapproval": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Delv_Date": {
+                  "example": "any"
+                },
+                "Mob": {
+                  "example": "any"
+                },
+                "Pan_No": {
+                  "example": "any"
+                },
+                "Cust_Name": {
+                  "example": "any"
+                },
+                "Modl_Var": {
+                  "example": "any"
+                },
+                "Veh_Clr": {
+                  "example": "any"
+                },
+                "Loan": {
+                  "example": "any"
+                },
+                "MGA_Amt": {
+                  "example": "any"
+                },
+                "Insurance": {
+                  "example": "any"
+                },
+                "RTO_Chrg": {
+                  "example": "any"
+                },
+                "Loyalty_Card": {
+                  "example": "any"
+                },
+                "Car_Exch": {
+                  "example": "any"
+                },
+                "FastTeg": {
+                  "example": "any"
+                },
+                "SRM": {
+                  "example": "any"
+                },
+                "RM": {
+                  "example": "any"
+                },
+                "Corporate": {
+                  "example": "any"
+                },
+                "Exch": {
+                  "example": "any"
+                },
+                "Aprvl_Offer": {
+                  "example": "any"
+                },
+                "Dise_Amt": {
+                  "example": "any"
+                },
+                "Aprvl_By": {
+                  "example": "any"
+                },
+                "Status": {
+                  "example": "any"
+                },
+                "Remark": {
+                  "example": "any"
+                },
+                "Curr_Date": {
+                  "example": "any"
+                },
+                "location": {
+                  "example": "any"
+                },
+                "Approved_amt": {
+                  "example": "any"
+                },
+                "aprvl_by2": {
+                  "example": "any"
+                },
+                "dual_apr": {
+                  "example": "any"
+                },
+                "modl_group": {
+                  "example": "any"
+                },
+                "tran_id": {
+                  "example": "any"
+                },
+                "wa_link": {
+                  "example": "any"
+                },
+                "apr2_apr": {
+                  "example": "any"
+                },
+                "export_type": {
+                  "example": "any"
+                },
+                "remark_dse": {
+                  "example": "any"
+                },
+                "booking_id": {
+                  "example": "any"
+                },
+                "UTD": {
+                  "example": "any"
+                },
+                "isapp1": {
+                  "example": "any"
+                },
+                "is_gd": {
+                  "example": "any"
+                },
+                "CCP": {
+                  "example": "any"
+                },
+                "EW": {
+                  "example": "any"
+                },
+                "Fuel_Type": {
+                  "example": "any"
+                },
+                "Var_Cd": {
+                  "example": "any"
+                },
+                "waiting": {
+                  "example": "any"
+                },
+                "reapp_remark": {
+                  "example": "any"
+                },
+                "reapp_emp": {
+                  "example": "any"
+                },
+                "Appr_1_Code": {
+                  "example": "any"
+                },
+                "Appr_1_Stat": {
+                  "example": "any"
+                },
+                "Appr_1_Rem": {
+                  "example": "any"
+                },
+                "Appr_2_Code": {
+                  "example": "any"
+                },
+                "Appr_2_Stat": {
+                  "example": "any"
+                },
+                "Appr_2_Rem": {
+                  "example": "any"
+                },
+                "Appr_3_Code": {
+                  "example": "any"
+                },
+                "Appr_3_Stat": {
+                  "example": "any"
+                },
+                "Appr_3_Rem": {
+                  "example": "any"
+                },
+                "Fin_Appr": {
+                  "example": "any"
+                },
+                "Created_At": {
+                  "example": "any"
+                },
+                "Consumer": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/manualdiscount/updatediscountamountonly": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/viewgdapproaldata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/disc7": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/findgdfdidata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/reapperovalby2": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/manualdiscount/viewold": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": ""
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

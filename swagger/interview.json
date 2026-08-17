@@ -1,0 +1,2290 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "interview API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/interview/candreg": {
+      "post": {
+        "description": "Fetch master data required for Candidate Registration form including States, Designations, Locations, Sources, Cluster, and Channel dropdowns.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "Logged-in User Name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidate Registration master data fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "cities": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "states": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "example": "1"
+                      },
+                      "label": {
+                        "type": "string",
+                        "example": "Rajasthan"
+                      }
+                    }
+                  }
+                },
+                "desg": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "example": "Software Developer"
+                      },
+                      "label": {
+                        "type": "string",
+                        "example": "Software Developer"
+                      }
+                    }
+                  }
+                },
+                "location": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "example": "1"
+                      },
+                      "label": {
+                        "type": "string",
+                        "example": "Jaipur"
+                      }
+                    }
+                  }
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "example": "1"
+                      },
+                      "label": {
+                        "type": "string",
+                        "example": "Job Portal"
+                      }
+                    }
+                  }
+                },
+                "skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "religion": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "CLUSTER": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "example": "1"
+                      },
+                      "label": {
+                        "type": "string",
+                        "example": "North Cluster"
+                      }
+                    }
+                  }
+                },
+                "CHANNEL": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "example": "1"
+                      },
+                      "label": {
+                        "type": "string",
+                        "example": "Online"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database Error",
+            "schema": {
+              "type": "string",
+              "example": "Error connecting to the database."
+            }
+          }
+        }
+      }
+    },
+    "/interview/insertnewcandidate": {
+      "post": {
+        "tags": [
+          "Interview"
+        ],
+        "description": "Create a new candidate registration with personal details, education, experience, nominee information, and document uploads.",
+        "consumes": [
+          "multipart/form-data"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "NAME",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "MOB_NO",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "WHATSAPP_NO",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "EMAIL",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "AADHAR_NO",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "FATHERS_NAME",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "MOTHERS_NAME",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "GENDER",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ADDRESS",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "CITY",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "STATE",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "RELIGION",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "DOB",
+            "in": "formData",
+            "required": true,
+            "type": "string",
+            "format": "date"
+          },
+          {
+            "name": "DESIGNATION",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "SUITABLE_DESIGNATION",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "LOC_CODE",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "SOURCE_OF_REG",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "SUB_SOURCE",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "Emgy_No",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "Emgy_Mob_No",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "SKILLS",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "HIGH_QUAL",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "PASSING_PER",
+            "in": "formData",
+            "required": true,
+            "type": "number"
+          },
+          {
+            "name": "EXP_IN_YEAR",
+            "in": "formData",
+            "required": true,
+            "type": "number"
+          },
+          {
+            "name": "CURRENT_CTC",
+            "in": "formData",
+            "required": true,
+            "type": "number"
+          },
+          {
+            "name": "EXPECTED_CTC",
+            "in": "formData",
+            "type": "number"
+          },
+          {
+            "name": "DRIVE",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "CASTE",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "CATEGORY",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "CLUSTER",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "CHANNEL",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "EmpLang",
+            "in": "formData",
+            "type": "string",
+            "description": "JSON string array"
+          },
+          {
+            "name": "EmpExperience",
+            "in": "formData",
+            "type": "string",
+            "description": "JSON string array"
+          },
+          {
+            "name": "EmpEdu",
+            "in": "formData",
+            "type": "string",
+            "description": "JSON string array"
+          },
+          {
+            "name": "EmpNominee",
+            "in": "formData",
+            "type": "string",
+            "description": "JSON string array"
+          },
+          {
+            "name": "ppimg",
+            "in": "formData",
+            "type": "file",
+            "description": "Profile Image"
+          },
+          {
+            "name": "cv",
+            "in": "formData",
+            "type": "file",
+            "description": "Candidate CV"
+          },
+          {
+            "name": "adhar",
+            "in": "formData",
+            "type": "file",
+            "description": "Aadhar Card"
+          },
+          {
+            "name": "pancard",
+            "in": "formData",
+            "type": "file"
+          },
+          {
+            "name": "salslip",
+            "in": "formData",
+            "type": "file"
+          },
+          {
+            "name": "explett",
+            "in": "formData",
+            "type": "file"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidate registered successfully"
+          },
+          "409": {
+            "description": "Duplicate Mobile, Email, Aadhar or Emergency Mobile Number"
+          },
+          "500": {
+            "description": "Server Error"
+          }
+        }
+      }
+    },
+    "/interview/insertnewcandidatehr": {
+      "post": {
+        "description": "Create a new candidate entry in NEW_JOINING table. Validates mandatory fields and prevents duplicate Mobile Number or Email within the same location.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "NAME",
+                "MOB_NO",
+                "EMAIL",
+                "DESIGNATION",
+                "LOC_CODE"
+              ],
+              "properties": {
+                "NAME": {
+                  "type": "string",
+                  "example": "Rahul Sharma"
+                },
+                "MOB_NO": {
+                  "type": "string",
+                  "example": "9876543210"
+                },
+                "EMAIL": {
+                  "type": "string",
+                  "example": "rahul@gmail.com"
+                },
+                "DESIGNATION": {
+                  "type": "string",
+                  "example": "Software Developer"
+                },
+                "LOC_CODE": {
+                  "type": "string",
+                  "example": "1"
+                },
+                "SUITABLE_DESIGNATION": {
+                  "type": "string",
+                  "example": "Senior Software Developer"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidate inserted successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "kartik": {
+                  "type": "string",
+                  "example": "Record inserted successfully!"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing Required Fields",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "example": "One or more required fields are missing."
+                },
+                "missingFields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "example": [
+                    "NAME",
+                    "EMAIL"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate Mobile Number or Email Found",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "example": "Duplicate entry found."
+                },
+                "duplicateFields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "example": [
+                    "MOB_NO",
+                    "EMAIL"
+                  ]
+                },
+                "message": {
+                  "type": "string",
+                  "example": "Duplicate field(s): MOB_NO, EMAIL already used."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Message": {
+                  "type": "string",
+                  "example": "An error occurred while inserting the record."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/interview/interviewcanidates": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/rejectcanidates": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "check": {
+                  "example": "any"
+                },
+                "msg": {
+                  "example": "any"
+                },
+                "wp_number": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/shortlistcandidate": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/shortlistedcandi": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/getcandidata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/allemployee": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/update1interview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                },
+                "INTR1DATE": {
+                  "example": "any"
+                },
+                "INTR1BY": {
+                  "example": "any"
+                },
+                "INTR1TIME": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/update2interview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                },
+                "INTR2DATE": {
+                  "example": "any"
+                },
+                "INTR2BY": {
+                  "example": "any"
+                },
+                "INTR2TIME": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/update3interview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                },
+                "INTR3DATE": {
+                  "example": "any"
+                },
+                "INTR3BY": {
+                  "example": "any"
+                },
+                "INTR3TIME": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/update4interview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                },
+                "INTR4DATE": {
+                  "example": "any"
+                },
+                "INTR4BY": {
+                  "example": "any"
+                },
+                "INTR4TIME": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/Schedule1interview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/Schedule2interview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/Schedule3interview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/Schedule4interview": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/candidateresult": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "interviewData": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/empupdate": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "username": {
+                  "example": "any"
+                },
+                "formData": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/findMasters": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/gethrentry": {
+      "post": {
+        "description": "Fetch all HR Entry records from NEW_JOINING where ADDRESS is NULL. Location name is populated from Misc Master (Misc_Type = 85).",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "Logged-in User Name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HR Entry records fetched successfully",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tran_id": {
+                    "type": "integer",
+                    "example": 101
+                  },
+                  "candidate_name": {
+                    "type": "string",
+                    "example": "Rahul Sharma"
+                  },
+                  "mobile_no": {
+                    "type": "string",
+                    "example": "9876543210"
+                  },
+                  "email_id": {
+                    "type": "string",
+                    "example": "rahul@gmail.com"
+                  },
+                  "loc_code": {
+                    "type": "integer",
+                    "example": 1
+                  },
+                  "locationname": {
+                    "type": "string",
+                    "example": "Jaipur"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/updatenewcandidate": {
+      "post": {
+        "tags": [
+          "Interview"
+        ],
+        "description": "Update candidate registration details, education, experience, nominee information, and document uploads.",
+        "consumes": [
+          "multipart/form-data"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "TRAN_ID",
+            "in": "formData",
+            "required": true,
+            "type": "string",
+            "description": "Candidate Transaction ID"
+          },
+          {
+            "name": "NAME",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "MOB_NO",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "WHATSAPP_NO",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "EMAIL",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "AADHAR_NO",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "FATHERS_NAME",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "MOTHERS_NAME",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "GENDER",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ADDRESS",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "CITY",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "STATE",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "RELIGION",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "DOB",
+            "in": "formData",
+            "required": true,
+            "type": "string",
+            "format": "date"
+          },
+          {
+            "name": "DESIGNATION",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "SUITABLE_DESIGNATION",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "LOC_CODE",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "SOURCE_OF_REG",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "SUB_SOURCE",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "Emgy_No",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "Emgy_Mob_No",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "SKILLS",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "HIGH_QUAL",
+            "in": "formData",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "PASSING_PER",
+            "in": "formData",
+            "required": true,
+            "type": "number"
+          },
+          {
+            "name": "EXP_IN_YEAR",
+            "in": "formData",
+            "required": true,
+            "type": "number"
+          },
+          {
+            "name": "CURRENT_CTC",
+            "in": "formData",
+            "required": true,
+            "type": "number"
+          },
+          {
+            "name": "EXPECTED_CTC",
+            "in": "formData",
+            "type": "number"
+          },
+          {
+            "name": "DRIVE",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "CASTE",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "CATEGORY",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "CLUSTER",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "CHANNEL",
+            "in": "formData",
+            "type": "string"
+          },
+          {
+            "name": "EmpLang",
+            "in": "formData",
+            "type": "string",
+            "description": "JSON string array of language details"
+          },
+          {
+            "name": "EmpExperience",
+            "in": "formData",
+            "type": "string",
+            "description": "JSON string array of experience details"
+          },
+          {
+            "name": "EmpEdu",
+            "in": "formData",
+            "type": "string",
+            "description": "JSON string array of education details"
+          },
+          {
+            "name": "EmpNominee",
+            "in": "formData",
+            "type": "string",
+            "description": "JSON string array of nominee details"
+          },
+          {
+            "name": "ppimg",
+            "in": "formData",
+            "type": "file",
+            "description": "Profile Image"
+          },
+          {
+            "name": "cv",
+            "in": "formData",
+            "type": "file",
+            "description": "Candidate CV"
+          },
+          {
+            "name": "adhar",
+            "in": "formData",
+            "type": "file",
+            "description": "Aadhar Card"
+          },
+          {
+            "name": "pancard",
+            "in": "formData",
+            "type": "file",
+            "description": "PAN Card"
+          },
+          {
+            "name": "salslip",
+            "in": "formData",
+            "type": "file",
+            "description": "Salary Slip"
+          },
+          {
+            "name": "explett",
+            "in": "formData",
+            "type": "file",
+            "description": "Experience Letter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidate updated successfully"
+          },
+          "409": {
+            "description": "Duplicate Mobile Number, Email, Aadhar Number or Emergency Mobile Number found"
+          },
+          "404": {
+            "description": "String or binary data would be truncated"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/sendwhatsapp": {
+      "post": {
+        "description": "Send WhatsApp interview registration messages to one or more candidates and create/update APPROVER_LINK records for Recruitment Process.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "tran_id"
+              ],
+              "properties": {
+                "tran_id": {
+                  "type": "string",
+                  "example": "101,102,103",
+                  "description": "Comma-separated Candidate Transaction IDs"
+                },
+                "empcode": {
+                  "type": "string",
+                  "example": "MA0019",
+                  "description": "HR Employee Code sending the WhatsApp message"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "WhatsApp messages queued successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Status": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Messages sent successfully"
+                },
+                "Results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "tran_id": {
+                        "type": "integer",
+                        "example": 101
+                      },
+                      "status": {
+                        "type": "string",
+                        "example": "Success"
+                      },
+                      "message": {
+                        "type": "string",
+                        "example": "Message sent"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error occurred while processing candidates or sending messages",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Status": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Error occurred while fetching data or sending messages"
+                },
+                "Results": {
+                  "type": "null",
+                  "example": null
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/interview/getonedata": {
+      "post": {
+        "description": "Fetch candidate details from NEW_JOINING table using TRAN_ID.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "TRAN_ID"
+              ],
+              "properties": {
+                "TRAN_ID": {
+                  "type": "integer",
+                  "example": 101,
+                  "description": "Candidate Transaction ID"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidate details fetched successfully",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "NAME": {
+                    "type": "string",
+                    "example": "Rahul Sharma"
+                  },
+                  "LOC_CODE": {
+                    "type": "integer",
+                    "example": 1
+                  },
+                  "DESIGNATION": {
+                    "type": "string",
+                    "example": "Software Developer"
+                  },
+                  "MOB_NO": {
+                    "type": "string",
+                    "example": "9876543210"
+                  },
+                  "EMAIL": {
+                    "type": "string",
+                    "example": "rahul@gmail.com"
+                  },
+                  "ADDRESS": {
+                    "type": "string",
+                    "example": "Jaipur, Rajasthan"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/hrformupdate": {
+      "post": {
+        "description": "Update candidate HR form details in NEW_JOINING table. Validates TRAN_ID and prevents duplicate Mobile Number or Email within the same location.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "TRAN_ID"
+              ],
+              "properties": {
+                "TRAN_ID": {
+                  "type": "integer",
+                  "example": 101,
+                  "description": "Candidate Transaction ID"
+                },
+                "NAME": {
+                  "type": "string",
+                  "example": "Rahul Sharma"
+                },
+                "MOB_NO": {
+                  "type": "string",
+                  "example": "9876543210"
+                },
+                "EMAIL": {
+                  "type": "string",
+                  "example": "rahul@gmail.com"
+                },
+                "DESIGNATION": {
+                  "type": "string",
+                  "example": "Software Developer"
+                },
+                "LOC_CODE": {
+                  "type": "string",
+                  "example": "1"
+                },
+                "SUITABLE_DESIGNATION": {
+                  "type": "string",
+                  "example": "Senior Software Developer"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidate record updated successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "example": "Data updated successfully!"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TRAN_ID Missing",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "example": "TRAN_ID is required."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Record Not Found",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "example": "Record with the specified TRAN_ID not found."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate Mobile Number or Email",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "example": "Mobile number or email is already used by another candidate."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "example": "An error occurred while updating record."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/interview/finallyselectedbyhr": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                },
+                "HR_REASON": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/finallyrejectedbyhr": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                },
+                "HR_REASON": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/createempmaster": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                },
+                "CURRENTJOINDATE": {
+                  "example": "any"
+                },
+                "Sal_Region": {
+                  "example": "any"
+                },
+                "DIVISION": {
+                  "example": "any"
+                },
+                "EMPLOYEEDESIGNATION": {
+                  "example": "any"
+                },
+                "LOCATION": {
+                  "example": "any"
+                },
+                "EMPCODE": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/removefromempmaster": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "TRAN_ID": {
+                  "example": "any"
+                },
+                "empcode": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/getmaxemployeeno": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/interview/getExistingMobData": {
+      "post": {
+        "description": "Fetch candidate details from NEW_JOINING table based on Mobile Number.",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "Logged-in User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "mobile"
+              ],
+              "properties": {
+                "mobile": {
+                  "type": "string",
+                  "example": "9876543210",
+                  "description": "Candidate Mobile Number"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidate details fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "data": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "TRAN_ID": {
+                        "type": "integer",
+                        "example": 101
+                      },
+                      "NAME": {
+                        "type": "string",
+                        "example": "Rahul Sharma"
+                      },
+                      "EMAIL": {
+                        "type": "string",
+                        "example": "rahul@gmail.com"
+                      },
+                      "MOB_NO": {
+                        "type": "string",
+                        "example": "9876543210"
+                      },
+                      "LOC_CODE1": {
+                        "type": "string",
+                        "example": "Jaipur"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "example": "SERVER_ERROR"
+                },
+                "message": {
+                  "type": "string",
+                  "example": "Database connection error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/interview/PrintHeader": {
+  "post": {
+    "tags": [
+      "Interview"
+    ],
+    "description": "Fetch company, branch, and logo details required for printing interview-related documents.",
+    "consumes": [
+      "application/json"
+    ],
+    "parameters": [
+      {
+        "name": "compcode",
+        "in": "header",
+        "required": true,
+        "type": "string",
+        "description": "Company Code"
+      },
+      {
+        "name": "name",
+        "in": "header",
+        "required": false,
+        "type": "string",
+        "description": "User Name"
+      },
+      {
+        "name": "body",
+        "in": "body",
+        "required": true,
+        "schema": {
+          "type": "object",
+          "required": [
+            "multi_loc"
+          ],
+          "properties": {
+            "multi_loc": {
+              "type": "string",
+              "example": "1",
+              "description": "Location/Branch Code(s)"
+            }
+          }
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "description": "Print header data fetched successfully",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "company": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "Comp_Code": {
+                    "type": "string",
+                    "example": "1"
+                  },
+                  "Godw_Code": {
+                    "type": "integer",
+                    "example": 1
+                  },
+                  "Godw_Name": {
+                    "type": "string",
+                    "example": "Jaipur Branch"
+                  },
+                  "Comp_Name": {
+                    "type": "string",
+                    "example": "Autovyn India Pvt Ltd"
+                  },
+                  "spl_rem": {
+                    "type": "string"
+                  },
+                  "Right_Head1": {
+                    "type": "string"
+                  },
+                  "Godw_Add1": {
+                    "type": "string"
+                  },
+                  "Godw_Add2": {
+                    "type": "string"
+                  },
+                  "Godw_Add3": {
+                    "type": "string"
+                  },
+                  "PAN_No": {
+                    "type": "string"
+                  },
+                  "GST_No": {
+                    "type": "string"
+                  },
+                  "Comp_Logo": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "BranchDatalogo": {
+              "type": "string",
+              "example": "https://erp.autovyn.com/backend/fetch?filePath=company_logo.png"
+            },
+            "MarutilogoImg": {
+              "type": "string",
+              "example": "https://erp.autovyn.com/backend/fetch?filePath=maruti_logo.png"
+            }
+          }
+        }
+      },
+      "500": {
+        "description": "Multi_Loc missing or Internal Server Error",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "Message": {
+              "type": "string",
+              "example": "Multi_Loc is required"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

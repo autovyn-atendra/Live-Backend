@@ -1,0 +1,746 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "template API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/template/insertData": {
+      "post": {
+        "tags": [
+          "Template"
+        ],
+        "description": "Create a new document template with template name, keywords, content, and header visibility settings.",
+        "consumes": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "Logged-in user name"
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "Created_by",
+                "Template"
+              ],
+              "properties": {
+                "Created_by": {
+                  "type": "string",
+                  "example": "Admin User"
+                },
+                "Template": {
+                  "type": "object",
+                  "required": [
+                    "TEMPLATE_NAME",
+                    "CONTENT"
+                  ],
+                  "properties": {
+                    "TEMPLATE_NAME": {
+                      "type": "string",
+                      "example": "Appointment Letter"
+                    },
+                    "KEYWORDS": {
+                      "type": "string",
+                      "example": "appointment, joining, employee"
+                    },
+                    "CONTENT": {
+                      "type": "string",
+                      "example": "<p>Dear {{EMPNAME}}, Welcome to the organization.</p>"
+                    },
+                    "SHOW_HEADER": {
+                      "type": "integer",
+                      "example": 1,
+                      "description": "1 = Show Header, 0 = Hide Header"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template saved successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Data saved"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "message": {
+                  "type": "string",
+                  "example": "An error occurred while creating Employee jasj."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/template/FindTemplate": {
+      "post": {
+        "tags": [
+          "Template"
+        ],
+        "description": "Fetch all available templates with template number and template name.",
+        "consumes": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "User Name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template list fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "Template": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": "integer",
+                            "description": "Template Number",
+                            "example": 1
+                          },
+                          "label": {
+                            "type": "string",
+                            "description": "Template Name",
+                            "example": "Appointment Letter"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "message": {
+                  "type": "string",
+                  "example": "Error fetching templates"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/template/updateData": {
+      "post": {
+        "tags": [
+          "Template"
+        ],
+        "description": "Update an existing template's content and header display setting using Template Number.",
+        "consumes": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "TemplateId",
+                "Created_by",
+                "Template"
+              ],
+              "properties": {
+                "TemplateId": {
+                  "type": "integer",
+                  "description": "Template Number (TEMPLATE_NO)",
+                  "example": 1
+                },
+                "Created_by": {
+                  "type": "string",
+                  "description": "User who updated the template",
+                  "example": "Admin"
+                },
+                "Template": {
+                  "type": "object",
+                  "required": [
+                    "CONTENT"
+                  ],
+                  "properties": {
+                    "CONTENT": {
+                      "type": "string",
+                      "description": "Updated template HTML/Text content",
+                      "example": "<html><body><h1>Appointment Letter</h1></body></html>"
+                    },
+                    "SHOW_HEADER": {
+                      "type": "integer",
+                      "description": "Display header flag (0 = No, 1 = Yes)",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template updated successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "Message": {
+                  "type": "string",
+                  "example": "Data updated successfully"
+                },
+                "updatedRecord": {
+                  "type": "object",
+                  "description": "Updated template record"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "message": {
+                  "type": "string",
+                  "example": "\"CONTENT\" is required"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template Not Found",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "message": {
+                  "type": "string",
+                  "example": "Record not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": false
+                },
+                "message": {
+                  "type": "string",
+                  "example": "An error occurred while updating the record."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/template/empdata": {
+      "post": {
+        "tags": [
+          "Template"
+        ],
+        "description": "Fetch employee master and salary structure details for template generation based on employee code.",
+        "consumes": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "empcode"
+              ],
+              "properties": {
+                "empcode": {
+                  "type": "string",
+                  "example": "0003",
+                  "description": "Employee Code"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Employee data fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "data": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "SESSION": {
+                        "type": "string",
+                        "example": "2026/27"
+                      },
+                      "EMPNAME": {
+                        "type": "string",
+                        "example": "John Doe"
+                      },
+                      "EMPADDRESSP": {
+                        "type": "string",
+                        "example": "Permanent Address"
+                      },
+                      "EMPPAN": {
+                        "type": "string",
+                        "example": "ABCDE1234F"
+                      },
+                      "EMPDOB": {
+                        "type": "string",
+                        "example": "1995-05-15"
+                      },
+                      "EMPGENDER": {
+                        "type": "string",
+                        "example": "Male"
+                      },
+                      "EMPFATHERNAME": {
+                        "type": "string",
+                        "example": "Robert Doe"
+                      },
+                      "PROBATION_": {
+                        "type": "string",
+                        "example": "6"
+                      },
+                      "EMPEMAIL": {
+                        "type": "string",
+                        "example": "john.doe@company.com"
+                      },
+                      "EMPMONTHLYCTC": {
+                        "type": "number",
+                        "example": 50000
+                      },
+                      "EMPANNUALCTC": {
+                        "type": "number",
+                        "example": 600000
+                      },
+                      "EMPBRANCH": {
+                        "type": "string",
+                        "example": "Jaipur"
+                      },
+                      "EMPADDRESSC": {
+                        "type": "string",
+                        "example": "Current Address"
+                      },
+                      "EMPDESIGNATION": {
+                        "type": "string",
+                        "example": "Software Engineer"
+                      },
+                      "EMPDEPARTMENT": {
+                        "type": "string",
+                        "example": "IT"
+                      },
+                      "EMPLOCATION": {
+                        "type": "string",
+                        "example": "Head Office"
+                      },
+                      "COMPANY_NAME_EMP": {
+                        "type": "string",
+                        "example": "Autovyn India Pvt Ltd"
+                      },
+                      "EMPCODE": {
+                        "type": "string",
+                        "example": "0003"
+                      },
+                      "EMPMOB": {
+                        "type": "string",
+                        "example": "9876543210"
+                      },
+                      "EMPJOINDATE": {
+                        "type": "string",
+                        "example": "2024-01-15"
+                      },
+                      "EMPLASTDATE": {
+                        "type": "string",
+                        "example": ""
+                      },
+                      "Basic_": {
+                        "type": "number",
+                        "example": 25000
+                      },
+                      "HRA_": {
+                        "type": "number",
+                        "example": 10000
+                      },
+                      "DA_": {
+                        "type": "number",
+                        "example": 5000
+                      },
+                      "Medical_": {
+                        "type": "number",
+                        "example": 1250
+                      },
+                      "Uniform_": {
+                        "type": "number",
+                        "example": 500
+                      },
+                      "Washing_": {
+                        "type": "number",
+                        "example": 250
+                      },
+                      "Gross_Salary_": {
+                        "type": "number",
+                        "example": 42000
+                      },
+                      "Conveyance_": {
+                        "type": "number",
+                        "example": 1600
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/template/FindTemplateContent": {
+      "post": {
+        "tags": [
+          "Template"
+        ],
+        "description": "Fetch template content and employee details based on employee code and template number.",
+        "consumes": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "SRNO",
+                "value"
+              ],
+              "properties": {
+                "SRNO": {
+                  "type": "string",
+                  "description": "Employee Code"
+                },
+                "value": {
+                  "type": "string",
+                  "description": "Template Number (TEMPLATE_NO)"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template content fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "Template": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": "string",
+                            "description": "Template Number"
+                          },
+                          "Label": {
+                            "type": "string",
+                            "description": "Template Name"
+                          },
+                          "CONTENT": {
+                            "type": "string",
+                            "description": "Template Content"
+                          },
+                          "KEYWORDS": {
+                            "type": "string",
+                            "description": "Template Keywords"
+                          },
+                          "SHOW_HEADER": {
+                            "type": "integer",
+                            "description": "Show Header Flag"
+                          }
+                        }
+                      }
+                    },
+                    "EMPL": {
+                      "type": "array",
+                      "description": "Employee Master Details"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request parameters"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/template/confirmationMSZ": {
+  "post": {
+    "tags": [
+      "Template"
+    ],
+    "description": "Generate employee letter confirmation record, create PDF/approval links, save confirmation details, and send the letter on WhatsApp to the employee.",
+    "consumes": [
+      "application/json"
+    ],
+    "parameters": [
+      {
+        "name": "compcode",
+        "in": "header",
+        "required": true,
+        "type": "string",
+        "description": "Company code"
+      },
+      {
+        "name": "name",
+        "in": "header",
+        "required": true,
+        "type": "string",
+        "description": "Logged-in user name"
+      },
+      {
+        "name": "body",
+        "in": "body",
+        "required": true,
+        "schema": {
+          "type": "object",
+          "required": [
+            "SRNO",
+            "TEMPLATE_NAME",
+            "CONTENT",
+            "pdf"
+          ],
+          "properties": {
+            "SRNO": {
+              "type": "string",
+              "example": "MA0003",
+              "description": "Employee Code"
+            },
+            "TEMPLATE_NAME": {
+              "type": "string",
+              "example": "Appointment Letter",
+              "description": "Letter Template Name"
+            },
+            "CONTENT": {
+              "type": "string",
+              "example": "<p>Dear Employee, Welcome to the organization.</p>",
+              "description": "Generated letter content"
+            },
+            "pdf": {
+              "type": "string",
+              "example": "msil/ENQ/pdfFile/3b9d4f7e-2c4e-4f7f-a3ab-123456789abc.pdf",
+              "description": "Uploaded PDF file path returned from /quotation/uploadeddocument"
+            }
+          }
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "description": "Letter confirmation created and WhatsApp message sent successfully",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "Status": {
+              "type": "boolean",
+              "example": true
+            },
+            "Message": {
+              "type": "string",
+              "example": "Success"
+            },
+            "Result": {
+              "type": "string",
+              "example": "done"
+            }
+          }
+        }
+      },
+      "500": {
+        "description": "Internal Server Error",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "Status": {
+              "type": "boolean",
+              "example": false
+            },
+            "Message": {
+              "type": "string",
+              "example": "Error occurred"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

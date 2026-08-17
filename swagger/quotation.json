@@ -1,0 +1,1352 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "quotation API",
+    "version": "1.0.0",
+    "description": ""
+  },
+  "host": "localhost:5000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "securityDefinitions": {
+    "bearerAuth": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Enter your token with the prefix 'Bearer '"
+    }
+  },
+  "paths": {
+    "/quotation/insert": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "quotation_date": {
+                  "example": "any"
+                },
+                "enquiry_no": {
+                  "example": "any"
+                },
+                "date": {
+                  "example": "any"
+                },
+                "party_name": {
+                  "example": "any"
+                },
+                "address": {
+                  "example": "any"
+                },
+                "whatsApp_no": {
+                  "example": "any"
+                },
+                "email": {
+                  "example": "any"
+                },
+                "dse": {
+                  "example": "any"
+                },
+                "tl": {
+                  "example": "any"
+                },
+                "remark": {
+                  "example": "any"
+                },
+                "model": {
+                  "example": "any"
+                },
+                "variant": {
+                  "example": "any"
+                },
+                "color": {
+                  "example": "any"
+                },
+                "quantity": {
+                  "example": "any"
+                },
+                "rate": {
+                  "example": "any"
+                },
+                "consumer_offer": {
+                  "example": "any"
+                },
+                "corporate_offer": {
+                  "example": "any"
+                },
+                "exchange_offer": {
+                  "example": "any"
+                },
+                "additional_offer": {
+                  "example": "any"
+                },
+                "insurance_amount": {
+                  "example": "any"
+                },
+                "rto_amount": {
+                  "example": "any"
+                },
+                "mga": {
+                  "example": "any"
+                },
+                "ew": {
+                  "example": "any"
+                },
+                "ccp": {
+                  "example": "any"
+                },
+                "fastag": {
+                  "example": "any"
+                },
+                "Auto_card": {
+                  "example": "any"
+                },
+                "other_charges": {
+                  "example": "any"
+                },
+                "total_price": {
+                  "example": "any"
+                },
+                "loc_code": {
+                  "example": "any"
+                },
+                "create_by": {
+                  "example": "any"
+                },
+                "pdf": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/getInsertedData": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "loc_code": {
+                  "example": "any"
+                },
+                "dateFrom": {
+                  "example": "any"
+                },
+                "dateTo": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/findMasters": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/update": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "quotation_date": {
+                  "example": "any"
+                },
+                "enquiry_no": {
+                  "example": "any"
+                },
+                "date": {
+                  "example": "any"
+                },
+                "party_name": {
+                  "example": "any"
+                },
+                "address": {
+                  "example": "any"
+                },
+                "whatsApp_no": {
+                  "example": "any"
+                },
+                "email": {
+                  "example": "any"
+                },
+                "dse": {
+                  "example": "any"
+                },
+                "tl": {
+                  "example": "any"
+                },
+                "remark": {
+                  "example": "any"
+                },
+                "model": {
+                  "example": "any"
+                },
+                "variant": {
+                  "example": "any"
+                },
+                "color": {
+                  "example": "any"
+                },
+                "quantity": {
+                  "example": "any"
+                },
+                "rate": {
+                  "example": "any"
+                },
+                "consumer_offer": {
+                  "example": "any"
+                },
+                "corporate_offer": {
+                  "example": "any"
+                },
+                "exchange_offer": {
+                  "example": "any"
+                },
+                "additional_offer": {
+                  "example": "any"
+                },
+                "insurance_amount": {
+                  "example": "any"
+                },
+                "rto_amount": {
+                  "example": "any"
+                },
+                "mga": {
+                  "example": "any"
+                },
+                "ew": {
+                  "example": "any"
+                },
+                "ccp": {
+                  "example": "any"
+                },
+                "fastag": {
+                  "example": "any"
+                },
+                "Auto_card": {
+                  "example": "any"
+                },
+                "other_charges": {
+                  "example": "any"
+                },
+                "total_price": {
+                  "example": "any"
+                },
+                "loc_code": {
+                  "example": "any"
+                },
+                "create_by": {
+                  "example": "any"
+                },
+                "pdf": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/sendEmail": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "multi_loc": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/findMaxquotation": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/quotation/varient": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "ModelGroup": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/sendwhatsapp": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/uploadeddocument": {
+      "post": {
+        "tags": [
+          "Quotation"
+        ],
+        "description": "Upload a generated PDF document (such as Offer Letter, Appointment Letter, Quotation, etc.) and return the stored file path.",
+        "consumes": [
+          "multipart/form-data"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "Logged-in user name"
+          },
+          {
+            "name": "pdfFile",
+            "in": "formData",
+            "required": true,
+            "type": "file",
+            "description": "PDF document to upload"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF uploaded successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "pdfPath": {
+                  "type": "string",
+                  "example": "companycode/ENQ/pdfFile/550e8400-e29b-41d4-a716-446655440000.pdf"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No documents uploaded",
+            "schema": {
+              "type": "string",
+              "example": "No documents uploaded"
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "string",
+              "example": "Internal Server Error"
+            }
+          }
+        }
+      }
+    },
+    "/quotation/insertenquiry": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "formdata1": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/viewenquiryrowdata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "loc_code": {
+                  "example": "any"
+                },
+                "tran_id": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/quotation/updateenquiry": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "formdata1": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/updatefollowups": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "rowdata": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/modelGrpvarmobile": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/databyenqno": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Enq_No": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/quotation/maxenquiryno": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/quotation/enquiryreport": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "loc_code": {
+                  "example": "any"
+                },
+                "dateFrom": {
+                  "example": "any"
+                },
+                "dateTo": {
+                  "example": "any"
+                },
+                "status": {
+                  "example": "any"
+                },
+                "dse": {
+                  "example": "any"
+                },
+                "Enq_Src": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/enquiryreport1": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "loc_code": {
+                  "example": "any"
+                },
+                "dateFrom": {
+                  "example": "any"
+                },
+                "dateTo": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/alotchasno": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                },
+                "Alot_chas": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/dealotchasno": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tran_id": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/maxcodeforadd": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/adddropdata": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "newEntry": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/excelimport": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/costOffersPrice": {
+      "post": {
+        "description": "Get cost offer price based on model, variant, add-on and customer type",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "modl_grp": {
+                  "example": "SUV"
+                },
+                "modl_var": {
+                  "example": "CRETA SX"
+                },
+                "Add_On": {
+                  "example": 1
+                },
+                "Sub_Add_On": {
+                  "example": 0
+                },
+                "customer_type": {
+                  "example": "Individual"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Compcode is required"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/costOffers": {
+      "post": {
+        "description": "Get Cost Offer Types by HOD Code",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "costOffersValue": {
+                  "example": 1
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Compcode is required"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/dropdown": {
+      "post": {
+        "description": "Get dropdown master data for quotation module",
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "Login_Empcode": {
+                  "example": "EMP001"
+                },
+                "loc_code": {
+                  "example": "1,2,3"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "example": true
+                },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "financer": {
+                      "type": "array"
+                    },
+                    "pymt_mode": {
+                      "type": "array"
+                    },
+                    "state": {
+                      "type": "array"
+                    },
+                    "district": {
+                      "type": "array"
+                    },
+                    "model_group": {
+                      "type": "array"
+                    },
+                    "Teh_Code": {
+                      "type": "array"
+                    },
+                    "dse": {
+                      "type": "array"
+                    },
+                    "source": {
+                      "type": "array"
+                    },
+                    "cust_occ": {
+                      "type": "array"
+                    },
+                    "color": {
+                      "type": "array"
+                    },
+                    "Reasons": {
+                      "type": "array"
+                    },
+                    "CostTypes": {
+                      "type": "array"
+                    },
+                    "Activity": {
+                      "type": "array"
+                    },
+                    "costAndOfferModlGrp": {
+                      "type": "array"
+                    },
+                    "TlData": {
+                      "type": "array"
+                    },
+                    "Rto_Insurance_Name": {
+                      "type": "array"
+                    },
+                    "FinanciarType": {
+                      "type": "array"
+                    },
+                    "Discount_Masters": {
+                      "type": "array"
+                    },
+                    "FinanceMaster": {
+                      "type": "array"
+                    },
+                    "DSE": {
+                      "type": "array"
+                    },
+                    "TL": {
+                      "type": "array"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/quotation/getMarutiLogoAndCompLogo": {
+      "post": {
+        "tags": [
+          "Quotation"
+        ],
+        "description": "Fetch Maruti Logo and Company Logo URLs from COMP_KEYDATA.",
+        "consumes": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "compcode",
+            "in": "header",
+            "required": true,
+            "type": "string",
+            "description": "Company Code"
+          },
+          {
+            "name": "name",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "description": "User Name"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": false,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "multi_loc": {
+                  "type": "string",
+                  "example": "1",
+                  "description": "Branch/Location Code"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Logos fetched successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "complogo": {
+                  "type": "string",
+                  "example": "https://erp.autovyn.com/backend/fetch?filePath=company_logo.png"
+                },
+                "MarutilogoImg": {
+                  "type": "string",
+                  "example": "https://erp.autovyn.com/backend/fetch?filePath=maruti_logo.png"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Company code is required",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "example": "Company code is required"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Logos not found",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "example": "Logos not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "example": "An error occurred while fetching logos"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}
