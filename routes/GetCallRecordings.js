@@ -3,6 +3,47 @@
 const { dbname } = require("../utils/dbconfig");
 const { QueryTypes } = require("sequelize");
 const { getCallStatus, getCallRecording } = require("./callmati");
+const { SendWhatsAppMessgae } = require("./user");
+const jwt = require("jsonwebtoken");
+
+const SECRET_KEY = process.env.SECRET_KEY || "autovyn_secret_key";
+
+const generateAppointmentToken = (utd, vehicleNo, compcode) => {
+  try {
+    return jwt.sign(
+      {
+        utd: utd ? Number(utd) : null,
+        vehicleNo: vehicleNo ? String(vehicleNo).trim() : "",
+        compcode: compcode ? String(compcode).trim() : "",
+        type: "APPOINTMENT_PUBLIC_ACCESS",
+      },
+      SECRET_KEY,
+      { expiresIn: "30d" }
+    );
+  } catch (_) {
+    const payload = JSON.stringify({ utd, vehicleNo, compcode, t: Date.now() });
+    return Buffer.from(payload).toString("base64url");
+  }
+};
+
+const verifyAppointmentToken = (token) => {
+  if (!token) return null;
+  try {
+    const decoded = jwt.verify(token, SECRET_KEY);
+    return decoded;
+  } catch (_) {
+    try {
+      const decoded = jwt.decode(token);
+      if (decoded) return decoded;
+    } catch (_) { }
+    try {
+      const str = Buffer.from(token, "base64url").toString("utf8");
+      return JSON.parse(str);
+    } catch (_) {
+      return null;
+    }
+  }
+};
 
 // ════════════════════════════════════════════════════════════════
 // Helpers
@@ -30,6 +71,13 @@ const normalizeCallStatus = (rawStatus) => {
   if (s === "no_answer") return "NO_ANSWER";
   if (s === "busy") return "BUSY";
   return "INITIATED";
+};
+
+const resolveCompCode = (rawCode) => {
+  if (rawCode !== undefined && rawCode !== null && String(rawCode).trim().length > 0) {
+    return String(rawCode).trim();
+  }
+  return "";
 };
 
 // ── Timestamp → readable time ─────────────────────────────────
@@ -198,7 +246,7 @@ const parseFromTranscript = (transcriptJson, variables) => {
 const parseCallbackFromSummary = (summaryText, variables, transcript) => {
   if (!summaryText && !transcript && !variables) return null;
   const text = `${summaryText || ""} ${typeof transcript === 'string' ? transcript : JSON.stringify(transcript || [])}`;
-  
+
   let callbackDate = null;
   let callbackTime = null;
 
@@ -238,7 +286,7 @@ const parseCallbackFromSummary = (summaryText, variables, transcript) => {
   }
   return null;
 };
-
+ 
 // ════════════════════════════════════════════════════════════════
 // Dynamic column checker & auto-migration for Srv_Reminder_Tbl
 // ════════════════════════════════════════════════════════════════
@@ -257,19 +305,19 @@ const checkReminderCols = async (sequelize) => {
       try {
         await sequelize.query(`ALTER TABLE dbo.Srv_Reminder_Tbl ADD Daily_Attempt_Count INT DEFAULT 0 NULL`);
         names.add("daily_attempt_count");
-      } catch (_) {}
+      } catch (_) { }
     }
     if (!names.has("ai_call_id")) {
       try {
         await sequelize.query(`ALTER TABLE dbo.Srv_Reminder_Tbl ADD AI_Call_ID NVARCHAR(100) NULL`);
         names.add("ai_call_id");
-      } catch (_) {}
+      } catch (_) { }
     }
     if (!names.has("reminder_channel")) {
       try {
         await sequelize.query(`ALTER TABLE dbo.Srv_Reminder_Tbl ADD Reminder_Channel NVARCHAR(50) NULL`);
         names.add("reminder_channel");
-      } catch (_) {}
+      } catch (_) { }
     }
 
     return {
@@ -291,7 +339,7 @@ const checkReminderCols = async (sequelize) => {
 // ════════════════════════════════════════════════════════════════
 // ✅ UPDATED: updateReminderFromCallDetails
 // ════════════════════════════════════════════════════════════════
-const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, cvUTD) => {
+const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, cvUTD, req) => {
   const status = callData?.status || null;
   const insights = callData?.insights || [];
   const transcript = callData?.transcript || [];
@@ -485,6 +533,83 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
     }
   }
 
+  // ── AUTOMATED WHATSAPP NOTIFICATION ON CALL COMPLETION ─────────────────────
+  if (["COMPLETED", "ANSWERED"].includes(newCallStatus) && reminderUTD) {
+    try {
+      const custRows = await sequelize.query(
+        `SELECT TOP 1
+           c.Cust_Name,
+           c.Cust_Mob,
+           COALESCE(m.Veh_Reg_No, c.Veh_Reg_No, '') AS Veh_Reg_No,
+           c.Model_Name,
+           r.Appointment_Date,
+           r.Appointment_Time,
+           r.Loc_Code,
+           COALESCE(mm1.Misc_Name, mm2.Misc_Name, '') AS Loc_Name,
+           COALESCE(mm1.Misc_Add1, mm2.Misc_Add1, '') AS Loc_Address
+         FROM dbo.Srv_Reminder_Tbl r
+         INNER JOIN dbo.Srv_Cust_Vehi_Tbl c ON c.UTD = r.Cust_Vehi_UTD
+         LEFT  JOIN dbo.Srv_Mst_Vehi_Tbl  m ON m.UTD = c.Tran_id
+         LEFT  JOIN dbo.Misc_Mst mm1
+                ON mm1.Misc_Type = 85
+               AND LTRIM(RTRIM(CAST(mm1.Misc_Code AS NVARCHAR(50)))) = LTRIM(RTRIM(CAST(r.Loc_Code AS NVARCHAR(50))))
+         LEFT  JOIN dbo.Misc_Mst mm2
+                ON mm2.Misc_Type = 85
+               AND LTRIM(RTRIM(CAST(mm2.Misc_Code AS NVARCHAR(50)))) = LTRIM(RTRIM(CAST(c.Loc_Code AS NVARCHAR(50))))
+         WHERE r.UTD = :reminderUTD`,
+        { replacements: { reminderUTD: Number(reminderUTD) }, type: QueryTypes.SELECT }
+      );
+
+      if (custRows && custRows.length > 0 && custRows[0].Cust_Mob) {
+        const cd = custRows[0];
+        const compCodeStr = resolveCompCode(
+          req?.headers?.compcode ||
+          req?.body?.compcode ||
+          req?.query?.compcode ||
+          callData?.compcode ||
+          callData?.variables?.compcode ||
+          cd?.Comp_Code
+        );
+        const targetMob = String(cd.Cust_Mob).trim();
+        const param1_CustName = cd.Cust_Name?.trim() || "Customer";
+        const param2_Vehicle = cd.Veh_Reg_No?.trim() || cd.Model_Name?.trim() || "Vehicle";
+        const param3_Center = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
+        const param4_Address = cd.Loc_Address?.trim() || "Service Center Address";
+        const apptToken = generateAppointmentToken(reminderUTD, cd.Veh_Reg_No, compCodeStr);
+        const param5_Link = `https://erp.autovyn.com/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${reminderUTD}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
+        const param6_Company = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
+
+        console.log(`[WHATSAPP] 📲 Sending Post-Call WhatsApp Reminder to ${targetMob} (compCode: ${compCodeStr}) for UTD ${reminderUTD}`);
+        console.log("p5", param5_Link);
+
+        const waRes = await SendWhatsAppMessgae(
+          compCodeStr,
+          targetMob,
+          "service_appointment_reminder",
+          [
+            // 1. Customer Name {{1}}
+            { type: "text", text: param1_CustName },
+            // 2. Vehicle / Model Variant {{2}}
+            { type: "text", text: param2_Vehicle },
+            // 3. Service Center Name {{3}}
+            { type: "text", text: param3_Center },
+            // 4. Service Center Address {{4}}
+            { type: "text", text: param4_Address },
+            // 5. View Appointment Details Link {{5}}
+            { type: "text", text: param5_Link },
+            // 6. Regards / Company Name {{6}}
+            { type: "text", text: param6_Company },
+          ],
+          "DONTCHECK"
+        );
+
+        console.log(`[WHATSAPP] ✅ Post-Call WhatsApp message result:`, waRes);
+      }
+    } catch (waErr) {
+      console.error(`[WHATSAPP] ⚠️ Post-Call WhatsApp message error:`, waErr?.message || waErr);
+    }
+  }
+
   return { newCallStatus, summaryText, parsed, callbackInfo, appointmentSet: !!(parsed?.appointmentDate) };
 };
 
@@ -672,7 +797,7 @@ exports.callWebhook = async (req, res) => {
 
     let updateResult = null;
     if (reminderUTD) {
-      updateResult = await updateReminderFromCallDetails(sequelize, reminderUTD, callData, cvUTD);
+      updateResult = await updateReminderFromCallDetails(sequelize, reminderUTD, callData, cvUTD, req);
     }
 
     return res.status(200).json({
@@ -788,21 +913,20 @@ exports.getVehicleCallHistory = async (req, res) => {
 
     const mobList = Array.from(allMobs);
     const utdList = Array.from(custVehiUTDs);
+    const finalMobList = Array.from(allMobs);
 
-    console.log(`[HISTORY] Vehicle: ${vehicleInfo?.Veh_Reg_No || vehicle_number} | Mobs: ${mobList.join(",")} | Cust_Vehi_UTDs: ${utdList.join(",")}`);
+    console.log(`[HISTORY] Vehicle: ${vehicleInfo?.Veh_Reg_No || vehicle_number} | Mobs: ${finalMobList.join(",")} | Cust_Vehi_UTDs: ${utdList.join(",")}`);
 
     // ============================================================
-    // Collect Call IDs from ALL 3 SOURCES
+    // Collect Call IDs strictly from Srv_Reminder_Tbl for this vehicle's reminders
+    // (Prevents fetching unrelated calls made to the same mobile number for other purposes)
     // ============================================================
     const allCallIdMap = new Map(); // call_id -> { call_id, channel }
-
-    // Source 1: Srv_Reminder_Tbl directly by vehicle_number OR Cust_Vehi_UTD
-    let remVehicleRows = [];
     const cleanVehicleCode = vehicle_number ? String(vehicle_number).trim().toUpperCase().replace(/[\s\-]/g, "") : "";
 
-    if (cleanVehicleCode || utdList.length > 0) {
+    if (cleanVehicleCode || utdList.length > 0 || finalMobList.length > 0) {
       try {
-        remVehicleRows = await sequelize.query(
+        const remVehicleRows = await sequelize.query(
           `SELECT DISTINCT r.AI_Call_ID, r.Reminder_Channel, r.UTD AS Reminder_UTD, c.Cust_Mob
            FROM dbo.Srv_Reminder_Tbl r
            LEFT JOIN dbo.Srv_Cust_Vehi_Tbl c ON c.UTD = r.Cust_Vehi_UTD
@@ -813,75 +937,26 @@ exports.getVehicleCallHistory = async (req, res) => {
                OR REPLACE(REPLACE(UPPER(LTRIM(RTRIM(ISNULL(c.Veh_Reg_No,'')))), ' ', ''), '-', '') = :cleanVehicleCode
              ) )
              ${utdList.length > 0 ? "OR r.Cust_Vehi_UTD IN (:utdList)" : ""}
+             ${finalMobList.length > 0 && !cleanVehicleCode && utdList.length === 0 ? "OR LTRIM(RTRIM(c.Cust_Mob)) IN (:finalMobList)" : ""}
            )
              AND r.AI_Call_ID IS NOT NULL AND LTRIM(RTRIM(r.AI_Call_ID)) != ''
            ORDER BY r.UTD DESC`,
-          { replacements: { cleanVehicleCode, utdList }, type: QueryTypes.SELECT }
+          { replacements: { cleanVehicleCode, utdList, finalMobList }, type: QueryTypes.SELECT }
         );
+
+        for (const r of (remVehicleRows || [])) {
+          const cId = String(r.AI_Call_ID).trim();
+          if (cId && !allCallIdMap.has(cId)) {
+            allCallIdMap.set(cId, { call_id: cId, channel: r.Reminder_Channel || "AI_CALL" });
+          }
+        }
       } catch (remErr) {
-        console.warn("[GetCallRecordings] Srv_Reminder_Tbl query failed (column missing fallback):", remErr?.message);
-      }
-    }
-
-    for (const r of (remVehicleRows || [])) {
-      const cId = String(r.AI_Call_ID).trim();
-      if (cId && !allCallIdMap.has(cId)) {
-        allCallIdMap.set(cId, { call_id: cId, channel: r.Reminder_Channel || "AI_CALL" });
-      }
-      if (r.Cust_Mob && !allMobs.has(String(r.Cust_Mob).trim())) {
-        allMobs.add(String(r.Cust_Mob).trim());
-      }
-    }
-
-    // Source 2: call_Id_dtl (All call types for all collected mobile numbers)
-    const finalMobList = Array.from(allMobs);
-    if (finalMobList.length > 0) {
-      try {
-        const logCallRows = await sequelize.query(
-          `SELECT call_id, call_type, id
-           FROM dbo.call_Id_dtl
-           WHERE LTRIM(RTRIM(mob_no)) IN (:finalMobList)
-             AND call_id IS NOT NULL AND LTRIM(RTRIM(call_id)) != ''
-           ORDER BY id DESC`,
-          { replacements: { finalMobList }, type: QueryTypes.SELECT }
-        );
-
-        for (const r of (logCallRows || [])) {
-          const cId = String(r.call_id).trim();
-          if (cId && !allCallIdMap.has(cId)) {
-            allCallIdMap.set(cId, { call_id: cId, channel: r.call_type || "AI_CALL" });
-          }
-        }
-      } catch (src2Err) {
-        console.warn(`[HISTORY] call_Id_dtl table not found or query failed (skipping): ${src2Err?.message}`);
-      }
-    }
-
-    // Source 3: call_webhook_dtl (All webhooks logged for all collected mobile numbers)
-    if (finalMobList.length > 0) {
-      try {
-        const whCallRows = await sequelize.query(
-          `SELECT call_id, id
-           FROM dbo.call_webhook_dtl
-           WHERE LTRIM(RTRIM(phone_number)) IN (:finalMobList)
-             AND call_id IS NOT NULL AND LTRIM(RTRIM(call_id)) != ''
-           ORDER BY id DESC`,
-          { replacements: { finalMobList }, type: QueryTypes.SELECT }
-        );
-
-        for (const r of (whCallRows || [])) {
-          const cId = String(r.call_id).trim();
-          if (cId && !allCallIdMap.has(cId)) {
-            allCallIdMap.set(cId, { call_id: cId, channel: "AI_CALL" });
-          }
-        }
-      } catch (src3Err) {
-        console.warn(`[HISTORY] call_webhook_dtl table not found or query failed (skipping): ${src3Err?.message}`);
+        console.warn("[GetCallRecordings] Srv_Reminder_Tbl query warning:", remErr?.message);
       }
     }
 
     const uniqueCallList = Array.from(allCallIdMap.values());
-    console.log(`[HISTORY] Total unique call_ids found across all tables: ${uniqueCallList.length}`);
+    console.log(`[HISTORY] Total unique call_ids found in Srv_Reminder_Tbl for this vehicle: ${uniqueCallList.length}`);
 
     if (uniqueCallList.length === 0) {
       return res.status(200).json({
@@ -1149,3 +1224,261 @@ exports.GetCallRecordings = async (req, res) => {
 };
 
 exports.getCallStatus = getCallStatus;
+
+// ════════════════════════════════════════════════════════════════
+// getAppointmentFormDetails — Customer Link Click Se Vehicle & Appointment Details Load
+// ════════════════════════════════════════════════════════════════
+exports.getAppointmentFormDetails = async (req, res) => {
+  let sequelize;
+  try {
+    const tokenParam = req.query.token || req.body.token || null;
+    const tokenData = verifyAppointmentToken(tokenParam);
+
+    const utd = req.query.utd || req.body.utd || tokenData?.utd || null;
+    const vehicleNo = req.query.vehicleNo || req.body.vehicleNo || tokenData?.vehicleNo || null;
+    const targetComp = resolveCompCode(req.headers.compcode || req.query.compcode || req.body.compcode || tokenData?.compcode);
+
+    if (!utd && !vehicleNo && !tokenParam) {
+      return res.status(400).json({ Status: false, Message: "utd, vehicleNo, ya token required hai" });
+    }
+
+    sequelize = await dbname(req, targetComp);
+
+    const cleanVehicle = vehicleNo ? String(vehicleNo).trim().toUpperCase().replace(/[\s\-]/g, "") : "";
+
+    const rows = await sequelize.query(
+      `SELECT TOP 1
+         r.UTD AS utd,
+         r.Cust_Vehi_UTD,
+         r.Appointment_Date,
+         r.Appointment_Time,
+         r.Appointment_Status,
+         r.Appointment_Remark,
+         r.Customer_Response,
+         r.Reminder_Status,
+         r.Loc_Code,
+         r.AI_Call_ID,
+         c.Cust_Name,
+         c.Cust_Mob,
+         COALESCE(m.Veh_Reg_No, c.Veh_Reg_No, '') AS Veh_Reg_No,
+         c.Model_Name,
+         COALESCE(mm1.Misc_Name, mm2.Misc_Name, '') AS Loc_Name,
+         COALESCE(mm1.Misc_Add1, mm2.Misc_Add1, '') AS Loc_Address
+       FROM dbo.Srv_Reminder_Tbl r
+       INNER JOIN dbo.Srv_Cust_Vehi_Tbl c ON c.UTD = r.Cust_Vehi_UTD
+       LEFT  JOIN dbo.Srv_Mst_Vehi_Tbl  m ON m.UTD = c.Tran_id
+       LEFT  JOIN dbo.Misc_Mst mm1
+              ON mm1.Misc_Type = 85
+             AND LTRIM(RTRIM(CAST(mm1.Misc_Code AS NVARCHAR(50)))) = LTRIM(RTRIM(CAST(r.Loc_Code AS NVARCHAR(50))))
+       LEFT  JOIN dbo.Misc_Mst mm2
+              ON mm2.Misc_Type = 85
+             AND LTRIM(RTRIM(CAST(mm2.Misc_Code AS NVARCHAR(50)))) = LTRIM(RTRIM(CAST(c.Loc_Code AS NVARCHAR(50))))
+       WHERE (
+         (:utd IS NOT NULL AND r.UTD = :utd)
+         OR (:cleanVehicle != '' AND (
+           REPLACE(REPLACE(UPPER(LTRIM(RTRIM(ISNULL(m.Veh_Reg_No,'')))), ' ', ''), '-', '') = :cleanVehicle
+           OR REPLACE(REPLACE(UPPER(LTRIM(RTRIM(ISNULL(c.Veh_Reg_No,'')))), ' ', ''), '-', '') = :cleanVehicle
+         ))
+       )
+       ORDER BY r.UTD DESC`,
+      { replacements: { utd: utd ? Number(utd) : null, cleanVehicle }, type: QueryTypes.SELECT }
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ Status: false, Message: "Vehicle / Appointment Record nahi mila" });
+    }
+
+    const item = rows[0];
+
+    // Check for AI slots / summary from call_webhook_dtl if AI_Call_ID is present
+    let extractedSlots = [];
+    if (item.AI_Call_ID) {
+      try {
+        const whRows = await sequelize.query(
+          `SELECT TOP 1 summary, transcript FROM dbo.call_webhook_dtl WHERE call_id = :callId ORDER BY id DESC`,
+          { replacements: { callId: item.AI_Call_ID }, type: QueryTypes.SELECT }
+        );
+        if (whRows && whRows.length > 0) {
+          const sumText = whRows[0].summary || "";
+          const parsed = parseAppointmentFromSummary(sumText, {});
+          if (parsed && parsed.appointmentDate) {
+            extractedSlots.push({
+              slot: "Recommended Slot",
+              date: parsed.appointmentDate,
+              time: parsed.appointmentTime || "10:00:00",
+            });
+          }
+        }
+      } catch (_) { }
+    }
+
+    return res.status(200).json({
+      Status: true,
+      data: {
+        utd: item.utd,
+        custName: item.Cust_Name || "Customer",
+        custMob: item.Cust_Mob || "",
+        vehicleNo: item.Veh_Reg_No || "",
+        modelName: item.Model_Name || "",
+        modelVariant: item.Model_Variant || "",
+        serviceCenter: item.Loc_Name || "Auto-Vyn Service Center",
+        serviceAddress: item.Loc_Address || "Main Workshop",
+        appointmentDate: item.Appointment_Date
+          ? (typeof item.Appointment_Date === "string"
+            ? item.Appointment_Date.split("T")[0].split(" ")[0]
+            : (item.Appointment_Date instanceof Date
+              ? item.Appointment_Date.toISOString().split("T")[0]
+              : String(item.Appointment_Date)))
+          : "",
+        appointmentTime: item.Appointment_Time || "",
+        appointmentStatus: item.Appointment_Status || "PENDING",
+        appointmentRemark: item.Appointment_Remark || "",
+        customerResponse: item.Customer_Response || "",
+        extractedSlots: extractedSlots,
+      },
+    });
+
+  } catch (err) {
+    console.error("[APPOINTMENT-FORM] Error:", err?.message);
+    return res.status(500).json({ Status: false, Message: err?.message });
+  } finally {
+    if (sequelize) { try { await sequelize.close(); } catch (_) { } }
+  }
+};
+
+// ════════════════════════════════════════════════════════════════
+// saveCustomerAppointment — Customer Form Submission Se Update & Save
+// ════════════════════════════════════════════════════════════════
+exports.saveCustomerAppointment = async (req, res) => {
+  let sequelize;
+  try {
+    const tokenParam = req.body.token || req.query.token || null;
+    const tokenData = verifyAppointmentToken(tokenParam);
+
+    const utd = req.body.utd || req.query.utd || tokenData?.utd || null;
+    const vehicleNo = req.body.vehicleNo || req.query.vehicleNo || tokenData?.vehicleNo || null;
+    const targetComp = resolveCompCode(req.headers.compcode || req.body.compcode || req.query.compcode || tokenData?.compcode);
+    const { appointment_date, appointment_time, appointment_remark, customer_response } = req.body;
+
+    if (!utd && !vehicleNo && !tokenParam) {
+      return res.status(400).json({ Status: false, Message: "utd, vehicleNo, ya token required hai" });
+    }
+    if (!appointment_date) {
+      return res.status(400).json({ Status: false, Message: "Appointment Date required hai" });
+    }
+
+    sequelize = await dbname(req, targetComp);
+    const cleanVehicle = vehicleNo ? String(vehicleNo).trim().toUpperCase().replace(/[\s\-]/g, "") : "";
+
+    const setClauses = [
+      `Appointment_Date = CONVERT(date, :appointment_date, 23)`,
+      `Appointment_Status = 'SCHEDULED'`,
+      `Reminder_Status = 'CLOSED'`,
+      `Updated_At = GETDATE()`,
+    ];
+    const replacements = {
+      utd: utd ? Number(utd) : null,
+      cleanVehicle,
+      appointment_date: String(appointment_date).trim(),
+    };
+
+    if (appointment_time) {
+      setClauses.push(`Appointment_Time = CONVERT(time(0), :appointment_time)`);
+      replacements.appointment_time = String(appointment_time).trim();
+    }
+    if (appointment_remark) {
+      setClauses.push(`Appointment_Remark = :appointment_remark`);
+      replacements.appointment_remark = String(appointment_remark).trim();
+    }
+    if (customer_response) {
+      setClauses.push(`Customer_Response = :customer_response`);
+      replacements.customer_response = String(customer_response).trim();
+    }
+
+    const updateQuery = `
+      UPDATE dbo.Srv_Reminder_Tbl
+      SET ${setClauses.join(", ")}
+      WHERE (
+        (:utd IS NOT NULL AND UTD = :utd)
+        OR (:cleanVehicle != '' AND Cust_Vehi_UTD IN (
+          SELECT UTD FROM dbo.Srv_Cust_Vehi_Tbl
+          WHERE REPLACE(REPLACE(UPPER(LTRIM(RTRIM(ISNULL(Veh_Reg_No,'')))), ' ', ''), '-', '') = :cleanVehicle
+        ))
+      )`;
+
+    await sequelize.query(updateQuery, { replacements, type: QueryTypes.UPDATE });
+
+    // Fetch details for WhatsApp confirmation
+    const updatedRows = await sequelize.query(
+      `SELECT TOP 1
+         c.Cust_Name,
+         c.Cust_Mob,
+         COALESCE(m.Veh_Reg_No, c.Veh_Reg_No, '') AS Veh_Reg_No,
+         c.Model_Name,
+         r.Appointment_Date,
+         r.Appointment_Time,
+         r.Loc_Code,
+         COALESCE(mm1.Misc_Name, mm2.Misc_Name, '') AS Loc_Name,
+         COALESCE(mm1.Misc_Add1, mm2.Misc_Add1, '') AS Loc_Address
+       FROM dbo.Srv_Reminder_Tbl r
+       INNER JOIN dbo.Srv_Cust_Vehi_Tbl c ON c.UTD = r.Cust_Vehi_UTD
+       LEFT  JOIN dbo.Srv_Mst_Vehi_Tbl  m ON m.UTD = c.Tran_id
+       LEFT  JOIN dbo.Misc_Mst mm1
+              ON mm1.Misc_Type = 85
+             AND LTRIM(RTRIM(CAST(mm1.Misc_Code AS NVARCHAR(50)))) = LTRIM(RTRIM(CAST(r.Loc_Code AS NVARCHAR(50))))
+       LEFT  JOIN dbo.Misc_Mst mm2
+              ON mm2.Misc_Type = 85
+             AND LTRIM(RTRIM(CAST(mm2.Misc_Code AS NVARCHAR(50)))) = LTRIM(RTRIM(CAST(c.Loc_Code AS NVARCHAR(50))))
+       WHERE (:utd IS NOT NULL AND r.UTD = :utd) OR (:cleanVehicle != '' AND REPLACE(REPLACE(UPPER(LTRIM(RTRIM(ISNULL(c.Veh_Reg_No,'')))), ' ', ''), '-', '') = :cleanVehicle)
+       ORDER BY r.UTD DESC`,
+      { replacements: { utd: utd ? Number(utd) : null, cleanVehicle }, type: QueryTypes.SELECT }
+    );
+
+    if (updatedRows && updatedRows.length > 0 && updatedRows[0].Cust_Mob) {
+      const cd = updatedRows[0];
+      const compCodeStr = resolveCompCode(req?.headers?.compcode || req?.body?.compcode || req?.query?.compcode);
+      const targetMob = String(cd.Cust_Mob).trim();
+
+      const p1 = cd.Cust_Name?.trim() || "Customer";
+      const p2 = cd.Veh_Reg_No?.trim() || cd.Model_Name?.trim() || "Vehicle";
+      const p3 = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
+      const p4 = cd.Loc_Address?.trim() || "Main Workshop";
+      const apptToken = generateAppointmentToken(cd.utd || utd, cd.Veh_Reg_No, compCodeStr);
+      const p5 = `https://erp.autovyn.com/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${cd.utd || utd || ""}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
+      const p6 = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
+
+      console.log("p5", p5);
+
+      try {
+        const waRes = await SendWhatsAppMessgae(
+          compCodeStr,
+          targetMob,
+          "service_appointment_reminder",
+          [
+            { type: "text", text: p1 },
+            { type: "text", text: p2 },
+            { type: "text", text: p3 },
+            { type: "text", text: p4 },
+            { type: "text", text: p5 },
+            { type: "text", text: p6 },
+          ],
+          "DONTCHECK"
+        );
+        console.log(`[WHATSAPP] ✅ Appointment Update WhatsApp result:`, waRes);
+      } catch (waErr) {
+        console.error(`[WHATSAPP] ⚠️ WhatsApp send error:`, waErr?.message || waErr);
+      }
+    }
+
+    return res.status(200).json({
+      Status: true,
+      Message: "Appointment confirmed & updated successfully!",
+    });
+
+  } catch (err) {
+    console.error("[SAVE-APPOINTMENT] Error:", err?.message);
+    return res.status(500).json({ Status: false, Message: err?.message });
+  } finally {
+    if (sequelize) { try { await sequelize.close(); } catch (_) { } }
+  }
+};

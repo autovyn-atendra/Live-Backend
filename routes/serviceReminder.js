@@ -631,13 +631,14 @@ exports.createCustomerVehicle = async function (req, res) {
 // ============================================================
 // 2. GET ALL CUSTOMER VEHICLES
 // ============================================================
-
+ 
 exports.getAllCustomerVehicles = async function (req, res) {
   let sequelize;
 
   try {
     sequelize = await dbname(req, req.headers.compcode);
 
+    const body = req.body || {};
     const {
       page = 1,
       pageSize = 10,
@@ -645,7 +646,87 @@ exports.getAllCustomerVehicles = async function (req, res) {
       Loc_Code,
       Model_Name,
       status,
-    } = req.body || {};
+      emp_code,
+      EMPCODE,
+      empCode,
+      user_code,
+      User_Code,
+      srv_exec_Emp_Code,
+      emp_dms_code,
+      Emp_Dms_Code,
+      empDmsCode,
+      dms_code,
+    } = body;
+
+    let userEmpCode = String(
+      emp_code ||
+      EMPCODE ||
+      empCode ||
+      user_code ||
+      User_Code ||
+      srv_exec_Emp_Code ||
+      req?.headers?.emp_code ||
+      req?.headers?.empcode ||
+      req?.headers?.['emp-code'] ||
+      req?.user?.EMPCODE ||
+      req?.user?.emp_code ||
+      ""
+    ).trim();
+
+    let empDmsCodeStr = String(
+      emp_dms_code ||
+      Emp_Dms_Code ||
+      empDmsCode ||
+      dms_code ||
+      req?.headers?.emp_dms_code ||
+      req?.headers?.empdmscode ||
+      req?.headers?.['emp-dms-code'] ||
+      req?.user?.emp_dms_code ||
+      ""
+    ).trim().toUpperCase();
+
+    // Fallback: look up user_tbl if emp_code or emp_dms_code is missing
+    const userIdForLookup =
+      body.user_code ||
+      body.User_Code ||
+      body.user_id ||
+      body.User_Id ||
+      body.Created_By ||
+      body.Updated_By ||
+      req?.headers?.user_code ||
+      req?.headers?.['user-code'] ||
+      req?.headers?.user_id ||
+      req?.user?.UTD ||
+      req?.user?.userId ||
+      (userEmpCode && userEmpCode !== "" ? userEmpCode : null);
+
+    if (userIdForLookup && (!userEmpCode || !empDmsCodeStr)) {
+      try {
+        const userRows = await sequelize.query(
+          `SELECT TOP 1 empcode, emp_dms_code 
+           FROM dbo.user_tbl 
+           WHERE (CAST(user_code AS VARCHAR(50)) = :uId OR CAST(empcode AS VARCHAR(50)) = :uId)
+             AND (export_type < 3 OR export_type IS NULL)`,
+          {
+            replacements: { uId: String(userIdForLookup).trim() },
+            type: QueryTypes.SELECT,
+          }
+        );
+        if (userRows && userRows.length > 0) {
+          if (!userEmpCode && userRows[0].empcode) {
+            userEmpCode = String(userRows[0].empcode).trim();
+          }
+          if (!empDmsCodeStr && userRows[0].emp_dms_code) {
+            empDmsCodeStr = String(userRows[0].emp_dms_code).trim().toUpperCase();
+          }
+        }
+      } catch (lookupErr) {
+        console.error("[CUSTOMER-VEHICLE USER LOOKUP ERROR]", lookupErr?.message);
+      }
+    }
+
+    const isAdmin = empDmsCodeStr === "EDP";
+    console.log("[CUSTOMER-VEHICLE ROLE CHECK]", { userEmpCode, empDmsCodeStr, isAdmin });
 
     const pageNum = Math.max(Number.parseInt(page, 10) || 1, 1);
     const limit = Math.min(
@@ -663,6 +744,19 @@ exports.getAllCustomerVehicles = async function (req, res) {
       offset,
       limit,
     };
+
+    // ── Employee Hierarchy Filter (Non-EDP Users) ──
+    if (!isAdmin && userEmpCode) {
+      whereConditions += `
+        AND (
+          c.srv_exec_Emp_Code = :userEmpCode
+          OR emp.Reporting_1 = :userEmpCode
+          OR emp.Reporting_2 = :userEmpCode
+          OR emp.Reporting_3 = :userEmpCode
+        )
+      `;
+      replacements.userEmpCode = userEmpCode;
+    }
 
     // ── Loc_Code filter ──
     const locCodes = toLocCodeArray(Loc_Code);
@@ -738,6 +832,8 @@ exports.getAllCustomerVehicles = async function (req, res) {
        FROM dbo.Srv_Cust_Vehi_Tbl c
        LEFT JOIN dbo.Srv_Mst_Vehi_Tbl m
          ON m.UTD = c.Tran_id
+       LEFT JOIN dbo.EMPLOYEEMASTER emp
+         ON emp.EMPCODE = c.srv_exec_Emp_Code
        ${whereConditions}`,
       {
         replacements,
@@ -775,6 +871,8 @@ exports.getAllCustomerVehicles = async function (req, res) {
        FROM dbo.Srv_Cust_Vehi_Tbl c
        LEFT JOIN dbo.Srv_Mst_Vehi_Tbl m
          ON m.UTD = c.Tran_id
+       LEFT JOIN dbo.EMPLOYEEMASTER emp
+         ON emp.EMPCODE = c.srv_exec_Emp_Code
        ${whereConditions}
        ORDER BY c.UTD DESC
        OFFSET :offset ROWS
@@ -1115,7 +1213,7 @@ exports.bulkUpdateServiceExecutive = async function (req, res) {
     // ════════════════════════════════════════════════════════
     return res.status(200).send({
       success: true,
-      message: `${totalRecords} record(s) updated successfully`,
+      message: `${totalRecords} record updated successfully`,
       updatedCount: totalRecords,
       updatedUTDs: selectedUTDs,
       Loc_Code: locArr,
@@ -1956,20 +2054,37 @@ exports.generateReminder = async function (req, res) {
       }
     );
 
-    const rule = ruleResult.length > 0 ? ruleResult[0] : null;
+    let rule = ruleResult.length > 0 ? ruleResult[0] : null;
 
     // ============================================================
-    // ✅ STEP 2.5: RULE VALIDATION
+    // ✅ STEP 2.5: RULE & INTERVAL VALIDATION
     // ============================================================
 
-    // Case A: Rule bilkul mila hi nahi (location ke liye)
+    // If no rule found in Srv_Model_Service_Rule_Tbl
     if (!rule) {
-      // Agar customer ke paas bhi interval nahi hai → hard error
-      if (customerIntervalMissing) {
+      if (!customerIntervalMissing) {
+        // Customer vehicle has valid intervals -> create default fallback rule wrapper
+        rule = {
+          UTD: 0,
+          Loc_Code: customer.Loc_Code,
+          Model_Name: customer.Model_Name,
+          Service_Interval_KM: custHasValidKM ? custIntervalKMNum : 0,
+          Service_Interval_Days: custHasValidDays ? custIntervalDaysNum : 0,
+          Rule_Type: "WHICHEVER_FIRST",
+          Reminder_Before_Days_1: 7,
+          Reminder_Before_Days_2: 3,
+          Reminder_On_Due_Date: 1,
+          Overdue_Reminder_Days: 3,
+          status: ACTIVE_STATUS,
+        };
+        console.log(
+          `[REMINDER] Customer vehicle has intervals (KM: ${custIntervalKMNum}, Days: ${custIntervalDaysNum}) -> Created default rule object`
+        );
+      } else {
         await safeRollback(transaction);
         return res.status(404).send({
           success: false,
-          message: `Service interval not found in customer record, and no active reminder rule found for location: ${customer.Loc_Code}`,
+          message: `Service interval not found in customer vehicle record (Srv_Cust_Vehi_Tbl) nor in service rules (Srv_Model_Service_Rule_Tbl) for location: ${customer.Loc_Code}`,
           data: {
             Loc_Code: customer.Loc_Code,
             customer: {
@@ -1979,20 +2094,6 @@ exports.generateReminder = async function (req, res) {
           },
         });
       }
-
-      // Customer ke paas interval hai, but rule nahi mila (Reminder_Before_Days config missing)
-      await safeRollback(transaction);
-      return res.status(404).send({
-        success: false,
-        message: `Customer service interval found, but no active reminder rule found for location: ${customer.Loc_Code}. Reminder schedule (before days / overdue days) cannot be determined.`,
-        data: {
-          Loc_Code: customer.Loc_Code,
-          customer: {
-            Service_Interval_KM: customer.Service_Interval_KM,
-            Service_Interval_Days: customer.Service_Interval_Days,
-          },
-        },
-      });
     }
 
     // Case B: Rule mila, lekin customer interval bhi missing tha AND rule me bhi interval invalid hai
@@ -2223,7 +2324,7 @@ exports.generateReminder = async function (req, res) {
       {
         replacements: {
           Cust_Vehi_UTD: customerVehicleUTD,
-          Service_Rule_UTD: rule.UTD,
+          Service_Rule_UTD: (rule?.UTD && Number(rule.UTD) > 0) ? Number(rule.UTD) : null,
           Loc_Code: customer.Loc_Code,
           Last_Service_Date: calculated.lastServiceDate || null,
           Last_Service_KM: calculated.lastServiceKM ?? null,
@@ -2456,7 +2557,12 @@ const insertSingleReminder = async (sequelize, params, transaction) => {
     isFollowup = false,
   } = params;
 
-  if (!customer?.UTD || !rule?.UTD || !calculated?.finalDueDate) {
+  if (
+    !customer?.UTD ||
+    rule?.UTD === undefined ||
+    rule?.UTD === null ||
+    !calculated?.finalDueDate
+  ) {
     console.error("[INSERT] Missing required params:", {
       customerUTD: customer?.UTD,
       ruleUTD: rule?.UTD,
@@ -2484,11 +2590,9 @@ const insertSingleReminder = async (sequelize, params, transaction) => {
        )`
     : `WHERE NOT EXISTS (
          SELECT 1 FROM dbo.Srv_Reminder_Tbl WITH (UPDLOCK, HOLDLOCK)
-         WHERE Cust_Vehi_UTD    = :Cust_Vehi_UTD
-           AND Service_Rule_UTD = :Service_Rule_UTD
-           AND Final_Due_Date   = CONVERT(date, :Final_Due_Date, 23)
-           AND Reminder_Type    = :Reminder_Type
-           AND status           = 1
+         WHERE Cust_Vehi_UTD   = :Cust_Vehi_UTD
+           AND Reminder_Status = 'PENDING'
+           AND status          = 1
        )`;
 
   try {
@@ -2526,7 +2630,7 @@ const insertSingleReminder = async (sequelize, params, transaction) => {
       {
         replacements: {
           Cust_Vehi_UTD: customer.UTD,
-          Service_Rule_UTD: rule.UTD,
+          Service_Rule_UTD: (rule?.UTD && Number(rule.UTD) > 0) ? Number(rule.UTD) : null,
           Loc_Code: customer.Loc_Code,
           Last_Service_Date: calculated.lastServiceDate || null,
           Last_Service_KM: calculated.lastServiceKM ?? null,
@@ -2558,247 +2662,16 @@ const insertSingleReminder = async (sequelize, params, transaction) => {
   }
 };
 
-// ============================================================
-// AUTO GENERATE — Fixed: No duplicate processing
-// ============================================================
-// const autoGenerateRemindersForAll = async (sequelize, createdBy = "SYSTEM") => {
-//   const result = {
-//     totalCustomers : 0,
-//     processed      : 0,
-//     totalInserted  : 0,
-//     totalSkipped   : 0,
-//     totalFailed    : 0,
-//     failedCustomers: [],
-//   };
 
-//   try {
-//     const customers = await sequelize.query(
-//       `SELECT
-//          c.UTD, c.Loc_Code, c.Tran_id,
-//          c.Cust_Name, c.Cust_Mob, c.Model_Name,
-//          CONVERT(varchar(10), c.Last_Service_Date, 23) AS Last_Service_Date,
-//          c.Last_Service_KM, c.Avg_Daily_KM, c.Current_KM,
-//          c.Service_Interval_KM, c.Service_Interval_Days,
-//          m.Veh_Reg_No
-//        FROM dbo.Srv_Cust_Vehi_Tbl c
-//        LEFT JOIN dbo.Srv_Mst_Vehi_Tbl m ON m.UTD = c.Tran_id
-//        WHERE c.Export_Type       = 1
-//          AND c.Last_Service_Date IS NOT NULL
-//          AND c.Model_Name        IS NOT NULL
-//          AND LTRIM(RTRIM(ISNULL(c.Model_Name, ''))) <> ''
-//          AND NOT EXISTS (
-//            SELECT 1 FROM dbo.Srv_Reminder_Tbl r
-//            WHERE r.Cust_Vehi_UTD   = c.UTD
-//              AND r.Reminder_Status = 'PENDING'
-//              AND r.status          = 1
-//          )
-//        ORDER BY c.UTD ASC`,
-//       { type: QueryTypes.SELECT }
-//     );
-
-//     result.totalCustomers = customers.length;
-//     console.log(`[AUTO-GEN] Eligible customers: ${customers.length}`);
-//     if (customers.length === 0) return result;
-
-//     // Rules fetch
-//     let allRules = await sequelize.query(
-//       `SELECT UTD, Loc_Code, Model_Name,
-//          Service_Interval_KM, Service_Interval_Days,
-//          Rule_Type, Reminder_Before_Days_1, Reminder_Before_Days_2,
-//          Reminder_On_Due_Date, Overdue_Reminder_Days, status
-//        FROM dbo.Srv_Model_Service_Rule_Tbl
-//        WHERE status = ${ACTIVE_STATUS}
-//        ORDER BY
-//          CASE WHEN Loc_Code IS NOT NULL AND LTRIM(RTRIM(Loc_Code)) <> '' THEN 1 ELSE 2 END ASC,
-//          UTD DESC`,
-//       { type: QueryTypes.SELECT }
-//     );
-
-//     if (allRules.length === 0) {
-//       allRules = await sequelize.query(
-//         `SELECT UTD, Loc_Code, Model_Name,
-//            Service_Interval_KM, Service_Interval_Days,
-//            Rule_Type, Reminder_Before_Days_1, Reminder_Before_Days_2,
-//            Reminder_On_Due_Date, Overdue_Reminder_Days, status
-//          FROM dbo.Srv_Model_Service_Rule_Tbl
-//          ORDER BY
-//            CASE WHEN Loc_Code IS NOT NULL AND LTRIM(RTRIM(Loc_Code)) <> '' THEN 1 ELSE 2 END ASC,
-//            UTD DESC`,
-//         { type: QueryTypes.SELECT }
-//       );
-//     }
-
-//     console.log(`[AUTO-GEN] Rules: ${allRules.length}`);
-
-//     if (allRules.length === 0) {
-//       result.totalFailed     = customers.length;
-//       result.failedCustomers = customers.map((c) => ({
-//         Cust_Vehi_UTD: c.UTD,
-//         Cust_Name    : c.Cust_Name,
-//         reason       : "No service rules in database",
-//       }));
-//       return result;
-//     }
-
-//     const ruleByLoc  = new Map();
-//     let   globalRule = null;
-
-//     for (const rule of allRules) {
-//       const lKey = String(rule.Loc_Code || "").trim().toUpperCase();
-//       if (lKey) {
-//         if (!ruleByLoc.has(lKey)) ruleByLoc.set(lKey, rule);
-//       } else {
-//         if (!globalRule) globalRule = rule;
-//       }
-//     }
-
-//     for (const customer of customers) {
-//       try {
-//         result.processed++;
-
-//         const custLocKey = String(customer.Loc_Code || "").trim().toUpperCase();
-//         const rule       = ruleByLoc.get(custLocKey) || globalRule || null;
-
-//         if (!rule) {
-//           result.totalFailed++;
-//           result.failedCustomers.push({
-//             Cust_Vehi_UTD: customer.UTD,
-//             Cust_Name    : customer.Cust_Name,
-//             Loc_Code     : customer.Loc_Code,
-//             reason       : `No rule for Loc: "${custLocKey}"`,
-//           });
-//           continue;
-//         }
-
-//         const intervalKM   = (Number(customer.Service_Interval_KM)  || 0) || (Number(rule.Service_Interval_KM)  || 0);
-//         const intervalDays = (Number(customer.Service_Interval_Days) || 0) || (Number(rule.Service_Interval_Days) || 0);
-
-//         if (intervalKM === 0 && intervalDays === 0) {
-//           result.totalFailed++;
-//           result.failedCustomers.push({
-//             Cust_Vehi_UTD: customer.UTD,
-//             Cust_Name    : customer.Cust_Name,
-//             reason       : "No interval defined",
-//           });
-//           continue;
-//         }
-
-//         const calculated = calcReminderData(customer, rule);
-//         if (!calculated.finalDueDate) {
-//           result.totalFailed++;
-//           result.failedCustomers.push({
-//             Cust_Vehi_UTD: customer.UTD,
-//             Cust_Name    : customer.Cust_Name,
-//             reason       : "Final due date could not be calculated",
-//           });
-//           continue;
-//         }
-
-//         const stages = buildReminderStages(rule, calculated.finalDueDate);
-//         if (!stages || stages.length === 0) {
-//           result.totalFailed++;
-//           result.failedCustomers.push({
-//             Cust_Vehi_UTD: customer.UTD,
-//             Cust_Name    : customer.Cust_Name,
-//             reason       : "No reminder stages configured",
-//           });
-//           continue;
-//         }
-
-//         const existingTypes = await sequelize.query(
-//           `SELECT DISTINCT Reminder_Type
-//            FROM dbo.Srv_Reminder_Tbl
-//            WHERE Cust_Vehi_UTD    = :Cust_Vehi_UTD
-//              AND Service_Rule_UTD = :Service_Rule_UTD
-//              AND Final_Due_Date   = CONVERT(date, :Final_Due_Date, 23)
-//              AND status           = 1`,
-//           {
-//             replacements: {
-//               Cust_Vehi_UTD   : customer.UTD,
-//               Service_Rule_UTD: rule.UTD,
-//               Final_Due_Date  : calculated.finalDueDate,
-//             },
-//             type: QueryTypes.SELECT,
-//           }
-//         );
-
-//         const insertedSet = new Set(
-//           existingTypes.map((r) => String(r.Reminder_Type).trim().toUpperCase())
-//         );
-
-//         let nextStage = null;
-//         for (const stage of stages) {
-//           if (!insertedSet.has(String(stage.type).trim().toUpperCase())) {
-//             nextStage = stage;
-//             break;
-//           }
-//         }
-
-//         if (!nextStage) {
-//           result.totalSkipped++;
-//           continue;
-//         }
-
-//         console.log(`[AUTO-GEN] Inserting: ${nextStage.type} @ ${nextStage.date} | CustUTD:${customer.UTD}`);
-
-//         const tx = await sequelize.transaction();
-//         try {
-//           const insertResult = await insertSingleReminder(
-//             sequelize,
-//             {
-//               customer: { UTD: customer.UTD, Loc_Code: customer.Loc_Code },
-//               rule,
-//               calculated,
-//               reminderDate   : nextStage.date,
-//               reminderType   : nextStage.type,
-//               reminderStatus : "PENDING",
-//               serviceStatus  : "PENDING",
-//               reminderChannel: "AI_CALL",
-//               createdBy,
-//               isFollowup     : false,
-//             },
-//             tx
-//           );
-
-//           await tx.commit();
-
-//           if (insertResult && insertResult.length > 0) {
-//             result.totalInserted++;
-//             console.log(`[AUTO-GEN] ✅ Inserted UTD:${insertResult[0].UTD}`);
-//           } else {
-//             result.totalSkipped++;
-//           }
-//         } catch (txErr) {
-//           await tx.rollback();
-//           result.totalFailed++;
-//           result.failedCustomers.push({
-//             Cust_Vehi_UTD: customer.UTD,
-//             Cust_Name    : customer.Cust_Name,
-//             reason       : `Insert error: ${txErr.message}`,
-//           });
-//         }
-//       } catch (custErr) {
-//         result.totalFailed++;
-//         result.failedCustomers.push({
-//           Cust_Vehi_UTD: customer.UTD,
-//           Cust_Name    : customer.Cust_Name,
-//           reason       : `Process error: ${custErr.message}`,
-//         });
-//       }
-//     }
-
-//     console.log(
-//       `[AUTO-GEN] Done — Inserted:${result.totalInserted} | Skipped:${result.totalSkipped} | Failed:${result.totalFailed}`
-//     );
-//     return result;
-//   } catch (err) {
-//     console.error("[AUTO-GEN] Fatal:", err.message);
-//     result.error = err.message;
-//     return result;
-//   }
-// };
+let isAutoGenRunning = false;
 
 const autoGenerateRemindersForAll = async (sequelize, createdBy = "SYSTEM") => {
+  if (isAutoGenRunning) {
+    console.log("[AUTO-GEN] Auto-generation already in progress — skipping duplicate concurrent call");
+    return { totalCustomers: 0, totalInserted: 0, totalSkipped: 0, totalFailed: 0, failedCustomers: [] };
+  }
+
+  isAutoGenRunning = true;
   const result = {
     totalCustomers: 0,
     processed: 0,
@@ -2822,10 +2695,8 @@ const autoGenerateRemindersForAll = async (sequelize, createdBy = "SYSTEM") => {
          m.Veh_Reg_No
        FROM dbo.Srv_Cust_Vehi_Tbl c
        LEFT JOIN dbo.Srv_Mst_Vehi_Tbl m ON m.UTD = c.Tran_id
-       WHERE c.Export_Type       = 1
+       WHERE (c.Export_Type IS NULL OR c.Export_Type = 1 OR c.Export_Type <> 33)
          AND c.Last_Service_Date IS NOT NULL
-         AND c.Model_Name        IS NOT NULL
-         AND LTRIM(RTRIM(ISNULL(c.Model_Name, ''))) <> ''
          AND NOT EXISTS (
            SELECT 1 FROM dbo.Srv_Reminder_Tbl r
            WHERE r.Cust_Vehi_UTD   = c.UTD
@@ -2841,52 +2712,31 @@ const autoGenerateRemindersForAll = async (sequelize, createdBy = "SYSTEM") => {
     if (customers.length === 0) return result;
 
     // ══════════════════════════════════════════════════════════
-    // STEP 2: SIRF LOCATION-WISE RULES FETCH KARO (Model filter NAHI)
+    // STEP 2: LOCATION-WISE RULES FETCH KARO (Optional fallback)
     // ══════════════════════════════════════════════════════════
-    let allRules = await sequelize.query(
-      `SELECT UTD, Loc_Code, Model_Name,
-         Service_Interval_KM, Service_Interval_Days,
-         Rule_Type, Reminder_Before_Days_1, Reminder_Before_Days_2,
-         Reminder_On_Due_Date, Overdue_Reminder_Days, status
-       FROM dbo.Srv_Model_Service_Rule_Tbl
-       WHERE status = ${ACTIVE_STATUS}
-       ORDER BY
-         CASE WHEN Loc_Code IS NOT NULL AND LTRIM(RTRIM(Loc_Code)) <> '' THEN 1 ELSE 2 END ASC,
-         UTD DESC`,
-      { type: QueryTypes.SELECT }
-    );
-
-    if (allRules.length === 0) {
+    let allRules = [];
+    try {
       allRules = await sequelize.query(
         `SELECT UTD, Loc_Code, Model_Name,
            Service_Interval_KM, Service_Interval_Days,
            Rule_Type, Reminder_Before_Days_1, Reminder_Before_Days_2,
            Reminder_On_Due_Date, Overdue_Reminder_Days, status
          FROM dbo.Srv_Model_Service_Rule_Tbl
+         WHERE status = ${ACTIVE_STATUS}
          ORDER BY
            CASE WHEN Loc_Code IS NOT NULL AND LTRIM(RTRIM(Loc_Code)) <> '' THEN 1 ELSE 2 END ASC,
            UTD DESC`,
         { type: QueryTypes.SELECT }
       );
-    }
+    } catch (_) {}
 
-    console.log(`[AUTO-GEN] Rules: ${allRules.length}`);
-
-    if (allRules.length === 0) {
-      result.totalFailed = customers.length;
-      result.failedCustomers = customers.map((c) => ({
-        Cust_Vehi_UTD: c.UTD,
-        Cust_Name: c.Cust_Name,
-        reason: "No service rules in database",
-      }));
-      return result;
-    }
+    console.log(`[AUTO-GEN] Rules found in DB: ${allRules.length}`);
 
     // ── Location-wise rule map banao ─────────────────────────
     const ruleByLoc = new Map();
     let globalRule = null;
 
-    for (const rule of allRules) {
+    for (const rule of allRules || []) {
       const lKey = String(rule.Loc_Code || "").trim().toUpperCase();
       if (lKey) {
         if (!ruleByLoc.has(lKey)) ruleByLoc.set(lKey, rule);
@@ -2902,49 +2752,57 @@ const autoGenerateRemindersForAll = async (sequelize, createdBy = "SYSTEM") => {
       try {
         result.processed++;
 
-        const custLocKey = String(customer.Loc_Code || "").trim().toUpperCase();
-        const rule = ruleByLoc.get(custLocKey) || globalRule || null;
-
-        if (!rule) {
-          result.totalFailed++;
-          result.failedCustomers.push({
-            Cust_Vehi_UTD: customer.UTD,
-            Cust_Name: customer.Cust_Name,
-            Loc_Code: customer.Loc_Code,
-            reason: `No rule for Loc: "${custLocKey}"`,
-          });
-          continue;
-        }
-
-        // ══════════════════════════════════════════════════════
-        // ✅ FIX: Interval check — "DONO missing hone par hi"
-        // rule table se lo, warna customer ke apne values use karo
-        // (field-by-field mix NAHI karna)
-        // ══════════════════════════════════════════════════════
         const custIntervalKMNum = Number(customer.Service_Interval_KM);
         const custIntervalDaysNum = Number(customer.Service_Interval_Days);
 
         const custHasValidKM = Number.isFinite(custIntervalKMNum) && custIntervalKMNum > 0;
         const custHasValidDays = Number.isFinite(custIntervalDaysNum) && custIntervalDaysNum > 0;
+        const hasCustomerInterval = custHasValidKM || custHasValidDays;
 
-        // ✅ Customer ke paas KM ya Days me se KOI ek bhi valid hai → customer ka hi data use karo
-        // ✅ Dono missing hain → tabhi rule table se lo
-        const customerIntervalMissing = !custHasValidKM && !custHasValidDays;
+        const custLocKey = String(customer.Loc_Code || "").trim().toUpperCase();
+        let rule = ruleByLoc.get(custLocKey) || globalRule || null;
 
         let effectiveIntervalKM;
         let effectiveIntervalDays;
         let intervalSource;
 
-        if (customerIntervalMissing) {
-          // Dono customer me nahi mile → poora interval rule se lo
-          effectiveIntervalKM = rule.Service_Interval_KM;
-          effectiveIntervalDays = rule.Service_Interval_Days;
-          intervalSource = "LOCATION_RULE";
-        } else {
-          // Customer ke paas apna data hai → wahi use karo (mix nahi)
+        if (hasCustomerInterval) {
+          // ✅ 1. Primary Check: Customer vehicle record (Srv_Cust_Vehi_Tbl) has intervals!
           effectiveIntervalKM = customer.Service_Interval_KM;
           effectiveIntervalDays = customer.Service_Interval_Days;
           intervalSource = "CUSTOMER_RECORD";
+
+          if (!rule) {
+            rule = {
+              UTD: 0,
+              Loc_Code: customer.Loc_Code,
+              Model_Name: customer.Model_Name,
+              Service_Interval_KM: custHasValidKM ? custIntervalKMNum : 0,
+              Service_Interval_Days: custHasValidDays ? custIntervalDaysNum : 0,
+              Rule_Type: "WHICHEVER_FIRST",
+              Reminder_Before_Days_1: 7,
+              Reminder_Before_Days_2: 3,
+              Reminder_On_Due_Date: 1,
+              Overdue_Reminder_Days: 3,
+              status: 1,
+            };
+          }
+        } else {
+          // ✅ 2. Secondary / Fallback Check: Customer vehicle lacks interval -> check Srv_Model_Service_Rule_Tbl
+          if (!rule) {
+            result.totalFailed++;
+            result.failedCustomers.push({
+              Cust_Vehi_UTD: customer.UTD,
+              Cust_Name: customer.Cust_Name,
+              Loc_Code: customer.Loc_Code,
+              reason: `No interval in customer vehicle record and no rule found for Loc: "${custLocKey}"`,
+            });
+            continue;
+          }
+
+          effectiveIntervalKM = rule.Service_Interval_KM;
+          effectiveIntervalDays = rule.Service_Interval_Days;
+          intervalSource = "LOCATION_RULE";
         }
 
         const finalIntervalKMNum = Number(effectiveIntervalKM) || 0;
@@ -2994,7 +2852,7 @@ const autoGenerateRemindersForAll = async (sequelize, createdBy = "SYSTEM") => {
           `SELECT DISTINCT Reminder_Type
            FROM dbo.Srv_Reminder_Tbl
            WHERE Cust_Vehi_UTD    = :Cust_Vehi_UTD
-             AND Service_Rule_UTD = :Service_Rule_UTD
+             AND ISNULL(Service_Rule_UTD, 0) = :Service_Rule_UTD
              AND Final_Due_Date   = CONVERT(date, :Final_Due_Date, 23)
              AND status           = 1`,
           {
@@ -3082,6 +2940,8 @@ const autoGenerateRemindersForAll = async (sequelize, createdBy = "SYSTEM") => {
     console.error("[AUTO-GEN] Fatal:", err.message);
     result.error = err.message;
     return result;
+  } finally {
+    isAutoGenRunning = false;
   }
 };
 
@@ -3838,7 +3698,86 @@ exports.getAllReminders = async function (req, res) {
       upcoming,
       unknown,
       showClosed,
+      emp_code,
+      EMPCODE,
+      empCode,
+      user_code,
+      User_Code,
+      srv_exec_Emp_Code,
+      emp_dms_code,
+      Emp_Dms_Code,
+      empDmsCode,
+      dms_code,
     } = body;
+    let userEmpCode = String(
+      emp_code ||
+      EMPCODE ||
+      empCode ||
+      user_code ||
+      User_Code ||
+      srv_exec_Emp_Code ||
+      req?.headers?.emp_code ||
+      req?.headers?.empcode ||
+      req?.headers?.['emp-code'] ||
+      req?.user?.EMPCODE ||
+      req?.user?.emp_code ||
+      ""
+    ).trim();
+
+    let empDmsCodeStr = String(
+      emp_dms_code ||
+      Emp_Dms_Code ||
+      empDmsCode ||
+      dms_code ||
+      req?.headers?.emp_dms_code ||
+      req?.headers?.empdmscode ||
+      req?.headers?.['emp-dms-code'] ||
+      req?.user?.emp_dms_code ||
+      ""
+    ).trim().toUpperCase();
+
+    // Fallback: look up user_tbl if emp_code or emp_dms_code is missing
+    const userIdForLookup =
+      body.user_code ||
+      body.User_Code ||
+      body.user_id ||
+      body.User_Id ||
+      body.Created_By ||
+      body.Updated_By ||
+      req?.headers?.user_code ||
+      req?.headers?.['user-code'] ||
+      req?.headers?.user_id ||
+      req?.user?.UTD ||
+      req?.user?.userId ||
+      (userEmpCode && userEmpCode !== "" ? userEmpCode : null);
+
+    if (userIdForLookup && (!userEmpCode || !empDmsCodeStr)) {
+      try {
+        const userRows = await sequelize.query(
+          `SELECT TOP 1 empcode, emp_dms_code 
+           FROM dbo.user_tbl 
+           WHERE (CAST(user_code AS VARCHAR(50)) = :uId OR CAST(empcode AS VARCHAR(50)) = :uId)
+             AND (export_type < 3 OR export_type IS NULL)`,
+          {
+            replacements: { uId: String(userIdForLookup).trim() },
+            type: QueryTypes.SELECT,
+          }
+        );
+        if (userRows && userRows.length > 0) {
+          if (!userEmpCode && userRows[0].empcode) {
+            userEmpCode = String(userRows[0].empcode).trim();
+          }
+          if (!empDmsCodeStr && userRows[0].emp_dms_code) {
+            empDmsCodeStr = String(userRows[0].emp_dms_code).trim().toUpperCase();
+          }
+        }
+      } catch (lookupErr) {
+        console.error("[REMINDER USER LOOKUP ERROR]", lookupErr?.message);
+      }
+    }
+
+    const isAdmin = empDmsCodeStr === "EDP";
+    console.log("[REMINDER ROLE CHECK]", { userEmpCode, empDmsCodeStr, isAdmin });
 
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(pageSize, 10) || 10, 1), 500);
@@ -3849,6 +3788,17 @@ exports.getAllReminders = async function (req, res) {
     const replacements = {};
 
     conditions.push(`r.status = 1`);
+
+    // ── Employee Hierarchy Filter (Non-EDP Users) ──
+    if (!isAdmin && userEmpCode) {
+      conditions.push(`(
+        c.srv_exec_Emp_Code = :userEmpCode
+        OR emp.Reporting_1 = :userEmpCode
+        OR emp.Reporting_2 = :userEmpCode
+        OR emp.Reporting_3 = :userEmpCode
+      )`);
+      replacements.userEmpCode = userEmpCode;
+    }
 
     if (Reminder_Status && String(Reminder_Status).trim() !== "") {
       conditions.push(`r.Reminder_Status = :Reminder_Status`);
@@ -4044,6 +3994,8 @@ exports.getAllReminders = async function (req, res) {
       INNER JOIN dbo.Srv_Cust_Vehi_Tbl c 
         ON c.UTD = r.Cust_Vehi_UTD
        AND (c.Export_Type = 1 OR c.Export_Type IS NULL)
+      LEFT  JOIN dbo.EMPLOYEEMASTER emp
+        ON emp.EMPCODE = c.srv_exec_Emp_Code
       LEFT  JOIN dbo.Srv_Mst_Vehi_Tbl  m ON m.UTD = c.Tran_id
       LEFT  JOIN dbo.Misc_Mst mm1
         ON  mm1.Misc_Type = 85
@@ -4071,6 +4023,16 @@ exports.getAllReminders = async function (req, res) {
     // ── SUMMARY ──────────────────────────────────────────────
     const summaryConditions = [`r.status = 1`, `r.Reminder_Status = 'PENDING'`];
     const summaryReplacements = {};
+
+    if (!isAdmin && userEmpCode) {
+      summaryConditions.push(`(
+        c.srv_exec_Emp_Code = :userEmpCode
+        OR emp.Reporting_1 = :userEmpCode
+        OR emp.Reporting_2 = :userEmpCode
+        OR emp.Reporting_3 = :userEmpCode
+      )`);
+      summaryReplacements.userEmpCode = userEmpCode;
+    }
 
     if (Loc_Code && String(Loc_Code).trim() !== "") {
       summaryConditions.push(`ISNULL(r.Loc_Code, '') = :Loc_Code`);
@@ -5797,8 +5759,16 @@ exports.importCustomerVehicles = async function (req, res) {
 exports.getDashboardSummary = async function (req, res) {
   let sequelize;
   try {
-    const { Loc_Code, Model_Name, showClosed = false } = req.body || {};
+    const body = req.body || {};
+    const { Loc_Code, Model_Name, showClosed = false } = body;
     sequelize = await dbname(req, req.headers.compcode);
+
+    const createdBy = getLoginUserId(req, body);
+    try {
+      await autoGenerateRemindersForAll(sequelize, createdBy);
+    } catch (autoGenErr) {
+      console.error("[DASHBOARD SUMMARY AUTO-GEN] Error:", autoGenErr?.message);
+    }
 
     const normalizedShowClosed = (() => {
       if (showClosed === "all" || showClosed === "ALL") return "all";
@@ -6031,6 +6001,14 @@ exports.getDashboardTable = async function (req, res) {
   let sequelize;
   try {
     sequelize = await dbname(req, req.headers.compcode);
+    const body = req.body || {};
+
+    const createdBy = getLoginUserId(req, body);
+    try {
+      await autoGenerateRemindersForAll(sequelize, createdBy);
+    } catch (autoGenErr) {
+      console.error("[DASHBOARD TABLE AUTO-GEN] Error:", autoGenErr?.message);
+    }
 
     const {
       page = 1,
@@ -6049,7 +6027,7 @@ exports.getDashboardTable = async function (req, res) {
       upcoming,   // ✅ NEW
       unknown,
       showClosed = false,
-    } = req.body || {};
+    } = body;
 
     const normalizedShowClosed = (() => {
       if (showClosed === "all" || showClosed === "ALL") return "all";
@@ -7227,6 +7205,7 @@ exports.getEmployees = async function (req, res) {
   let sequelize;
 
   try {
+    console.log("req.headers.compcode", req.headers.compcode)
     sequelize = await dbname(req, req.headers.compcode);
 
     const {

@@ -1871,3 +1871,222 @@ const safeJSONStringify =
       return null;
     }
   };
+
+
+// ============================================================
+// GET META LEADS (WITH PAGINATION & FILTERS)
+// GET /meta/getMetaLeads
+// POST /meta/getMetaLeads
+// ============================================================
+
+exports.getMetaLeads = async function (req, res) {
+  let sequelize = null;
+  try {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Company code (compcode) is required.",
+      });
+    }
+
+    sequelize = await dbname(req, compCode);
+
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
+
+    const body = req.body || {};
+    const query = req.query || {};
+
+    const page = Math.max(1, parseInt(body.page || query.page || 1, 10));
+    const limit = Math.max(1, Math.min(500, parseInt(body.limit || body.pageSize || query.limit || query.pageSize || 10, 10)));
+    const offset = (page - 1) * limit;
+
+    const search = String(body.search || body.searchQuery || query.search || query.searchQuery || "").trim();
+    const status = body.status !== undefined && body.status !== null && body.status !== "" 
+      ? body.status 
+      : (query.status !== undefined && query.status !== null && query.status !== "" ? query.status : undefined);
+
+    const formId = String(body.formId || body.form_id || query.formId || query.form_id || "").trim();
+    const pageId = String(body.pageId || body.page_id || query.pageId || query.page_id || "").trim();
+    const adId = String(body.adId || body.ad_id || query.adId || query.ad_id || "").trim();
+    const fromDate = String(body.fromDate || body.startDate || query.fromDate || query.startDate || "").trim();
+    const toDate = String(body.toDate || body.endDate || query.toDate || query.endDate || "").trim();
+
+    const allowedSortFields = ["UTD", "Created_At", "Meta_Created_At", "Full_Name", "Phone_Number", "status", "Company_Name"];
+    let sortBy = String(body.sortBy || query.sortBy || "UTD").trim();
+    if (!allowedSortFields.includes(sortBy)) {
+      sortBy = "UTD";
+    }
+
+    let sortOrder = String(body.sortOrder || query.sortOrder || "DESC").trim().toUpperCase();
+    if (sortOrder !== "ASC" && sortOrder !== "DESC") {
+      sortOrder = "DESC";
+    }
+
+    const whereConditions = ["1=1"];
+    const replacements = {
+      limit,
+      offset,
+    };
+
+    if (search) {
+      whereConditions.push(
+        `(
+          Full_Name LIKE :search OR
+          Phone_Number LIKE :search OR
+          Email LIKE :search OR
+          City LIKE :search OR
+          Company_Name LIKE :search OR
+          Meta_Lead_Id LIKE :search OR
+          Form_Id LIKE :search
+        )`
+      );
+      replacements.search = `%${search}%`;
+    }
+
+    if (status !== undefined) {
+      whereConditions.push(`status = :status`);
+      replacements.status = Number(status);
+    }
+
+    if (formId) {
+      whereConditions.push(`Form_Id = :formId`);
+      replacements.formId = formId;
+    }
+
+    if (pageId) {
+      whereConditions.push(`Page_Id = :pageId`);
+      replacements.pageId = pageId;
+    }
+
+    if (adId) {
+      whereConditions.push(`Ad_Id = :adId`);
+      replacements.adId = adId;
+    }
+
+    if (fromDate) {
+      whereConditions.push(`Created_At >= :fromDate`);
+      replacements.fromDate = `${fromDate} 00:00:00`;
+    }
+
+    if (toDate) {
+      whereConditions.push(`Created_At <= :toDate`);
+      replacements.toDate = `${toDate} 23:59:59`;
+    }
+
+    const whereClause = whereConditions.join(" AND ");
+
+    const countQuery = `
+      SELECT COUNT(*) AS totalCount
+      FROM Meta_Lead_Tbl
+      WHERE ${whereClause}
+    `;
+
+    const countResult = await sequelize.query(countQuery, {
+      replacements,
+      type: QueryTypes.SELECT,
+    });
+
+    const totalRecords = parseInt(countResult?.[0]?.totalCount || countResult?.[0]?.TOTALCOUNT || 0, 10);
+    const totalPages = Math.ceil(totalRecords / limit);
+
+    const dataQuery = `
+      SELECT 
+        UTD,
+        Meta_Lead_Id,
+        Page_Id,
+        Form_Id,
+        Ad_Id,
+        Ad_Group_Id,
+        Full_Name,
+        Phone_Number,
+        Email,
+        City,
+        Company_Name,
+        Meta_Created_At,
+        Webhook_Created_At,
+        All_Fields,
+        Raw_Meta_Response,
+        Raw_Webhook_Value,
+        Source,
+        status,
+        Created_By,
+        Created_At
+      FROM Meta_Lead_Tbl
+      WHERE ${whereClause}
+      ORDER BY ${sortBy} ${sortOrder}
+      OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY
+    `;
+
+    const leads = await sequelize.query(dataQuery, {
+      replacements,
+      type: QueryTypes.SELECT,
+    });
+
+    const formattedLeads = (leads || []).map((lead) => {
+      let parsedAllFields = lead.All_Fields;
+      let parsedRawMeta = lead.Raw_Meta_Response;
+      let parsedRawWebhook = lead.Raw_Webhook_Value;
+
+      try {
+        if (typeof lead.All_Fields === "string") parsedAllFields = JSON.parse(lead.All_Fields);
+      } catch (e) {}
+
+      try {
+        if (typeof lead.Raw_Meta_Response === "string") parsedRawMeta = JSON.parse(lead.Raw_Meta_Response);
+      } catch (e) {}
+
+      try {
+        if (typeof lead.Raw_Webhook_Value === "string") parsedRawWebhook = JSON.parse(lead.Raw_Webhook_Value);
+      } catch (e) {}
+
+      return {
+        ...lead,
+        All_Fields: parsedAllFields,
+        Raw_Meta_Response: parsedRawMeta,
+        Raw_Webhook_Value: parsedRawWebhook,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Meta leads fetched successfully",
+      pagination: {
+        totalRecords,
+        totalPages,
+        currentPage: page,
+        pageSize: limit,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+      data: formattedLeads,
+    });
+  } catch (error) {
+    console.error("Get Meta Leads Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch Meta leads",
+      error: error.original?.message || error.message,
+    });
+  } finally {
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (closeErr) {
+        console.error("Error closing sequelize connection in getMetaLeads:", closeErr.message);
+      }
+    }
+  }
+};

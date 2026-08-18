@@ -25,4 +25,14 @@ router.post(
   MetaWebhookController.receiveMetaWebhook
 );
 
+// ============================================================
+// GET META LEADS (WITH PAGINATION & FILTERS)
+// GET /getMetaLeads, POST /getMetaLeads, GET /leads, POST /leads
+// ============================================================
+
+router.get("/getMetaLeads", MetaWebhookController.getMetaLeads);
+router.post("/getMetaLeads", MetaWebhookController.getMetaLeads);
+router.get("/leads", MetaWebhookController.getMetaLeads);
+router.post("/leads", MetaWebhookController.getMetaLeads);
+
 module.exports = router;

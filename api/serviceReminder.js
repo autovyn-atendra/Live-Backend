@@ -5,6 +5,8 @@ const {
   GetCallRecordings,
   callWebhook,
   getVehicleCallHistory,
+  getAppointmentFormDetails,
+  saveCustomerAppointment,
 } = require("../routes/GetCallRecordings");
 const {
   runServiceReminderScheduler,
@@ -137,6 +139,11 @@ router.post("/callWebhook",  callWebhook);
 
 // ── NEW — Vehicle ki complete call history ─────────────────────
 router.post("/call-history", getVehicleCallHistory);
+
+// ── NEW — Customer Appointment Link Form (Fetch & Update) ──────
+router.get("/get-appointment-details", getAppointmentFormDetails);
+router.post("/get-appointment-details", getAppointmentFormDetails);
+router.post("/save-appointment-details", saveCustomerAppointment);
 
 router.get("/test-cron/run-all", async (req, res) => {
   try {

@@ -17,6 +17,8 @@ const authenticateUser = (req, res, next) => {
     req.path.includes("/panAndAdharApi/digilocker/callback/") || 
     req.path.includes("/quotation/streamRecording/") || 
     req.path.includes("/quotation/callWebhook") || 
+    req.path.includes("/get-appointment-details") ||
+    req.path.includes("/save-appointment-details") ||
     req.path.startsWith("/scheduler/run")
   ) {
     return next();
