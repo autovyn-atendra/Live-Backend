@@ -7205,71 +7205,138 @@ exports.getEmployees = async function (req, res) {
   let sequelize;
 
   try {
-    console.log("req.headers.compcode", req.headers.compcode)
+    console.log("req.headers.compcode", req.headers.compcode);
+
     sequelize = await dbname(req, req.headers.compcode);
 
     const {
       search,
       Loc_Code,
     } = req.body || {};
+const LOCATION = Loc_Code;
+console.log("LOCATION",LOCATION)
+    // ============================================================
+    // BASE WHERE
+    // Sirf active employees
+    // ============================================================
 
-    // ── Base WHERE — sirf active employees (LASTWOR_DATE IS NULL) ──
-    let whereConditions = `WHERE LASTWOR_DATE IS NULL`;
+    let whereConditions = `
+      WHERE e.LASTWOR_DATE IS NULL
+    `;
+
     const replacements = {};
 
-    // ── Loc_Code filter (optional) ────────────────────────────────
-    if (Loc_Code) {
-      const locArr = Array.isArray(Loc_Code)
-        ? Loc_Code.flat().map((v) => String(v).trim()).filter(Boolean)
-        : String(Loc_Code)
-          .trim()
-          .split(/[,\s]+/)
-          .map((x) => x.trim())
-          .filter(Boolean);
+    // ============================================================
+    // LOCATION FILTER
+    //
+    // Supported:
+    // LOCATION: 1
+    // LOCATION: "1"
+    // LOCATION: "1,2,3"
+    // LOCATION: [1,2,3]
+    // ============================================================
 
-      if (locArr.length === 1) {
-        whereConditions += ` AND Loc_Code = :Loc_Code`;
-        replacements.Loc_Code = locArr[0];
-      } else if (locArr.length > 1) {
-        whereConditions += ` AND Loc_Code IN (:Loc_Codes)`;
-        replacements.Loc_Codes = locArr;
+    if (
+      LOCATION !== undefined &&
+      LOCATION !== null &&
+      LOCATION !== ""
+    ) {
+      let locationArray = [];
+
+      if (Array.isArray(LOCATION)) {
+        locationArray = LOCATION
+          .flat()
+          .map((value) => String(value).trim())
+          .filter(Boolean);
+      } else {
+        locationArray = String(LOCATION)
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+      }
+
+      // Duplicate location remove
+      locationArray = [...new Set(locationArray)];
+
+      // Single location
+      if (locationArray.length === 1) {
+        whereConditions += `
+          AND CAST(e.LOCATION AS VARCHAR(50)) = :LOCATION
+        `;
+
+        replacements.LOCATION = locationArray[0];
+      }
+
+      // Multiple locations
+      if (locationArray.length > 1) {
+        whereConditions += `
+          AND CAST(e.LOCATION AS VARCHAR(50)) IN (:LOCATIONS)
+        `;
+
+        replacements.LOCATIONS = locationArray;
       }
     }
 
-    // ── Search filter ─────────────────────────────────────────────
-    if (search) {
-      const raw = String(search).trim();
-      const searchLike = `%${raw}%`;
+    // ============================================================
+    // SEARCH FILTER
+    // ============================================================
 
-      whereConditions += `
-        AND (
-          UPPER(EMPCODE)                         LIKE UPPER(:search)
-          OR UPPER(ISNULL(EMPFIRSTNAME, ''))     LIKE UPPER(:search)
-          OR UPPER(ISNULL(EMPLASTNAME,  ''))     LIKE UPPER(:search)
-          OR UPPER(ISNULL(MOBILENO,     ''))     LIKE UPPER(:search)
-          OR UPPER(
-               ISNULL(EMPFIRSTNAME, '') + ' ' +
-               ISNULL(EMPLASTNAME,  '')
-             )                                   LIKE UPPER(:search)
-        )`;
-      replacements.search = searchLike;
+    if (search) {
+      const rawSearch = String(search).trim();
+
+      if (rawSearch) {
+        replacements.search = `%${rawSearch}%`;
+
+        whereConditions += `
+          AND (
+            UPPER(ISNULL(e.EMPCODE, ''))
+              LIKE UPPER(:search)
+
+            OR UPPER(ISNULL(e.EMPFIRSTNAME, ''))
+              LIKE UPPER(:search)
+
+            OR UPPER(ISNULL(e.EMPLASTNAME, ''))
+              LIKE UPPER(:search)
+
+            OR UPPER(ISNULL(e.MOBILENO, ''))
+              LIKE UPPER(:search)
+
+            OR UPPER(
+              LTRIM(RTRIM(ISNULL(e.EMPFIRSTNAME, '')))
+              + ' ' +
+              LTRIM(RTRIM(ISNULL(e.EMPLASTNAME, '')))
+            ) LIKE UPPER(:search)
+          )
+        `;
+      }
     }
 
-    // ── DATA query ────────────────────────────────────────────────
+    // ============================================================
+    // EMPLOYEE DATA
+    // ============================================================
+
     const data = await sequelize.query(
-      `SELECT
-         EMPCODE,
-         ISNULL(EMPFIRSTNAME, '')  AS EMPFIRSTNAME,
-         ISNULL(EMPLASTNAME,  '')  AS EMPLASTNAME,
-         ISNULL(
-           LTRIM(RTRIM(ISNULL(EMPFIRSTNAME, ''))) + ' ' +
-           LTRIM(RTRIM(ISNULL(EMPLASTNAME,  ''))),
-           ''
-         )                         AS FULL_NAME,
-         ISNULL(MOBILENO, '')      AS MOBILENO
-       FROM dbo.EMPLOYEEMASTER
-       ${whereConditions}
-       ORDER BY EMPCODE ASC`,
+      `
+      SELECT
+        e.*,
+
+        LTRIM(
+          RTRIM(
+            ISNULL(e.EMPFIRSTNAME, '') +
+            CASE
+              WHEN ISNULL(e.EMPLASTNAME, '') <> ''
+                THEN ' ' + e.EMPLASTNAME
+              ELSE ''
+            END
+          )
+        ) AS FULL_NAME
+
+      FROM dbo.EMPLOYEEMASTER AS e
+
+      ${whereConditions}
+
+      ORDER BY e.EMPCODE ASC
+      `,
       {
         replacements,
         type: QueryTypes.SELECT,
@@ -7284,18 +7351,19 @@ exports.getEmployees = async function (req, res) {
 
   } catch (error) {
     console.error("Get Employees Error:", error);
+
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
       error: error.message,
     });
+
   } finally {
     if (sequelize) {
       await sequelize.close();
     }
   }
 };
-
 
 
 

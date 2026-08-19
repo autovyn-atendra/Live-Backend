@@ -1,9 +1,9 @@
 const axios = require("axios");
 
 const CALLMATIC_CONFIG = {
-API_KEY: "857e790e-ad5f-4816-9530-0ae643988229",
-CAMPAIGN_ID: "3ef9dfb8-ff24-4f96-a0b2-efbb87c5d309",
-BASE_URL: "https://api.callmatic.ai/v1",
+  API_KEY: "857e790e-ad5f-4816-9530-0ae643988229",
+  CAMPAIGN_ID: "3ef9dfb8-ff24-4f96-a0b2-efbb87c5d309",
+  BASE_URL: "https://api.callmatic.ai/v1",
 };
 const headers = {
   "Content-Type": "application/json",
@@ -86,7 +86,7 @@ const triggerBatchCalls = async (leads = []) => {
 /**
  * Get Call Status
  */
-const getCallStatus = async (callId ) => {
+const getCallStatus = async (callId) => {
   try {
     const response = await axios.get(
       `${CALLMATIC_CONFIG.BASE_URL}/calls/${callId}`,
