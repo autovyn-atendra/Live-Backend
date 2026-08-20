@@ -25,6 +25,8 @@ router.post(
   MetaWebhookController.receiveMetaWebhook
 );
 
+
+
 // ============================================================
 // GET META LEADS (WITH PAGINATION & FILTERS)
 // GET /getMetaLeads, POST /getMetaLeads, GET /leads, POST /leads
@@ -73,7 +75,8 @@ router.post("/toggleCampaignStatus", MetaWebhookController.toggleCampaignStatus)
 // META CALLMATIC AI CALL & LOGS API
 // ============================================================
 router.post("/makeMetaCall", MetaWebhookController.makeMetaCall);
-router.post("/triggerMetaCall", MetaWebhookController.makeMetaCall);
+router.post("/triggerMetaCall", MetaWebhookController.triggerMetaCall || MetaWebhookController.makeMetaCall);
+router.post("/triggerLeadCall", MetaWebhookController.triggerLeadCall || MetaWebhookController.makeMetaCall);
 router.get("/getMetaCallLogs", MetaWebhookController.getMetaCallLogs);
 router.post("/getMetaCallLogs", MetaWebhookController.getMetaCallLogs);
 router.get("/getMetaCallHistory/:leadUtd", MetaWebhookController.getMetaCallHistory);

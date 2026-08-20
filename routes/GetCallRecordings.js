@@ -576,7 +576,7 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
         const param3_Center = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
         const param4_Address = cd.Loc_Address?.trim() || "Service Center Address";
         const apptToken = generateAppointmentToken(reminderUTD, cd.Veh_Reg_No, compCodeStr);
-        const param5_Link = `https://erp.autovyn.com/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${reminderUTD}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
+        const param5_Link = `${process.env.NEXT_FRONTEND_URL}/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${reminderUTD}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
         const param6_Company = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
 
         console.log(`[WHATSAPP] 📲 Sending Post-Call WhatsApp Reminder to ${targetMob} (compCode: ${compCodeStr}) for UTD ${reminderUTD}`);
@@ -1444,7 +1444,7 @@ exports.saveCustomerAppointment = async (req, res) => {
       const p3 = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
       const p4 = cd.Loc_Address?.trim() || "Main Workshop";
       const apptToken = generateAppointmentToken(cd.utd || utd, cd.Veh_Reg_No, compCodeStr);
-      const p5 = `https://erp.autovyn.com/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${cd.utd || utd || ""}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
+      const p5 = `${process.env.NEXT_FRONTEND_URL}/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${cd.utd || utd || ""}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
       const p6 = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
 
       console.log("p5", p5);

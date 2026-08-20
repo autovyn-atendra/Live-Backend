@@ -20,6 +20,7 @@ const faceData = require("./api/face_data")
 const metaWebhookapi = require("./api/metaWebhookapi");
 
 const { startServiceReminderCron } = require("./cronJobs/cronJobs");
+const { startMetaLeadCron } = require("./cronJobs/metaLeadCron");
 const aiRoutes = require("./api/aiRoutes")
 
 
@@ -43,7 +44,8 @@ app.use(bodyParser.json({ limit: "100mb" })); // Adjust the limit as needed
 app.use(bodyParser.urlencoded({ limit: "100mb", extended: true })); // Adjust the limit as needed
 app.use(express.urlencoded({ extended: false }));
 app.use(logRequests);
-startServiceReminderCron()
+startServiceReminderCron();
+// startMetaLeadCron();
 
 app.use((req, res, next) => {
   const originalJson = res.json;

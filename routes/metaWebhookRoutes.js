@@ -374,6 +374,30 @@ exports.receiveMetaWebhook = async function (req, res) {
             )
           );
 
+          // ----------------------------------------------------
+          // 4. Trigger Instant AI Call to new Lead
+          // ----------------------------------------------------
+          if (dbResult?.UTD && !dbResult?.duplicate) {
+            try {
+              const { triggerInstantMetaLeadCall } = require("../cronJobs/metaLeadCron");
+              const compCode = String(
+                process.env.META_COMP_CODE ||
+                req.headers?.compcode ||
+                ""
+              ).trim();
+
+              console.log(`[META-WEBHOOK] ⚡ Auto-triggering instant AI Call for new Lead UTD #${dbResult.UTD}`);
+              triggerInstantMetaLeadCall({
+                metaLeadUtd: dbResult.UTD,
+                compcode: compCode,
+              }).catch((callErr) => {
+                console.error("❌ Instant Meta Lead AI Call Error:", callErr?.message);
+              });
+            } catch (instErr) {
+              console.error("Instant Callmatic Hook Error:", instErr?.message);
+            }
+          }
+
         } catch (error) {
 
           console.error(
@@ -1442,6 +1466,8 @@ exports.getMetaLeads = async function (req, res) {
     const adId = String(body.adId || body.ad_id || query.adId || query.ad_id || "").trim();
     const fromDate = String(body.fromDate || body.startDate || query.fromDate || query.startDate || "").trim();
     const toDate = String(body.toDate || body.endDate || query.toDate || query.endDate || "").trim();
+    const callSourceFilter = String(body.callSource || body.callType || body.filterCallSource || query.callSource || query.callType || "").trim();
+    const leadUtd = Number(body.leadUtd || body.utd || query.leadUtd || query.utd || 0);
 
     const allowedSortFields = ["UTD", "Created_At", "Meta_Created_At", "Full_Name", "Phone_Number", "status", "Company_Name"];
     let sortBy = String(body.sortBy || query.sortBy || "UTD").trim();
@@ -1475,9 +1501,14 @@ exports.getMetaLeads = async function (req, res) {
       replacements.search = `%${search}%`;
     }
 
-    if (status !== undefined) {
+    if (leadUtd && !isNaN(leadUtd)) {
+      whereConditions.push(`UTD = :leadUtd`);
+      replacements.leadUtd = leadUtd;
+    } else if (status !== undefined) {
       whereConditions.push(`status = :status`);
       replacements.status = Number(status);
+    } else {
+      whereConditions.push(`ISNULL(status, 0) <> 6`);
     }
 
     if (formId) {
@@ -1503,6 +1534,16 @@ exports.getMetaLeads = async function (req, res) {
     if (toDate) {
       whereConditions.push(`Created_At <= :toDate`);
       replacements.toDate = `${toDate} 23:59:59`;
+    }
+
+    if (callSourceFilter) {
+      if (callSourceFilter === "AUTO_AI_CALL" || callSourceFilter === "CRON") {
+        whereConditions.push(`UTD IN (SELECT DISTINCT Meta_Lead_UTD FROM Meta_Call_Log_Tbl WHERE Call_Type = 'AUTO_AI_CALL' OR Call_Source LIKE '%CRON%' OR Created_By LIKE '%CRON%')`);
+      } else if (callSourceFilter === "MANUAL_AI_CALL" || callSourceFilter === "MANUAL") {
+        whereConditions.push(`UTD IN (SELECT DISTINCT Meta_Lead_UTD FROM Meta_Call_Log_Tbl WHERE Call_Type = 'MANUAL_AI_CALL' OR Call_Source LIKE '%MANUAL%' OR (Created_By NOT LIKE '%CRON%' AND Created_By IS NOT NULL))`);
+      } else if (callSourceFilter === "SCHEDULED") {
+        whereConditions.push(`UTD IN (SELECT DISTINCT Meta_Lead_UTD FROM Meta_Lead_Followup_Tbl WHERE Followup_Status = 'PENDING')`);
+      }
     }
 
     const whereClause = whereConditions.join(" AND ");
@@ -1799,6 +1840,12 @@ exports.getActivities = async function (req, res) {
         success: false,
         message: "Valid leadUtd is required.",
       });
+    }
+
+    try {
+      await autoSyncLeadCalls(sequelize, leadUtd);
+    } catch (syncErr) {
+      console.error("Auto sync lead calls error (non-critical):", syncErr?.message);
     }
 
     const query = `
@@ -2637,8 +2684,8 @@ exports.updateLeadStatus = async function (req, res) {
 
     // Update status
     await sequelize.query(
-      `UPDATE Meta_Lead_Tbl SET status = :newStatus, Updated_By = :updatedBy, Updated_At = GETDATE() WHERE UTD = :metaLeadUtd`,
-      { replacements: { metaLeadUtd, newStatus, updatedBy }, type: QueryTypes.UPDATE, transaction }
+      `UPDATE Meta_Lead_Tbl SET status = :newStatus WHERE UTD = :metaLeadUtd`,
+      { replacements: { metaLeadUtd, newStatus }, type: QueryTypes.UPDATE, transaction }
     );
 
     // Activity record
@@ -2801,6 +2848,7 @@ exports.createCampaign = async function (req, res) {
     const campaignType = body.campaignType || body.Campaign_Type || "CALLMATIC";
     const metaFormId = body.metaFormId || body.Meta_Form_Id || null;
     const metaFormName = body.metaFormName || body.Meta_Form_Name || null;
+    const transferNumberVal = body.transferNumber || body.transfer_number || body.Transfer_Number || body.salesExecutiveNumber || body.Sales_Executive_Number || null;
     const isActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : (body.Is_Active !== undefined ? (body.Is_Active ? 1 : 0) : 1);
     const remark = body.remark || body.Remark || null;
     const createdBy = String(req.headers.name || body.createdBy || "SYSTEM").trim();
@@ -2833,6 +2881,7 @@ exports.createCampaign = async function (req, res) {
         Campaign_Type,
         Meta_Form_Id,
         Meta_Form_Name,
+        Sales_Executive_Number,
         Is_Active,
         Remark,
         Created_By,
@@ -2843,6 +2892,7 @@ exports.createCampaign = async function (req, res) {
         :campaignType,
         :metaFormId,
         :metaFormName,
+        :transferNumberVal,
         :isActive,
         :remark,
         :createdBy,
@@ -2857,6 +2907,7 @@ exports.createCampaign = async function (req, res) {
         campaignType,
         metaFormId,
         metaFormName,
+        transferNumberVal,
         isActive,
         remark,
         createdBy,
@@ -2921,6 +2972,7 @@ exports.updateCampaign = async function (req, res) {
     const campaignType = body.campaignType !== undefined ? body.campaignType : body.Campaign_Type;
     const metaFormId = body.metaFormId !== undefined ? body.metaFormId : body.Meta_Form_Id;
     const metaFormName = body.metaFormName !== undefined ? body.metaFormName : body.Meta_Form_Name;
+    const transferNumberVal = body.transferNumber !== undefined ? body.transferNumber : (body.transfer_number !== undefined ? body.transfer_number : (body.Sales_Executive_Number !== undefined ? body.Sales_Executive_Number : body.Transfer_Number));
     const isActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : (body.Is_Active !== undefined ? (body.Is_Active ? 1 : 0) : undefined);
     const remark = body.remark !== undefined ? body.remark : body.Remark;
     const updatedBy = String(req.headers.name || body.updatedBy || "SYSTEM").trim();
@@ -2970,6 +3022,7 @@ exports.updateCampaign = async function (req, res) {
         Campaign_Type = CASE WHEN :campaignType IS NOT NULL THEN :campaignType ELSE Campaign_Type END,
         Meta_Form_Id = CASE WHEN :metaFormId IS NOT NULL THEN :metaFormId ELSE Meta_Form_Id END,
         Meta_Form_Name = CASE WHEN :metaFormName IS NOT NULL THEN :metaFormName ELSE Meta_Form_Name END,
+        Sales_Executive_Number = CASE WHEN :transferNumberVal IS NOT NULL THEN :transferNumberVal ELSE Sales_Executive_Number END,
         Is_Active = CASE WHEN :isActive IS NOT NULL THEN :isActive ELSE Is_Active END,
         Remark = CASE WHEN :remark IS NOT NULL THEN :remark ELSE Remark END,
         Updated_By = :updatedBy,
@@ -2985,6 +3038,7 @@ exports.updateCampaign = async function (req, res) {
         campaignType: campaignType !== undefined ? campaignType : null,
         metaFormId: metaFormId !== undefined ? metaFormId : null,
         metaFormName: metaFormName !== undefined ? metaFormName : null,
+        transferNumberVal: transferNumberVal !== undefined ? transferNumberVal : null,
         isActive: isActive !== undefined ? isActive : null,
         remark: remark !== undefined ? remark : null,
         updatedBy,
@@ -3051,7 +3105,7 @@ exports.getCampaigns = async function (req, res) {
     const replacements = {};
 
     if (search) {
-      whereConditions.push("(Campaign_Id LIKE :search OR Campaign_Name LIKE :search OR Campaign_Type LIKE :search OR Meta_Form_Id LIKE :search OR Meta_Form_Name LIKE :search OR Remark LIKE :search)");
+      whereConditions.push("(Campaign_Id LIKE :search OR Campaign_Name LIKE :search OR Campaign_Type LIKE :search OR Meta_Form_Id LIKE :search OR Meta_Form_Name LIKE :search OR Sales_Executive_Number LIKE :search OR Remark LIKE :search)");
       replacements.search = `%${search}%`;
     }
 
@@ -3070,6 +3124,8 @@ exports.getCampaigns = async function (req, res) {
         Campaign_Type,
         Meta_Form_Id,
         Meta_Form_Name,
+        Sales_Executive_Number,
+        Sales_Executive_Number AS Transfer_Number,
         Is_Active,
         Remark,
         Created_By,
@@ -3140,6 +3196,7 @@ exports.toggleCampaignStatus = async function (req, res) {
 
     const body = req.body || {};
     const utd = Number(body.utd || body.UTD);
+    const isActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : (body.Is_Active !== undefined ? (body.Is_Active ? 1 : 0) : null);
     const updatedBy = String(req.headers.name || body.updatedBy || "SYSTEM").trim();
 
     if (!utd || isNaN(utd)) {
@@ -3149,23 +3206,23 @@ exports.toggleCampaignStatus = async function (req, res) {
       });
     }
 
-    const toggleSql = `
+    const updateSql = `
       UPDATE Meta_Callmatic_Campaign_Tbl
       SET 
-        Is_Active = CASE WHEN Is_Active = 1 THEN 0 ELSE 1 END,
+        Is_Active = CASE WHEN :isActive IS NOT NULL THEN :isActive ELSE CASE WHEN Is_Active = 1 THEN 0 ELSE 1 END END,
         Updated_By = :updatedBy,
         Updated_At = GETDATE()
       WHERE UTD = :utd
     `;
 
-    await sequelize.query(toggleSql, {
-      replacements: { utd, updatedBy },
+    await sequelize.query(updateSql, {
+      replacements: { utd, isActive, updatedBy },
       type: QueryTypes.UPDATE,
     });
 
     return res.status(200).json({
       success: true,
-      message: "Campaign status toggled successfully",
+      message: "Campaign status updated successfully",
     });
   } catch (error) {
     console.error("Toggle Campaign Status Error:", error);
@@ -3184,83 +3241,70 @@ exports.toggleCampaignStatus = async function (req, res) {
 };
 
 // ============================================================
-// MAKE META LEAD AI CALL
-// POST /makeMetaCall, POST /triggerMetaCall
+// TRIGGER CALLMATIC AI CALL FOR A META LEAD
+// POST /meta/triggerLeadCall, POST /makeMetaCall
 // ============================================================
-exports.makeMetaCall = async function (req, res) {
-  let sequelize;
-
+const triggerLeadCall = async function (req, res) {
+  let sequelize = null;
   try {
-    const compcode = req.headers.compcode;
-    if (!compcode) {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
       return res.status(400).json({
         success: false,
-        message: "Header 'compcode' is missing",
+        message: "Company code (compcode) is required.",
       });
     }
 
-    sequelize = await dbname(req, compcode);
+    sequelize = await dbname(req, compCode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
 
     const body = req.body || {};
-    const metaLeadUtd = Number(
-      body.meta_lead_utd || body.Meta_Lead_UTD || body.leadUtd || body.utd
-    );
-    const metaLeadId = body.meta_lead_id || body.Meta_Lead_Id || null;
+    const metaLeadUtd = Number(body.metaLeadUtd || body.meta_lead_utd || body.UTD);
 
-    if (!metaLeadUtd && !metaLeadId) {
+    if (!metaLeadUtd || isNaN(metaLeadUtd)) {
       return res.status(400).json({
         success: false,
-        message: "Valid Meta Lead UTD (meta_lead_utd) or Meta Lead ID (meta_lead_id) is required.",
+        message: "Valid Meta lead UTD (metaLeadUtd) is required.",
       });
     }
 
     // 1. Fetch Lead Details from Meta_Lead_Tbl
-    let leadQuery = `
-      SELECT 
-        UTD,
-        Meta_Lead_Id,
-        Full_Name,
-        Phone_Number,
-        Email,
-        City,
-        Company_Name,
-        Form_Id,
-        Page_Id,
-        Ad_Id,
-        Ad_Group_Id,
-        Created_By,
-        Created_At
+    const leadSql = `
+      SELECT TOP 1 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Form_Id, Page_Id, Company_Name, status
       FROM Meta_Lead_Tbl
+      WHERE UTD = :metaLeadUtd
     `;
-    const replacements = {};
-
-    if (metaLeadUtd) {
-      leadQuery += ` WHERE UTD = :metaLeadUtd`;
-      replacements.metaLeadUtd = metaLeadUtd;
-    } else {
-      leadQuery += ` WHERE Meta_Lead_Id = :metaLeadId`;
-      replacements.metaLeadId = metaLeadId;
-    }
-
-    const leadResult = await sequelize.query(leadQuery, {
-      replacements,
+    const leadResult = await sequelize.query(leadSql, {
+      replacements: { metaLeadUtd },
       type: QueryTypes.SELECT,
     });
 
     if (!leadResult || leadResult.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `Meta lead not found for the provided identifier.`,
+        message: `Meta lead with UTD '${metaLeadUtd}' not found or inactive.`,
       });
     }
 
     const lead = leadResult[0];
-    const calleePhoneNumber = lead.Phone_Number ? String(lead.Phone_Number).trim() : "";
+    const calleePhoneNumber = lead.Phone_Number;
 
-    if (!calleePhoneNumber) {
+    if (!calleePhoneNumber || !String(calleePhoneNumber).trim()) {
       return res.status(400).json({
         success: false,
-        message: `Customer phone number (Phone_Number) is missing for lead UTD ${lead.UTD}.`,
+        message: `Phone number is missing for Meta lead UTD '${metaLeadUtd}'.`,
       });
     }
 
@@ -3269,13 +3313,14 @@ exports.makeMetaCall = async function (req, res) {
     let campaignName = body.campaign_name || body.Campaign_Name || null;
     let metaFormId = body.meta_form_id || body.Meta_Form_Id || lead.Form_Id || null;
     let metaFormName = body.meta_form_name || body.Meta_Form_Name || null;
+    let campaignTransferNumber = null;
 
     let campResult = [];
 
     // Priority 1: Match active campaign by Lead's exact Meta_Form_Id
     if (lead.Form_Id) {
       const formMatchQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1 AND Meta_Form_Id = :formId
         ORDER BY UTD DESC
@@ -3285,14 +3330,14 @@ exports.makeMetaCall = async function (req, res) {
         type: QueryTypes.SELECT,
       });
       if (campResult && campResult.length > 0) {
-        console.log(`[MAKE-CALL] Matched active campaign by Meta_Form_Id (${lead.Form_Id}): ${campResult[0].Campaign_Id}`);
+        console.log(`[TRIGGER-CALL] Matched active campaign by Meta_Form_Id (${lead.Form_Id}): ${campResult[0].Campaign_Id}`);
       }
     }
 
     // Priority 2: Match by direct campaign_id if passed in request body
     if ((!campResult || campResult.length === 0) && campaignId) {
       const idMatchQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1 AND Campaign_Id = :campaignId
         ORDER BY UTD DESC
@@ -3306,7 +3351,7 @@ exports.makeMetaCall = async function (req, res) {
     // Priority 3: Fallback to latest Active Campaign from Meta_Callmatic_Campaign_Tbl if no form match
     if (!campResult || campResult.length === 0) {
       const fallbackQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1
         ORDER BY UTD DESC
@@ -3322,6 +3367,7 @@ exports.makeMetaCall = async function (req, res) {
       campaignName = camp.Campaign_Name || campaignName;
       metaFormId = camp.Meta_Form_Id || metaFormId;
       metaFormName = camp.Meta_Form_Name || metaFormName;
+      campaignTransferNumber = camp.Sales_Executive_Number || camp.Transfer_Number || null;
     }
 
     if (!campaignId) {
@@ -3335,7 +3381,7 @@ exports.makeMetaCall = async function (req, res) {
 
     // 3. Construct call variables with defaults for company_name & transferNumber
     const companyName = body.company_name || body.companyName || lead.Company_Name || "AUTOVYN";
-    const transferNumber = body.transfer_number || body.transferNumber || "9876543210";
+    const transferNumber = campaignTransferNumber || body.transfer_number || body.transferNumber || process.env.META_TRANSFER_NUMBER || "9876543210";
     const calleeName = lead.Full_Name || "Customer";
 
     const variables = {
@@ -3483,6 +3529,10 @@ exports.makeMetaCall = async function (req, res) {
   }
 };
 
+exports.triggerLeadCall = triggerLeadCall;
+exports.makeMetaCall = triggerLeadCall;
+exports.triggerMetaCall = triggerLeadCall;
+
 // ============================================================
 // GET META CALL LOGS
 // GET /getMetaCallLogs, POST /getMetaCallLogs
@@ -3558,30 +3608,116 @@ exports.getMetaCallLogs = async function (req, res) {
 };
 
 /**
- * Log AI Call Summary Activity & Auto Create Followup for Lead
+ * Extract Schedule Date & Time from AI Call Summary / Transcript Text
  */
-const syncAiCallSummaryAndFollowup = async (sequelize, metaLeadUtd, callId, summaryText, callStatus = "COMPLETED", durationSec = 0) => {
-  if (!sequelize || !metaLeadUtd || !summaryText) return;
+const extractScheduleFromText = (summaryText = "", transcriptArr = []) => {
+  const fullText = (
+    String(summaryText) + " " +
+    (Array.isArray(transcriptArr) ? transcriptArr.map(t => typeof t === "string" ? t : (t.text || t.content || t.message || "")).join(" ") : "")
+  ).toLowerCase();
+
+  let targetDate = new Date();
+  let timeStr = "11:00";
+  let hasSpecificSchedule = false;
+
+  // Relative Date Phrases
+  if (fullText.includes("day after tomorrow") || fullText.includes("parso")) {
+    targetDate.setDate(targetDate.getDate() + 2);
+    hasSpecificSchedule = true;
+  } else if (fullText.includes("tomorrow") || fullText.includes("kal") || fullText.includes("next day")) {
+    targetDate.setDate(targetDate.getDate() + 1);
+    hasSpecificSchedule = true;
+  } else if (/\b(after|in)\s+(\d+)\s+days?\b/.test(fullText)) {
+    const match = fullText.match(/\b(after|in)\s+(\d+)\s+days?\b/);
+    if (match && match[2]) {
+      targetDate.setDate(targetDate.getDate() + parseInt(match[2], 10));
+      hasSpecificSchedule = true;
+    }
+  } else if (/\b(\d+)\s+din\s+baad\b/.test(fullText)) {
+    const match = fullText.match(/\b(\d+)\s+din\s+baad\b/);
+    if (match && match[1]) {
+      targetDate.setDate(targetDate.getDate() + parseInt(match[1], 10));
+      hasSpecificSchedule = true;
+    }
+  }
+
+  // Explicit Date YYYY-MM-DD or DD/MM/YYYY or DD-MM-YYYY
+  const dateMatch = fullText.match(/\b(\d{4}[-/]\d{1,2}[-/]\d{1,2})\b/) || fullText.match(/\b(\d{1,2}[-/]\d{1,2}[-/]\d{4})\b/);
+  if (dateMatch) {
+    try {
+      const parts = dateMatch[1].split(/[-/]/);
+      let parsed;
+      if (parts[0].length === 4) {
+        parsed = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      } else {
+        parsed = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+      }
+      if (!isNaN(parsed.getTime()) && parsed >= new Date(new Date().setHours(0, 0, 0, 0))) {
+        targetDate = parsed;
+        hasSpecificSchedule = true;
+      }
+    } catch (_) {}
+  }
+
+  // Explicit Time
+  const timeMatch = fullText.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/) || fullText.match(/\b(\d{1,2})\s*ba?je\b/);
+  if (timeMatch) {
+    let hour = parseInt(timeMatch[1], 10);
+    let min = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+    const ampm = timeMatch[3];
+    if (ampm === "pm" && hour < 12) hour += 12;
+    if (ampm === "am" && hour === 12) hour = 0;
+    timeStr = `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+    hasSpecificSchedule = true;
+  }
+
+  const yyyy = targetDate.getFullYear();
+  const mm = String(targetDate.getMonth() + 1).padStart(2, "0");
+  const dd = String(targetDate.getDate()).padStart(2, "0");
+  const formattedDate = `${yyyy}-${mm}-${dd}`;
+
+  return {
+    hasSpecificSchedule,
+    date: formattedDate,
+    time: timeStr
+  };
+};
+
+/**
+ * Log AI Call Summary Activity, Extract Followup Date/Time, & Implement 3-Day Retry Rule
+ */
+const syncAiCallSummaryAndFollowup = async (sequelize, metaLeadUtd, callId, summaryText, callStatus = "COMPLETED", durationSec = 0, transcriptArr = []) => {
+  if (!sequelize || !metaLeadUtd) return;
 
   try {
-    const cleanSummary = String(summaryText).trim();
-    if (!cleanSummary) return;
+    const cleanSummary = summaryText ? String(summaryText).trim() : "";
+    const statusStr = String(callStatus || "COMPLETED").toUpperCase();
+    const effectiveSummary = cleanSummary || `Callmatic AI Call (${statusStr}${durationSec ? `, ${durationSec}s` : ""}).`;
+    const isUnansweredOrFailed = ["NO_ANSWER", "BUSY", "FAILED", "UNANSWERED", "NO-RESPONSE", "REJECTED"].includes(statusStr) || Number(durationSec) === 0;
 
-    // 1. Check if AI_CALL_SUMMARY activity already logged for this summary/callId
-    const existingActivity = await sequelize.query(
-      `SELECT TOP 1 UTD FROM Meta_Lead_Activity_Tbl 
-       WHERE Meta_Lead_UTD = :metaLeadUtd 
-         AND (Activity_Type = 'AI_CALL_SUMMARY' OR Activity_Type = 'AI_CALL')
-         AND (Remark LIKE :summaryPattern OR Message_Id = :callId)`,
-      {
-        replacements: {
-          metaLeadUtd,
-          summaryPattern: `%${cleanSummary.substring(0, 30)}%`,
-          callId: String(callId || ""),
-        },
-        type: QueryTypes.SELECT,
-      }
-    );
+    // 1. Check if AI_CALL_SUMMARY activity already logged for this callId or summary
+    const replacements = {
+      metaLeadUtd,
+      callId: String(callId || ""),
+      summaryPattern: cleanSummary ? `%${cleanSummary.substring(0, 30)}%` : "%Callmatic AI Call%",
+    };
+
+    let checkQuery = `
+      SELECT TOP 1 UTD FROM Meta_Lead_Activity_Tbl 
+      WHERE Meta_Lead_UTD = :metaLeadUtd 
+        AND (Activity_Type = 'AI_CALL_SUMMARY' OR Activity_Type = 'AI_CALL')
+    `;
+
+    if (callId) {
+      checkQuery += ` AND (Message_Id = :callId OR Remark LIKE :summaryPattern)`;
+    } else {
+      checkQuery += ` AND Remark LIKE :summaryPattern`;
+    }
+
+    const existingActivity = await sequelize.query(checkQuery, {
+      replacements,
+      type: QueryTypes.SELECT,
+    });
 
     if (!existingActivity || existingActivity.length === 0) {
       // Insert Activity Log into Meta_Lead_Activity_Tbl
@@ -3614,23 +3750,93 @@ const syncAiCallSummaryAndFollowup = async (sequelize, metaLeadUtd, callId, summ
         {
           replacements: {
             metaLeadUtd,
-            callResult: String(callStatus).toUpperCase(),
+            callResult: statusStr,
             callDuration: Number(durationSec) || 0,
             callId: String(callId || ""),
-            remark: `🤖 AI Call Summary: ${cleanSummary}`,
+            remark: `🤖 AI Call Summary: ${effectiveSummary}`,
           },
           type: QueryTypes.INSERT,
         }
       );
       console.log(`[AI-SUMMARY-LOG] Inserted AI Call Summary activity for Lead #${metaLeadUtd}`);
 
-      // 2. Auto Create Follow-up Entry in Meta_Lead_Followup_Tbl (Scheduled for tomorrow at 11:00 AM)
-      const tomorrowDate = new Date();
-      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-      const yyyy = tomorrowDate.getFullYear();
-      const mm = String(tomorrowDate.getMonth() + 1).padStart(2, "0");
-      const dd = String(tomorrowDate.getDate()).padStart(2, "0");
-      const formattedTomorrow = `${yyyy}-${mm}-${dd}`;
+      // Extract scheduled date & time from text / transcript
+      const scheduleInfo = extractScheduleFromText(effectiveSummary, transcriptArr);
+
+      // Check distinct call attempt count / days for this lead
+      const countRes = await sequelize.query(
+        `SELECT COUNT(DISTINCT CAST(Created_At AS DATE)) AS Distinct_Days_Count, COUNT(*) AS Total_Calls 
+         FROM Meta_Call_Log_Tbl WHERE Meta_Lead_UTD = :metaLeadUtd`,
+        { replacements: { metaLeadUtd }, type: QueryTypes.SELECT }
+      );
+
+      const distinctDays = Number(countRes?.[0]?.Distinct_Days_Count || countRes?.[0]?.distinct_days_count || 1);
+      const totalCalls = Number(countRes?.[0]?.Total_Calls || countRes?.[0]?.total_calls || 1);
+
+      // ── 3-DAY RETRY SEQUENCE LOGIC ─────────────────────────────
+      if (isUnansweredOrFailed) {
+        if (distinctDays >= 3 || totalCalls >= 3) {
+          // Total 3 days or 3 attempts reached without answer — STOP ALL CALLS
+          console.log(`[3-DAY-RETRY-RULE] Lead #${metaLeadUtd} reached ${distinctDays} days / ${totalCalls} calls without response. Marking EXHAUSTED & stopping calls.`);
+          
+          await sequelize.query(
+            `UPDATE Meta_Lead_Tbl SET status = 3, Updated_At = GETDATE() WHERE UTD = :metaLeadUtd`,
+            { replacements: { metaLeadUtd }, type: QueryTypes.UPDATE }
+          );
+
+          await sequelize.query(
+            `UPDATE Meta_Lead_Followup_Tbl SET Followup_Status = 'CANCELLED' WHERE Meta_Lead_UTD = :metaLeadUtd AND Followup_Status = 'PENDING'`,
+            { replacements: { metaLeadUtd }, type: QueryTypes.UPDATE }
+          );
+
+          await sequelize.query(
+            `INSERT INTO Meta_Lead_Activity_Tbl (
+              Meta_Lead_UTD, Activity_Type, Activity_Status, Remark, Activity_Date, Created_By, Created_Name, Created_At
+            ) VALUES (
+              :metaLeadUtd, '3_DAY_EXHAUSTED', 'COMPLETED', '3-Day Retry Sequence Completed: No answer after 3 days. Automated calls stopped.', GETDATE(), 'CALLMATIC_AI', 'Callmatic AI Agent', GETDATE()
+            )`,
+            { replacements: { metaLeadUtd }, type: QueryTypes.INSERT }
+          );
+          return;
+        } else {
+          // Schedule Next Day Retry (Day 2 or Day 3)
+          const nextDayDate = new Date();
+          nextDayDate.setDate(nextDayDate.getDate() + 1);
+          const yyyy = nextDayDate.getFullYear();
+          const mm = String(nextDayDate.getMonth() + 1).padStart(2, "0");
+          const dd = String(nextDayDate.getDate()).padStart(2, "0");
+          const formattedNextDay = `${yyyy}-${mm}-${dd}`;
+          const retryTime = "11:00";
+          const retryDayLabel = distinctDays + 1;
+
+          await sequelize.query(
+            `INSERT INTO Meta_Lead_Followup_Tbl (
+              Meta_Lead_UTD, Followup_Date, Followup_Time, Followup_Type, Followup_Status, Purpose, Remark, Created_By, Created_At
+            ) VALUES (
+              :metaLeadUtd, :fDate, :fTime, 'AI_CALL', 'PENDING', :purpose, :remark, 'CALLMATIC_AI', GETDATE()
+            )`,
+            {
+              replacements: {
+                metaLeadUtd,
+                fDate: formattedNextDay,
+                fTime: retryTime,
+                purpose: `Day ${retryDayLabel} Auto Call Retry (Busy/No Answer)`,
+                remark: `Auto Scheduled Day ${retryDayLabel} call retry after unanswered/busy call (Attempt #${totalCalls}).`,
+              },
+              type: QueryTypes.INSERT,
+            }
+          );
+          console.log(`[3-DAY-RETRY-RULE] Scheduled Day ${retryDayLabel} Retry for Lead #${metaLeadUtd} on ${formattedNextDay} at ${retryTime}`);
+          return;
+        }
+      }
+
+      // ── SUCCESSFUL OR CUSTOMER-SCHEDULED FOLLOWUP ──────────────
+      const targetFollowupDate = scheduleInfo.date;
+      const targetFollowupTime = scheduleInfo.time;
+      const scheduleReason = scheduleInfo.hasSpecificSchedule 
+        ? `Scheduled by Customer during Call (${targetFollowupDate} ${targetFollowupTime})` 
+        : `Auto Follow-up based on AI Call Summary`;
 
       await sequelize.query(
         `INSERT INTO Meta_Lead_Followup_Tbl (
@@ -3646,10 +3852,10 @@ const syncAiCallSummaryAndFollowup = async (sequelize, metaLeadUtd, callId, summ
         ) VALUES (
           :metaLeadUtd,
           :fDate,
-          '11:00',
-          'CALL',
+          :fTime,
+          'AI_CALL',
           'PENDING',
-          'AI Call Auto Follow-up',
+          :purpose,
           :remark,
           'CALLMATIC_AI',
           GETDATE()
@@ -3657,8 +3863,10 @@ const syncAiCallSummaryAndFollowup = async (sequelize, metaLeadUtd, callId, summ
         {
           replacements: {
             metaLeadUtd,
-            fDate: formattedTomorrow,
-            remark: `AI Call Summary: ${cleanSummary}`,
+            fDate: targetFollowupDate,
+            fTime: targetFollowupTime,
+            purpose: scheduleReason,
+            remark: `AI Call Summary: ${effectiveSummary}`,
           },
           type: QueryTypes.INSERT,
         }
@@ -3692,16 +3900,84 @@ const syncAiCallSummaryAndFollowup = async (sequelize, metaLeadUtd, callId, summ
         {
           replacements: {
             metaLeadUtd,
-            newValue: `${formattedTomorrow} 11:00`,
-            remark: `Auto Follow-up created based on AI Call Summary: ${cleanSummary.substring(0, 100)}...`,
+            newValue: `${targetFollowupDate} ${targetFollowupTime}`,
+            remark: `Auto Follow-up scheduled (${targetFollowupDate} ${targetFollowupTime}) based on AI Call: ${effectiveSummary.substring(0, 100)}...`,
           },
           type: QueryTypes.INSERT,
         }
       );
-      console.log(`[AI-FOLLOWUP-LOG] Auto created Follow-up for Lead #${metaLeadUtd} on ${formattedTomorrow}`);
+      console.log(`[AI-FOLLOWUP-LOG] Auto created Follow-up for Lead #${metaLeadUtd} on ${targetFollowupDate} at ${targetFollowupTime}`);
     }
   } catch (err) {
     console.error(`[AI-SUMMARY-LOG] Error syncing activity & followup for Lead #${metaLeadUtd}:`, err?.message);
+  }
+};
+
+/**
+ * Auto sync calls from Meta_Call_Log_Tbl to Meta_Lead_Activity_Tbl & Meta_Lead_Followup_Tbl
+ */
+const autoSyncLeadCalls = async (sequelize, leadUtd) => {
+  if (!sequelize || !leadUtd) return;
+  try {
+    const callLogs = await sequelize.query(
+      `SELECT Call_Id, Phone_Number, Created_At FROM Meta_Call_Log_Tbl WHERE Meta_Lead_UTD = :leadUtd ORDER BY UTD DESC`,
+      { replacements: { leadUtd }, type: QueryTypes.SELECT }
+    );
+
+    if (!callLogs || callLogs.length === 0) return;
+
+    for (const log of callLogs) {
+      if (!log.Call_Id) continue;
+
+      let callData = null;
+      try {
+        const apiRes = await getCallStatus(log.Call_Id);
+        callData = apiRes?.data || apiRes;
+      } catch (_) {}
+
+      if (!callData || !callData.status) {
+        const whRows = await sequelize.query(
+          `SELECT TOP 1 * FROM dbo.call_webhook_dtl WHERE call_id = :callId OR (phone_number = :phone AND phone_number IS NOT NULL AND phone_number != '') ORDER BY id DESC`,
+          { replacements: { callId: log.Call_Id, phone: log.Phone_Number || "" }, type: QueryTypes.SELECT }
+        );
+        if (whRows && whRows.length > 0) {
+          callData = {
+            status: whRows[0].status,
+            duration: whRows[0].duration,
+            summary: whRows[0].summary,
+            transcript: whRows[0].transcript
+              ? typeof whRows[0].transcript === "string"
+                ? JSON.parse(whRows[0].transcript)
+                : whRows[0].transcript
+              : [],
+          };
+        }
+      }
+
+      const status = String(callData?.status || callData?.call_status || "completed").toLowerCase();
+      const summary =
+        callData?.summary ||
+        callData?.call_summary ||
+        callData?.analysis?.summary ||
+        callData?.overview ||
+        callData?.result_summary ||
+        callData?.transcript_summary ||
+        (Array.isArray(callData?.transcript) && callData.transcript.length > 0
+          ? `Call completed with ${callData.transcript.length} turns. Customer interacted with Callmatic AI Agent.`
+          : null);
+      const duration = callData?.duration || callData?.call_duration || 0;
+
+      await syncAiCallSummaryAndFollowup(
+        sequelize,
+        leadUtd,
+        log.Call_Id,
+        summary,
+        status,
+        duration
+      );
+    }
+  } catch (err) {
+    console.error(`[AUTO-SYNC-LEAD-CALLS] Error for Lead #${leadUtd}:`, err?.message);
   }
 };
 
