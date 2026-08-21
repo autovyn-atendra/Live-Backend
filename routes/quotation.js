@@ -1,5 +1,6 @@
 const { dbname } = require("../utils/dbconfig");
 const { triggerSingleCall } = require("./callmati");
+const { startCallStatusPoller } = require("./GetCallRecordings");
 
 const checkColumns = async (sequelize) => {
   try {
@@ -24,16 +25,24 @@ const checkColumns = async (sequelize) => {
         names.add("reminder_channel");
       } catch (_) {}
     }
+    if (!names.has("whatsapp_sent")) {
+      try {
+        await sequelize.query(`ALTER TABLE dbo.Srv_Reminder_Tbl ADD WhatsApp_Sent INT DEFAULT 0 NULL`);
+        names.add("whatsapp_sent");
+      } catch (_) {}
+    }
 
     return {
       hasAICallID: names.has("ai_call_id"),
       hasReminderChannel: names.has("reminder_channel"),
+      hasWhatsAppSent: names.has("whatsapp_sent"),
       hasUpdatedAt: names.has("updated_at"),
     };
   } catch (_) {
     return {
       hasAICallID: false,
       hasReminderChannel: false,
+      hasWhatsAppSent: false,
       hasUpdatedAt: false,
     };
   }
@@ -433,6 +442,9 @@ exports.makeServiceReminderCall = async function (req, res) {
         updateClauses.push("AI_Call_ID = :AI_Call_ID");
         replacements.AI_Call_ID = callId || null;
       }
+      if (cols.hasWhatsAppSent) {
+        updateClauses.push("WhatsApp_Sent = 0");
+      }
       if (cols.hasUpdatedAt) {
         updateClauses.push("Updated_At = GETDATE()");
       }
@@ -456,6 +468,14 @@ exports.makeServiceReminderCall = async function (req, res) {
         "[AI-CALL] Reminder update failed (non-critical):",
         updateErr?.message
       );
+    }
+
+    // ════════════════════════════════════════════════════════
+    // STEP 9.5 — Auto Background Poller launch for auto WhatsApp dispatch
+    // ════════════════════════════════════════════════════════
+    if (callId && mainRow.Reminder_UTD) {
+      const compCodeVal = req?.headers?.compcode || req?.body?.compcode || mainRow.Loc_Code;
+      startCallStatusPoller(compCodeVal, mainRow.Reminder_UTD, callId, mainRow.Cust_Vehi_UTD, calledPhone);
     }
 
     // ════════════════════════════════════════════════════════

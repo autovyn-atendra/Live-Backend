@@ -123,14 +123,11 @@ const isAppointmentTimeNow = (apptDateStr, apptTimeStr) => {
 
 const normalizeCallStatus = (rawStatus) => {
   const s = String(rawStatus || "").toLowerCase().trim();
-  if (s === "completed")        return "COMPLETED";
-  if (s === "call-transferred") return "COMPLETED";
-  if (s === "transferred")      return "COMPLETED";
-  if (s === "answered")         return "ANSWERED";
-  if (s === "failed")           return "FAILED";
-  if (s === "no-answer")        return "NO_ANSWER";
-  if (s === "no_answer")        return "NO_ANSWER";
-  if (s === "busy")             return "BUSY";
+  if (["completed", "completed-call", "call-completed", "ended", "transferred", "call-transferred"].includes(s)) return "COMPLETED";
+  if (s === "answered") return "ANSWERED";
+  if (["failed", "canceled", "cancelled"].includes(s)) return "FAILED";
+  if (["no-answer", "no_answer"].includes(s)) return "NO_ANSWER";
+  if (s === "busy") return "BUSY";
   return "INITIATED";
 };
 
@@ -1258,7 +1255,7 @@ const processWebhookUpdates = async () => {
            WHERE wd.phone_number IS NOT NULL
              AND LTRIM(RTRIM(wd.phone_number)) <> ''
              AND LOWER(LTRIM(RTRIM(wd.status))) NOT IN
-                 ('initiated', 'ringing', 'queued', '')
+                 ('initiated', 'ringing', 'queued', 'answered', 'in-progress', 'in_progress', 'ongoing', 'active', 'started', '')
            ORDER BY wd.id DESC`,
           { type: QueryTypes.SELECT }
         );

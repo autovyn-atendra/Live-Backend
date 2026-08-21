@@ -62,13 +62,12 @@ const ddmmyyyyToYYYYMMDD = (dateStr) => {
 
 const normalizeCallStatus = (rawStatus) => {
   const s = String(rawStatus || "").toLowerCase().trim();
-  if (s === "completed") return "COMPLETED";
-  if (s === "call-transferred") return "COMPLETED";
-  if (s === "transferred") return "COMPLETED";
+  if (["completed", "completed-call", "call-completed", "ended", "transferred", "call-transferred"].includes(s)) {
+    return "COMPLETED";
+  }
   if (s === "answered") return "ANSWERED";
-  if (s === "failed") return "FAILED";
-  if (s === "no-answer") return "NO_ANSWER";
-  if (s === "no_answer") return "NO_ANSWER";
+  if (["failed", "canceled", "cancelled"].includes(s)) return "FAILED";
+  if (["no-answer", "no_answer"].includes(s)) return "NO_ANSWER";
   if (s === "busy") return "BUSY";
   return "INITIATED";
 };
@@ -319,11 +318,18 @@ const checkReminderCols = async (sequelize) => {
         names.add("reminder_channel");
       } catch (_) { }
     }
+    if (!names.has("whatsapp_sent")) {
+      try {
+        await sequelize.query(`ALTER TABLE dbo.Srv_Reminder_Tbl ADD WhatsApp_Sent INT DEFAULT 0 NULL`);
+        names.add("whatsapp_sent");
+      } catch (_) { }
+    }
 
     return {
       hasDailyAttempt: names.has("daily_attempt_count"),
       hasAICallID: names.has("ai_call_id"),
       hasReminderChannel: names.has("reminder_channel"),
+      hasWhatsAppSent: names.has("whatsapp_sent"),
       hasUpdatedAt: names.has("updated_at"),
     };
   } catch (_) {
@@ -331,6 +337,7 @@ const checkReminderCols = async (sequelize) => {
       hasDailyAttempt: false,
       hasAICallID: false,
       hasReminderChannel: false,
+      hasWhatsAppSent: false,
       hasUpdatedAt: false,
     };
   }
@@ -534,8 +541,12 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
   }
 
   // ── AUTOMATED WHATSAPP NOTIFICATION ON CALL COMPLETION ─────────────────────
-  if (["COMPLETED", "ANSWERED"].includes(newCallStatus) && reminderUTD) {
+  if (newCallStatus === "COMPLETED" && reminderUTD) {
     try {
+      const waSelectCols = cols.hasWhatsAppSent
+        ? "ISNULL(r.WhatsApp_Sent, 0) AS WhatsApp_Sent,"
+        : "0 AS WhatsApp_Sent,";
+
       const custRows = await sequelize.query(
         `SELECT TOP 1
            c.Cust_Name,
@@ -545,6 +556,7 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
            r.Appointment_Date,
            r.Appointment_Time,
            r.Loc_Code,
+           ${waSelectCols}
            COALESCE(mm1.Misc_Name, mm2.Misc_Name, '') AS Loc_Name,
            COALESCE(mm1.Misc_Add1, mm2.Misc_Add1, '') AS Loc_Address
          FROM dbo.Srv_Reminder_Tbl r
@@ -562,48 +574,60 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
 
       if (custRows && custRows.length > 0 && custRows[0].Cust_Mob) {
         const cd = custRows[0];
-        const compCodeStr = resolveCompCode(
-          req?.headers?.compcode ||
-          req?.body?.compcode ||
-          req?.query?.compcode ||
-          callData?.compcode ||
-          callData?.variables?.compcode ||
-          cd?.Comp_Code
-        );
-        const targetMob = String(cd.Cust_Mob).trim();
-        const param1_CustName = cd.Cust_Name?.trim() || "Customer";
-        const param2_Vehicle = cd.Veh_Reg_No?.trim() || cd.Model_Name?.trim() || "Vehicle";
-        const param3_Center = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
-        const param4_Address = cd.Loc_Address?.trim() || "Service Center Address";
-        const apptToken = generateAppointmentToken(reminderUTD, cd.Veh_Reg_No, compCodeStr);
-        const param5_Link = `${process.env.NEXT_FRONTEND_URL}/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${reminderUTD}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
-        const param6_Company = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
 
-        console.log(`[WHATSAPP] 📲 Sending Post-Call WhatsApp Reminder to ${targetMob} (compCode: ${compCodeStr}) for UTD ${reminderUTD}`);
-        console.log("p5", param5_Link);
+        if (Number(cd.WhatsApp_Sent) === 1) {
+          console.log(`[WHATSAPP] ℹ️ Post-Call WhatsApp already sent for UTD ${reminderUTD} — skipping duplicate send`);
+        } else {
+          const compCodeStr = resolveCompCode(
+            req?.headers?.compcode ||
+            req?.body?.compcode ||
+            req?.query?.compcode ||
+            callData?.compcode ||
+            callData?.variables?.compcode ||
+            cd?.Comp_Code
+          );
+          const targetMob = String(cd.Cust_Mob).trim();
+          const param1_CustName = cd.Cust_Name?.trim() || "Customer";
+          const param2_Vehicle = cd.Veh_Reg_No?.trim() || cd.Model_Name?.trim() || "Vehicle";
+          const param3_Center = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
+          const param4_Address = cd.Loc_Address?.trim() || "Service Center Address";
+          const apptToken = generateAppointmentToken(reminderUTD, cd.Veh_Reg_No, compCodeStr);
+          const param5_Link = `${process.env.NEXT_FRONTEND_URL}/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${reminderUTD}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
+          const param6_Company = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
 
-        const waRes = await SendWhatsAppMessgae(
-          compCodeStr,
-          targetMob,
-          "service_appointment_reminder",
-          [
-            // 1. Customer Name {{1}}
-            { type: "text", text: param1_CustName },
-            // 2. Vehicle / Model Variant {{2}}
-            { type: "text", text: param2_Vehicle },
-            // 3. Service Center Name {{3}}
-            { type: "text", text: param3_Center },
-            // 4. Service Center Address {{4}}
-            { type: "text", text: param4_Address },
-            // 5. View Appointment Details Link {{5}}
-            { type: "text", text: param5_Link },
-            // 6. Regards / Company Name {{6}}
-            { type: "text", text: param6_Company },
-          ],
-          "DONTCHECK"
-        );
+          console.log(`[WHATSAPP] 📲 Sending Post-Call WhatsApp Reminder to ${targetMob} (compCode: ${compCodeStr}) for UTD ${reminderUTD}`);
+          console.log("p5", param5_Link);
 
-        console.log(`[WHATSAPP] ✅ Post-Call WhatsApp message result:`, waRes);
+          const waRes = await SendWhatsAppMessgae(
+            compCodeStr,
+            targetMob,
+            "service_appointment_reminder",
+            [
+              // 1. Customer Name {{1}}
+              { type: "text", text: param1_CustName },
+              // 2. Vehicle / Model Variant {{2}}
+              { type: "text", text: param2_Vehicle },
+              // 3. Service Center Name {{3}}
+              { type: "text", text: param3_Center },
+              // 4. Service Center Address {{4}}
+              { type: "text", text: param4_Address },
+              // 5. View Appointment Details Link {{5}}
+              { type: "text", text: param5_Link },
+              // 6. Regards / Company Name {{6}}
+              { type: "text", text: param6_Company },
+            ],
+            "DONTCHECK"
+          );
+
+          console.log(`[WHATSAPP] ✅ Post-Call WhatsApp message result:`, waRes);
+
+          if (cols.hasWhatsAppSent) {
+            await sequelize.query(
+              `UPDATE dbo.Srv_Reminder_Tbl SET WhatsApp_Sent = 1 WHERE UTD = :reminderUTD`,
+              { replacements: { reminderUTD: Number(reminderUTD) }, type: QueryTypes.UPDATE }
+            );
+          }
+        }
       }
     } catch (waErr) {
       console.error(`[WHATSAPP] ⚠️ Post-Call WhatsApp message error:`, waErr?.message || waErr);
@@ -612,6 +636,90 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
 
   return { newCallStatus, summaryText, parsed, callbackInfo, appointmentSet: !!(parsed?.appointmentDate) };
 };
+
+const IN_PROGRESS_STATUSES = [
+  "initiated",
+  "ringing",
+  "queued",
+  "answered",
+  "in-progress",
+  "in_progress",
+  "ongoing",
+  "active",
+  "started",
+];
+
+// ════════════════════════════════════════════════════════════════
+// Automatic Background Call Status Poller
+// ════════════════════════════════════════════════════════════════
+const startCallStatusPoller = (compcode, reminderUTD, callId, cvUTD, searchMob) => {
+  if (!callId || !reminderUTD) return;
+
+  console.log(`[CALL-POLLER] 🚀 Starting background poller for Call ID: ${callId} | Reminder UTD: ${reminderUTD}`);
+
+  let attempts = 0;
+  const maxAttempts = 48; // Poll every 5 sec for up to 4 mins (48 * 5s = 240s)
+  const pollIntervalMs = 5000;
+
+  const intervalId = setInterval(async () => {
+    attempts++;
+    try {
+      console.log(`[CALL-POLLER] 🔍 Poll #${attempts}/${maxAttempts} for Call ID: ${callId} (UTD: ${reminderUTD})`);
+
+      let callDetails = null;
+      let callData = null;
+      try {
+        callDetails = await getCallStatus(callId);
+        callData = callDetails?.data || callDetails;
+      } catch (e) {
+        console.warn(`[CALL-POLLER] API fetch failed for ${callId}: ${e?.message}`);
+      }
+
+      const rawStatus = String(callData?.status || "").toLowerCase().trim();
+      console.log(`[CALL-POLLER] Status for ${callId}: '${rawStatus}'`);
+
+      // If call is still in progress (initiated, ringing, queued, answered, in-progress, etc.) or unknown, keep polling
+      if (IN_PROGRESS_STATUSES.includes(rawStatus) || !rawStatus) {
+        if (attempts >= maxAttempts) {
+          console.log(`[CALL-POLLER] ⏱️ Max polling attempts reached (${maxAttempts}) for ${callId} — stopping poller.`);
+          clearInterval(intervalId);
+        }
+        return;
+      }
+
+      // Terminal status reached (completed, call-transferred, transferred, failed, busy, no-answer, etc.)
+      console.log(`[CALL-POLLER] 🏁 Terminal status '${rawStatus}' reached for Call ID: ${callId} (UTD: ${reminderUTD})`);
+      clearInterval(intervalId);
+
+      let sequelize;
+      try {
+        sequelize = await dbname({ headers: { compcode } }, compcode);
+        const reqObj = { headers: { compcode }, body: { compcode } };
+
+        const updateResult = await updateReminderFromCallDetails(
+          sequelize,
+          reminderUTD,
+          callData,
+          cvUTD,
+          reqObj
+        );
+        console.log(`[CALL-POLLER] ✅ DB Update & Auto WhatsApp completed for UTD ${reminderUTD} | Status: ${updateResult?.newCallStatus}`);
+      } catch (dbErr) {
+        console.error(`[CALL-POLLER] ❌ Error updating DB for UTD ${reminderUTD}:`, dbErr?.message);
+      } finally {
+        if (sequelize) { try { await sequelize.close(); } catch (_) {} }
+      }
+
+    } catch (err) {
+      console.error(`[CALL-POLLER] Error in poll loop for ${callId}:`, err?.message);
+      if (attempts >= maxAttempts) {
+        clearInterval(intervalId);
+      }
+    }
+  }, pollIntervalMs);
+};
+
+exports.startCallStatusPoller = startCallStatusPoller;
 
 // ════════════════════════════════════════════════════════════════
 // callWebhook — vehicle_number/mobile_number/callId se process
@@ -785,9 +893,9 @@ exports.callWebhook = async (req, res) => {
       }
     }
 
-    const status = String(callData?.status || "").toLowerCase();
+    const status = String(callData?.status || "").toLowerCase().trim();
 
-    if (["initiated", "ringing", "queued"].includes(status)) {
+    if (IN_PROGRESS_STATUSES.includes(status)) {
       return res.status(200).json({
         Status: true,
         Message: `Call in progress (${status})`,
