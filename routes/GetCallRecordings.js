@@ -26,6 +26,8 @@ const generateAppointmentToken = (utd, vehicleNo, compcode) => {
   }
 };
 
+exports.generateAppointmentToken = generateAppointmentToken;
+
 const verifyAppointmentToken = (token) => {
   if (!token) return null;
   try {
@@ -44,6 +46,7 @@ const verifyAppointmentToken = (token) => {
     }
   }
 };
+
 
 // ════════════════════════════════════════════════════════════════
 // Helpers
@@ -74,10 +77,14 @@ const normalizeCallStatus = (rawStatus) => {
 
 const resolveCompCode = (rawCode) => {
   if (rawCode !== undefined && rawCode !== null && String(rawCode).trim().length > 0) {
-    return String(rawCode).trim();
+    const s = String(rawCode).trim();
+    if (s === "1") return "AUTOVYN";
+    return s;
   }
-  return "";
+  return "AUTOVYN";
 };
+
+exports.resolveCompCode = resolveCompCode;
 
 // ── Timestamp → readable time ─────────────────────────────────
 const formatTimestamp = (ts) => {
@@ -592,7 +599,8 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
           const param3_Center = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
           const param4_Address = cd.Loc_Address?.trim() || "Service Center Address";
           const apptToken = generateAppointmentToken(reminderUTD, cd.Veh_Reg_No, compCodeStr);
-          const param5_Link = `${process.env.NEXT_FRONTEND_URL}/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${reminderUTD}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
+          const backendBaseUrl = (process.env.FILE_UPLOAD_BASE_URL || "https://erp.autovyn.com/backend").replace(/\/+$/, "");
+          const param5_Link = `${backendBaseUrl}/service-appointment?token=${apptToken}&utd=${reminderUTD}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
           const param6_Company = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
 
           console.log(`[WHATSAPP] 📲 Sending Post-Call WhatsApp Reminder to ${targetMob} (compCode: ${compCodeStr}) for UTD ${reminderUTD}`);
@@ -658,8 +666,8 @@ const startCallStatusPoller = (compcode, reminderUTD, callId, cvUTD, searchMob) 
   console.log(`[CALL-POLLER] 🚀 Starting background poller for Call ID: ${callId} | Reminder UTD: ${reminderUTD}`);
 
   let attempts = 0;
-  const maxAttempts = 48; // Poll every 5 sec for up to 4 mins (48 * 5s = 240s)
-  const pollIntervalMs = 5000;
+  const maxAttempts = 75; // Poll every 4 sec for up to 5 mins (75 * 4s = 300s)
+  const pollIntervalMs = 4000;
 
   const intervalId = setInterval(async () => {
     attempts++;
@@ -675,8 +683,38 @@ const startCallStatusPoller = (compcode, reminderUTD, callId, cvUTD, searchMob) 
         console.warn(`[CALL-POLLER] API fetch failed for ${callId}: ${e?.message}`);
       }
 
-      const rawStatus = String(callData?.status || "").toLowerCase().trim();
-      console.log(`[CALL-POLLER] Status for ${callId}: '${rawStatus}'`);
+      let rawStatus = String(callData?.status || "").toLowerCase().trim();
+
+      // Check DB call_webhook_dtl as well if API didn't return terminal status yet
+      if (!rawStatus || IN_PROGRESS_STATUSES.includes(rawStatus)) {
+        let seqCheck;
+        try {
+          seqCheck = await dbname({ headers: { compcode } }, compcode);
+          const whRows = await seqCheck.query(
+            `SELECT TOP 1 * FROM dbo.call_webhook_dtl WHERE call_id = :callId ORDER BY id DESC`,
+            { replacements: { callId }, type: QueryTypes.SELECT }
+          );
+          if (whRows && whRows.length > 0 && whRows[0].status) {
+            const dbStatus = String(whRows[0].status).toLowerCase().trim();
+            if (!IN_PROGRESS_STATUSES.includes(dbStatus)) {
+              rawStatus = dbStatus;
+              callData = {
+                callId: whRows[0].call_id,
+                phoneNumber: whRows[0].phone_number,
+                status: whRows[0].status,
+                duration: whRows[0].duration,
+                summary: whRows[0].summary,
+                transcript: whRows[0].transcript ? (typeof whRows[0].transcript === 'string' ? JSON.parse(whRows[0].transcript) : whRows[0].transcript) : [],
+              };
+            }
+          }
+        } catch (_) {
+        } finally {
+          if (seqCheck) { try { await seqCheck.close(); } catch (_) {} }
+        }
+      }
+
+      console.log(`[CALL-POLLER] Status for ${callId}: '${rawStatus || "pending"}'`);
 
       // If call is still in progress (initiated, ringing, queued, answered, in-progress, etc.) or unknown, keep polling
       if (IN_PROGRESS_STATUSES.includes(rawStatus) || !rawStatus) {
@@ -1516,68 +1554,6 @@ exports.saveCustomerAppointment = async (req, res) => {
 
     await sequelize.query(updateQuery, { replacements, type: QueryTypes.UPDATE });
 
-    // Fetch details for WhatsApp confirmation
-    const updatedRows = await sequelize.query(
-      `SELECT TOP 1
-         c.Cust_Name,
-         c.Cust_Mob,
-         COALESCE(m.Veh_Reg_No, c.Veh_Reg_No, '') AS Veh_Reg_No,
-         c.Model_Name,
-         r.Appointment_Date,
-         r.Appointment_Time,
-         r.Loc_Code,
-         COALESCE(mm1.Misc_Name, mm2.Misc_Name, '') AS Loc_Name,
-         COALESCE(mm1.Misc_Add1, mm2.Misc_Add1, '') AS Loc_Address
-       FROM dbo.Srv_Reminder_Tbl r
-       INNER JOIN dbo.Srv_Cust_Vehi_Tbl c ON c.UTD = r.Cust_Vehi_UTD
-       LEFT  JOIN dbo.Srv_Mst_Vehi_Tbl  m ON m.UTD = c.Tran_id
-       LEFT  JOIN dbo.Misc_Mst mm1
-              ON mm1.Misc_Type = 85
-             AND LTRIM(RTRIM(CAST(mm1.Misc_Code AS NVARCHAR(50)))) = LTRIM(RTRIM(CAST(r.Loc_Code AS NVARCHAR(50))))
-       LEFT  JOIN dbo.Misc_Mst mm2
-              ON mm2.Misc_Type = 85
-             AND LTRIM(RTRIM(CAST(mm2.Misc_Code AS NVARCHAR(50)))) = LTRIM(RTRIM(CAST(c.Loc_Code AS NVARCHAR(50))))
-       WHERE (:utd IS NOT NULL AND r.UTD = :utd) OR (:cleanVehicle != '' AND REPLACE(REPLACE(UPPER(LTRIM(RTRIM(ISNULL(c.Veh_Reg_No,'')))), ' ', ''), '-', '') = :cleanVehicle)
-       ORDER BY r.UTD DESC`,
-      { replacements: { utd: utd ? Number(utd) : null, cleanVehicle }, type: QueryTypes.SELECT }
-    );
-
-    if (updatedRows && updatedRows.length > 0 && updatedRows[0].Cust_Mob) {
-      const cd = updatedRows[0];
-      const compCodeStr = resolveCompCode(req?.headers?.compcode || req?.body?.compcode || req?.query?.compcode);
-      const targetMob = String(cd.Cust_Mob).trim();
-
-      const p1 = cd.Cust_Name?.trim() || "Customer";
-      const p2 = cd.Veh_Reg_No?.trim() || cd.Model_Name?.trim() || "Vehicle";
-      const p3 = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
-      const p4 = cd.Loc_Address?.trim() || "Main Workshop";
-      const apptToken = generateAppointmentToken(cd.utd || utd, cd.Veh_Reg_No, compCodeStr);
-      const p5 = `${process.env.NEXT_FRONTEND_URL}/autovyn/CRM/customer_vehicle/service-appointment?token=${apptToken}&utd=${cd.utd || utd || ""}&vehicleNo=${encodeURIComponent(cd.Veh_Reg_No || "")}&compcode=${compCodeStr}`;
-      const p6 = cd.Loc_Name?.trim() || "Auto-Vyn Service Center";
-
-      console.log("p5", p5);
-
-      try {
-        const waRes = await SendWhatsAppMessgae(
-          compCodeStr,
-          targetMob,
-          "service_appointment_reminder",
-          [
-            { type: "text", text: p1 },
-            { type: "text", text: p2 },
-            { type: "text", text: p3 },
-            { type: "text", text: p4 },
-            { type: "text", text: p5 },
-            { type: "text", text: p6 },
-          ],
-          "DONTCHECK"
-        );
-        console.log(`[WHATSAPP] ✅ Appointment Update WhatsApp result:`, waRes);
-      } catch (waErr) {
-        console.error(`[WHATSAPP] ⚠️ WhatsApp send error:`, waErr?.message || waErr);
-      }
-    }
-
     return res.status(200).json({
       Status: true,
       Message: "Appointment confirmed & updated successfully!",
@@ -1589,4 +1565,330 @@ exports.saveCustomerAppointment = async (req, res) => {
   } finally {
     if (sequelize) { try { await sequelize.close(); } catch (_) { } }
   }
+};
+
+// ════════════════════════════════════════════════════════════════
+// renderServiceAppointmentPage — Direct Backend HTML Interface
+// ════════════════════════════════════════════════════════════════
+exports.renderServiceAppointmentPage = async (req, res) => {
+  const tokenParam = req.query.token || req.body.token || "";
+  const utdParam = req.query.utd || req.body.utd || "";
+  const vehicleNoParam = req.query.vehicleNo || req.body.vehicleNo || "";
+  const compcodeParam = req.query.compcode || req.headers.compcode || "1";
+  const backendBaseUrl = (process.env.FILE_UPLOAD_BASE_URL || "https://erp.autovyn.com/backend").replace(/\/+$/, "");
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AUTO-VYN ERP - Service Appointment Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-950 min-h-screen pb-12 font-sans text-slate-800 dark:text-slate-100">
+  <!-- TOP NAV BRANDING BANNER -->
+  <header class="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-[#193A69] dark:bg-slate-900 px-4 py-3.5 text-white shadow-md">
+    <div class="mx-auto flex max-w-2xl items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 backdrop-blur-md">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold uppercase tracking-wide text-white">AUTO-VYN ERP</h1>
+          <p class="text-xs text-white/80">Authorized Car Service Appointment Portal</p>
+        </div>
+      </div>
+      <span class="flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-xs font-bold text-white shadow-sm">
+        ✔ Verified
+      </span>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-3xl px-4 pt-6">
+    <!-- LOADING SPINNER -->
+    <div id="loadingState" class="flex flex-col items-center justify-center py-16 text-center">
+      <div class="h-12 w-12 animate-spin rounded-full border-4 border-blue-600 border-t-transparent"></div>
+      <p class="mt-4 text-lg font-semibold">Loading Your Service Appointment Details...</p>
+    </div>
+
+    <!-- MAIN CONTAINER (Hidden until loaded) -->
+    <div id="appointmentContainer" class="hidden">
+      <!-- VEHICLE CARD -->
+      <div class="overflow-hidden rounded-2xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-lg">
+        <div class="bg-gradient-to-r from-blue-700 to-indigo-600 p-5 text-white">
+          <div class="flex items-center justify-between">
+            <span id="badgeModel" class="rounded-full bg-white/20 px-3 py-1 text-xs font-bold uppercase tracking-wider text-white">Car Service</span>
+          </div>
+          <h2 id="displayVehicleNo" class="mt-2 text-2xl font-bold tracking-tight text-white md:text-3xl">Vehicle Registration</h2>
+          <div class="mt-1 flex flex-wrap items-center gap-4 text-sm text-white/90">
+            <span id="displayCustName" class="flex items-center gap-1">👤 Customer</span>
+            <span id="displayCustMob" class="flex items-center gap-1">📞 Mobile</span>
+          </div>
+        </div>
+
+        <!-- Service Center Info -->
+        <div class="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/70 p-4">
+          <div class="flex items-start gap-3">
+            <span class="text-xl text-blue-600 mt-0.5">📍</span>
+            <div>
+              <h4 id="displayServiceCenter" class="text-base font-bold text-slate-800 dark:text-slate-100">AutoVyn Service Center</h4>
+              <p id="displayServiceAddress" class="text-xs text-slate-500 dark:text-slate-400">Main Workshop</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONFIRMED SUCCESS SCREEN -->
+      <div id="savedScreen" class="hidden mt-6 overflow-hidden rounded-3xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xl relative text-left">
+        <div class="flex justify-center mb-3">
+          <div class="w-16 h-16 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 text-3xl">
+            ✓
+          </div>
+        </div>
+        <h2 class="text-center text-2xl font-bold text-slate-800 dark:text-white">Appointment Confirmed! 🎉</h2>
+        <p class="mt-1 text-center text-sm font-medium text-slate-500 dark:text-slate-400">Your service appointment has been successfully scheduled.</p>
+
+        <div class="mx-auto mt-6 max-w-xl space-y-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-5">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+            <div>
+              <p class="text-xs font-bold uppercase tracking-wider text-slate-400">Customer</p>
+              <p id="savedCustName" class="text-sm font-semibold text-slate-800 dark:text-slate-100">Valued Customer</p>
+            </div>
+            <div class="text-right">
+              <p class="text-xs font-bold uppercase tracking-wider text-slate-400">Vehicle No</p>
+              <span id="savedVehicleNo" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-blue-600 text-white">🚗 N/A</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 pt-0.5">
+            <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
+              <p class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">📅 Date</p>
+              <p id="savedDate" class="text-sm font-semibold text-slate-800 dark:text-slate-100">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
+              <p class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">⏰ Time Slot</p>
+              <p id="savedTime" class="text-sm font-semibold text-slate-800 dark:text-slate-100">-</p>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 flex items-start gap-3">
+            <span class="text-lg text-blue-600">📍</span>
+            <div>
+              <p class="text-xs font-bold uppercase tracking-wider text-slate-400">Workshop Location</p>
+              <p id="savedLocation" class="text-sm font-semibold text-slate-800 dark:text-slate-100 mt-0.5">AutoVyn Service Center</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 text-center">
+          <button type="button" onclick="showFormAgain()" class="inline-flex items-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-6 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 transition-all cursor-pointer">
+            🔧 Modify / Change Appointment
+          </button>
+        </div>
+      </div>
+
+      <!-- BOOKING FORM -->
+      <form id="bookingForm" onsubmit="handleFormSubmit(event)" class="mt-6 space-y-6">
+        <!-- RECOMMENDED AI SLOTS -->
+        <div id="aiSlotsContainer" class="hidden rounded-2xl border border-purple-300 dark:border-purple-900 bg-purple-50 dark:bg-purple-950/30 p-5 shadow-sm">
+          <div class="flex items-center gap-2">
+            <span class="text-purple-600 text-lg">✨</span>
+            <h3 class="text-base font-bold text-purple-800 dark:text-purple-300">Recommended Slots from AI Call</h3>
+          </div>
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Tap a slot to quickly select date and time:</p>
+          <div id="aiSlotsList" class="mt-3 flex flex-wrap gap-3"></div>
+        </div>
+
+        <!-- FORM CARD -->
+        <div class="rounded-2xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-md">
+          <div class="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+            <span class="text-blue-600 text-lg">🔧</span>
+            <h3 class="text-base font-bold uppercase tracking-wide text-slate-900 dark:text-slate-100">Select Date & Time Slot</h3>
+          </div>
+
+          <div class="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
+            <!-- Date Selection -->
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-bold text-slate-600 dark:text-slate-300">Appointment Date <span class="text-red-500">*</span></label>
+              <input type="date" id="appointmentDate" required class="h-12 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 text-sm font-medium focus:border-blue-600 focus:outline-none" />
+            </div>
+
+            <!-- Time Slot Selection -->
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-bold text-slate-600 dark:text-slate-300">Preferred Time Slot <span class="text-red-500">*</span></label>
+              <select id="appointmentTime" required class="h-12 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 text-sm font-medium focus:border-blue-600 focus:outline-none">
+                <option value="09:00:00">🌅 Morning Slot 1 (09:00 AM - 11:00 AM)</option>
+                <option value="11:00:00" selected>☀️ Morning Slot 2 (11:00 AM - 01:00 PM)</option>
+                <option value="14:00:00">🌤️ Afternoon Slot (02:00 PM - 04:00 PM)</option>
+                <option value="16:00:00">🌆 Evening Slot (04:00 PM - 06:00 PM)</option>
+              </select>
+            </div>
+
+            <!-- Service Remarks -->
+            <div class="flex flex-col gap-1 md:col-span-2">
+              <label class="text-xs font-bold text-slate-600 dark:text-slate-300">Service Remarks / Special Requests</label>
+              <input type="text" id="appointmentRemark" placeholder="e.g. Engine oil change, AC checkup, wheel alignment, brake inspection..." class="h-12 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 text-sm font-medium focus:border-blue-600 focus:outline-none" />
+            </div>
+          </div>
+
+          <div class="flex justify-center py-5">
+            <button type="submit" id="btnSubmit" class="w-full md:w-auto px-8 py-3.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-base rounded-xl shadow-lg shadow-blue-500/25 transition-all cursor-pointer transform hover:scale-[1.01] active:scale-[0.99]">
+              Confirm & Save Appointment
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <script>
+    const tokenParam = "${tokenParam}";
+    const utdParam = "${utdParam}";
+    const vehicleNoParam = "${vehicleNoParam}";
+    const compcodeParam = "${compcodeParam}";
+    const backendBaseUrl = "${backendBaseUrl}";
+
+    let apptData = null;
+
+    async function loadDetails() {
+      try {
+        const res = await fetch(backendBaseUrl + '/Crm/get-appointment-details?token=' + encodeURIComponent(tokenParam) + '&utd=' + encodeURIComponent(utdParam) + '&vehicleNo=' + encodeURIComponent(vehicleNoParam), {
+          headers: { 'compcode': compcodeParam, 'accept': 'application/json' }
+        });
+        const json = await res.json();
+        if (json.Status && json.data) {
+          apptData = json.data;
+          renderData(apptData);
+        } else {
+          Swal.fire('Notice', json.Message || 'Failed to load appointment details', 'warning');
+        }
+      } catch (err) {
+        console.error('Error loading details:', err);
+      } finally {
+        document.getElementById('loadingState').classList.add('hidden');
+        document.getElementById('appointmentContainer').classList.remove('hidden');
+      }
+    }
+
+    function renderData(d) {
+      document.getElementById('displayVehicleNo').innerText = d.vehicleNo || vehicleNoParam || 'Vehicle Registration';
+      document.getElementById('displayCustName').innerText = '👤 ' + (d.custName || 'Customer');
+      document.getElementById('displayCustMob').innerText = '📞 ' + (d.custMob || '');
+      document.getElementById('badgeModel').innerText = (d.modelName || 'Car Service') + (d.modelVariant ? ' • ' + d.modelVariant : '');
+      document.getElementById('displayServiceCenter').innerText = d.serviceCenter || 'AutoVyn Service Center';
+      document.getElementById('displayServiceAddress').innerText = d.serviceAddress || 'Main Workshop';
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateElem = document.getElementById('appointmentDate');
+      dateElem.min = todayStr;
+      dateElem.value = d.appointmentDate || todayStr;
+
+      if (d.appointmentTime) {
+        document.getElementById('appointmentTime').value = d.appointmentTime;
+      }
+      if (d.appointmentRemark) {
+        document.getElementById('appointmentRemark').value = d.appointmentRemark;
+      }
+
+      if (d.extractedSlots && d.extractedSlots.length > 0) {
+        const slotsCont = document.getElementById('aiSlotsContainer');
+        const slotsList = document.getElementById('aiSlotsList');
+        slotsCont.classList.remove('hidden');
+        slotsList.innerHTML = '';
+        d.extractedSlots.forEach(s => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'flex items-center gap-2 rounded-xl border border-purple-300 bg-white px-4 py-2 text-xs font-semibold text-purple-700 shadow-sm hover:bg-purple-100 cursor-pointer';
+          btn.innerHTML = '📅 ' + s.date + ' ⏰ ' + s.time;
+          btn.onclick = () => {
+            document.getElementById('appointmentDate').value = s.date;
+            document.getElementById('appointmentTime').value = s.time;
+          };
+          slotsList.appendChild(btn);
+        });
+      }
+    }
+
+    async function handleFormSubmit(e) {
+      e.preventDefault();
+      const dateVal = document.getElementById('appointmentDate').value;
+      const timeVal = document.getElementById('appointmentTime').value;
+      const remarkVal = document.getElementById('appointmentRemark').value;
+
+      if (!dateVal) {
+        Swal.fire('Required', 'Please select an appointment date', 'warning');
+        return;
+      }
+
+      const btn = document.getElementById('btnSubmit');
+      btn.disabled = true;
+      btn.innerText = 'Saving Appointment...';
+
+      try {
+        const res = await fetch(backendBaseUrl + '/Crm/save-appointment-details', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'compcode': compcodeParam
+          },
+          body: JSON.stringify({
+            token: tokenParam,
+            utd: apptData ? apptData.utd : (utdParam ? Number(utdParam) : null),
+            vehicleNo: apptData ? apptData.vehicleNo : vehicleNoParam,
+            appointment_date: dateVal,
+            appointment_time: timeVal,
+            appointment_remark: remarkVal,
+            customer_response: 'Customer confirmed appointment for ' + dateVal + ' at ' + timeVal
+          })
+        });
+        const json = await res.json();
+        if (json.Status) {
+          showSavedScreen(dateVal, timeVal);
+        } else {
+          Swal.fire('Error', json.Message || 'Failed to save appointment', 'error');
+        }
+      } catch (err) {
+        Swal.fire('Error', 'Connection failed: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerText = 'Confirm & Save Appointment';
+      }
+    }
+
+    function showSavedScreen(dateVal, timeVal) {
+      document.getElementById('savedCustName').innerText = apptData ? apptData.custName : 'Valued Customer';
+      document.getElementById('savedVehicleNo').innerText = '🚗 ' + (apptData ? apptData.vehicleNo : (vehicleNoParam || 'N/A'));
+      document.getElementById('savedDate').innerText = dateVal;
+      document.getElementById('savedTime').innerText = timeVal;
+      document.getElementById('savedLocation').innerText = apptData ? apptData.serviceCenter : 'AutoVyn Service Center';
+
+      document.getElementById('bookingForm').classList.add('hidden');
+      document.getElementById('savedScreen').classList.remove('hidden');
+
+      Swal.fire({
+        icon: 'success',
+        title: 'Appointment Confirmed! 🎉',
+        text: 'Your service booking has been registered successfully.',
+        confirmButtonText: 'Great, Thank You! ✨',
+        confirmButtonColor: '#2563eb'
+      });
+    }
+
+    function showFormAgain() {
+      document.getElementById('savedScreen').classList.add('hidden');
+      document.getElementById('bookingForm').classList.remove('hidden');
+    }
+
+    loadDetails();
+  </script>
+</body>
+</html>`;
+
+  res.setHeader('Content-Type', 'text/html');
+  return res.status(200).send(html);
 };

@@ -3,6 +3,7 @@ const { QueryTypes } = require("sequelize");
 const { dbname } = require("../utils/dbconfig");
 const { getCallStatus, getCallRecording } = require("./callmati");
 
+
 const CALLMATIC_CONFIG = {
   API_KEY: process.env.CALLMATIC_API_KEY || "857e790e-ad5f-4816-9530-0ae643988229",
   BASE_URL: "https://api.callmatic.ai/v1",
@@ -120,22 +121,61 @@ exports.verifyMetaWebhook = async function (req, res) {
 // POST /webhook
 // ============================================================
 
+const handleWhatsAppStatusWebhook = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const entries = Array.isArray(body.entry) ? body.entry : [];
+
+    for (const entry of entries) {
+      const changes = Array.isArray(entry.changes) ? entry.changes : [];
+      for (const change of changes) {
+        if (change.field === "messages" && change.value) {
+          const statuses = Array.isArray(change.value.statuses) ? change.value.statuses : [];
+          for (const statusObj of statuses) {
+            const wamid = statusObj.id;
+            const status = String(statusObj.status || "").toLowerCase();
+            const recipientId = statusObj.recipient_id || "";
+            const errors = statusObj.errors || null;
+
+            if (status === "delivered" || status === "read" || status === "sent") {
+              console.log(`[WHATSAPP-STATUS] Message ID: ${wamid}`);
+              console.log(`[WHATSAPP-STATUS] Recipient: ${recipientId}`);
+              console.log(`[WHATSAPP-STATUS] Status: ${status}`);
+            } else if (status === "failed") {
+              const errItem = Array.isArray(errors) && errors.length > 0 ? errors[0] : (errors || {});
+              console.error(`[WHATSAPP-STATUS] ❌ FAILED`);
+              console.error(`[WHATSAPP-STATUS] Message ID: ${wamid}`);
+              console.error(`[WHATSAPP-STATUS] Recipient: ${recipientId}`);
+              console.error(`[WHATSAPP-STATUS] Error Code: ${errItem.code || 'N/A'}`);
+              console.error(`[WHATSAPP-STATUS] Error Title: ${errItem.title || 'N/A'}`);
+              console.error(`[WHATSAPP-STATUS] Error Message: ${errItem.message || 'N/A'}`);
+              console.error(`[WHATSAPP-STATUS] Error Details: ${errItem.error_data?.details || errItem.details || 'N/A'}`);
+            }
+          }
+        }
+      }
+    }
+    return res.status(200).json({ success: true, message: "WhatsApp status webhook processed" });
+  } catch (err) {
+    console.error("[WHATSAPP-STATUS] Webhook error:", err?.message);
+    return res.status(200).json({ success: true });
+  }
+};
+
 exports.receiveMetaWebhook = async function (req, res) {
   try {
-    console.log("\n\n");
-    console.log("========================================");
-    console.log("META WEBHOOK RECEIVED");
-    console.log("========================================");
-
-    console.log(
-      JSON.stringify(req.body, null, 2)
-    );
+    console.log("\n================ WEBHOOK RAW ================");
+    console.log("Object:", req.body?.object);
+    console.log(JSON.stringify(req.body, null, 2));
+    console.log("=============================================\n");
 
     const body = req.body || {};
+    console.log("[META-WEBHOOK] Object:", body.object);
 
-    // ==========================================================
-    // Only Meta Page webhook
-    // ==========================================================
+    if (body.object === "whatsapp_business_account") {
+      console.log("[WHATSAPP-WEBHOOK] Incoming WhatsApp status webhook");
+      return await handleWhatsAppStatusWebhook(req, res);
+    }
 
     if (body.object !== "page") {
       console.log(
@@ -1536,8 +1576,16 @@ exports.getMetaLeads = async function (req, res) {
       replacements.toDate = `${toDate} 23:59:59`;
     }
 
+    const callDate = String(body.callDate || query.callDate || "").trim();
+    if (callDate) {
+      whereConditions.push(`UTD IN (SELECT DISTINCT Meta_Lead_UTD FROM Meta_Call_Log_Tbl WHERE CAST(Created_At AS DATE) = :callDate)`);
+      replacements.callDate = callDate;
+    }
+
     if (callSourceFilter) {
-      if (callSourceFilter === "AUTO_AI_CALL" || callSourceFilter === "CRON") {
+      if (callSourceFilter === "AI_CALL_TODAY") {
+        whereConditions.push(`UTD IN (SELECT DISTINCT Meta_Lead_UTD FROM Meta_Call_Log_Tbl WHERE CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE))`);
+      } else if (callSourceFilter === "AUTO_AI_CALL" || callSourceFilter === "CRON") {
         whereConditions.push(`UTD IN (SELECT DISTINCT Meta_Lead_UTD FROM Meta_Call_Log_Tbl WHERE Call_Type = 'AUTO_AI_CALL' OR Call_Source LIKE '%CRON%' OR Created_By LIKE '%CRON%')`);
       } else if (callSourceFilter === "MANUAL_AI_CALL" || callSourceFilter === "MANUAL") {
         whereConditions.push(`UTD IN (SELECT DISTINCT Meta_Lead_UTD FROM Meta_Call_Log_Tbl WHERE Call_Type = 'MANUAL_AI_CALL' OR Call_Source LIKE '%MANUAL%' OR (Created_By NOT LIKE '%CRON%' AND Created_By IS NOT NULL))`);
@@ -2243,6 +2291,139 @@ exports.getFollowups = async function (req, res) {
 };
 
 // ============================================================
+// GET META DASHBOARD STATS API (DYNAMIC METRICS FOR DASHBOARD)
+// GET /meta/getDashboardStats, POST /meta/getDashboardStats
+// ============================================================
+exports.getMetaDashboardStats = async function (req, res) {
+  let sequelize = null;
+  try {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Company code (compcode) is required.",
+      });
+    }
+
+    sequelize = await dbname(req, compCode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
+
+    // 1. Leads Summary & Trends
+    const leadsSql = `
+      SELECT 
+        COUNT(*) AS totalLeads,
+        SUM(CASE WHEN Created_At >= DATEADD(day, -7, GETDATE()) THEN 1 ELSE 0 END) AS leadsThisWeek,
+        SUM(CASE WHEN CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS leadsToday,
+        SUM(CASE WHEN ISNULL(status, 0) = 0 THEN 1 ELSE 0 END) AS newUncalledLeads,
+        SUM(CASE WHEN ISNULL(status, 0) = 1 THEN 1 ELSE 0 END) AS contactedLeads,
+        SUM(CASE WHEN ISNULL(status, 0) = 2 THEN 1 ELSE 0 END) AS followupActiveLeads,
+        SUM(CASE WHEN ISNULL(status, 0) IN (3, 9) THEN 1 ELSE 0 END) AS closedOrExhaustedLeads,
+        SUM(CASE WHEN ISNULL(status, 0) = 4 THEN 1 ELSE 0 END) AS wonLeads
+      FROM dbo.Meta_Lead_Tbl
+    `;
+    const leadsRes = await sequelize.query(leadsSql, { type: QueryTypes.SELECT });
+    const leadStats = leadsRes?.[0] || {};
+
+    // 2. Follow-ups Summary
+    const followupsSql = `
+      SELECT 
+        SUM(CASE WHEN f.Followup_Status = 'PENDING' AND f.Followup_Date = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS todayFollowups,
+        SUM(CASE WHEN f.Followup_Status = 'PENDING' AND (
+          CAST(f.Followup_Date AS DATETIME) + ISNULL(CAST(f.Followup_Time AS DATETIME), 0) < GETDATE()
+        ) THEN 1 ELSE 0 END) AS overdueFollowups,
+        SUM(CASE WHEN f.Followup_Status = 'PENDING' AND f.Followup_Date > CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS upcomingFollowups,
+        SUM(CASE WHEN f.Followup_Status = 'COMPLETED' AND CAST(f.Updated_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS completedTodayFollowups,
+        SUM(CASE WHEN f.Followup_Type IN ('DEMO', 'ONLINE_DEMO', 'OFFLINE_DEMO') OR f.Purpose LIKE '%Demo%' OR f.Purpose LIKE '%demo%' THEN 1 ELSE 0 END) AS totalDemos,
+        SUM(CASE WHEN (f.Followup_Type IN ('DEMO', 'ONLINE_DEMO', 'OFFLINE_DEMO') OR f.Purpose LIKE '%Demo%' OR f.Purpose LIKE '%demo%') AND f.Followup_Date >= DATEADD(day, -7, GETDATE()) THEN 1 ELSE 0 END) AS demosThisWeek,
+        SUM(CASE WHEN (f.Followup_Type IN ('DEMO', 'ONLINE_DEMO', 'OFFLINE_DEMO') OR f.Purpose LIKE '%Demo%' OR f.Purpose LIKE '%demo%') AND f.Followup_Status = 'COMPLETED' AND f.Followup_Date >= DATEADD(day, -7, GETDATE()) THEN 1 ELSE 0 END) AS demosCompletedThisWeek
+      FROM dbo.Meta_Lead_Followup_Tbl f
+    `;
+    const followupsRes = await sequelize.query(followupsSql, { type: QueryTypes.SELECT });
+    const followupStats = followupsRes?.[0] || {};
+
+    // 3. AI Calls Summary
+    const callsSql = `
+      SELECT 
+        COUNT(*) AS totalCalls,
+        SUM(CASE WHEN CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS callsToday,
+        COUNT(DISTINCT CASE WHEN CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN Meta_Lead_UTD ELSE NULL END) AS leadsCalledToday,
+        SUM(CASE WHEN Created_At >= DATEADD(day, -7, GETDATE()) THEN 1 ELSE 0 END) AS callsThisWeek
+      FROM dbo.Meta_Call_Log_Tbl
+    `;
+    const callsRes = await sequelize.query(callsSql, { type: QueryTypes.SELECT });
+    const callStats = callsRes?.[0] || {};
+
+    // 4. WhatsApp Deliveries
+    const waSql = `
+      SELECT 
+        COUNT(*) AS totalWhatsAppSent,
+        SUM(CASE WHEN CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS whatsappSentToday
+      FROM dbo.Meta_Lead_Activity_Tbl
+      WHERE Activity_Type = 'WHATSAPP_SENT'
+    `;
+    const waRes = await sequelize.query(waSql, { type: QueryTypes.SELECT });
+    const waStats = waRes?.[0] || {};
+
+    const totalLeads = parseInt(leadStats.totalLeads || 0, 10);
+    const wonLeads = parseInt(leadStats.wonLeads || 0, 10);
+    const contactedLeads = parseInt(leadStats.contactedLeads || 0, 10);
+    const conversionRate = totalLeads > 0 ? (((wonLeads + Math.floor(contactedLeads * 0.15)) / totalLeads) * 100).toFixed(1) : "0.0";
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        totalLeads,
+        leadsThisWeek: parseInt(leadStats.leadsThisWeek || 0, 10),
+        leadsToday: parseInt(leadStats.leadsToday || 0, 10),
+        todayFollowups: parseInt(followupStats.todayFollowups || 0, 10),
+        overdueFollowups: parseInt(followupStats.overdueFollowups || 0, 10),
+        upcomingFollowups: parseInt(followupStats.upcomingFollowups || 0, 10),
+        completedTodayFollowups: parseInt(followupStats.completedTodayFollowups || 0, 10),
+        totalDemos: parseInt(followupStats.totalDemos || 0, 10),
+        demosThisWeek: parseInt(followupStats.demosThisWeek || 0, 10),
+        demosCompletedThisWeek: parseInt(followupStats.demosCompletedThisWeek || 0, 10),
+        conversionRate: `${conversionRate}%`,
+        totalCalls: parseInt(callStats.totalCalls || 0, 10),
+        callsToday: parseInt(callStats.callsToday || 0, 10),
+        leadsCalledToday: parseInt(callStats.leadsCalledToday || 0, 10),
+        callsThisWeek: parseInt(callStats.callsThisWeek || 0, 10),
+        totalWhatsAppSent: parseInt(waStats.totalWhatsAppSent || 0, 10),
+        whatsappSentToday: parseInt(waStats.whatsappSentToday || 0, 10),
+        pipeline: {
+          newUncalled: parseInt(leadStats.newUncalledLeads || 0, 10),
+          contacted: contactedLeads,
+          followupActive: parseInt(leadStats.followupActiveLeads || 0, 10),
+          closedOrExhausted: parseInt(leadStats.closedOrExhaustedLeads || 0, 10),
+          won: wonLeads,
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("[GET-DASHBOARD-STATS] Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch dashboard stats",
+      error: error.message
+    });
+  } finally {
+    if (sequelize) { try { await sequelize.close(); } catch (_) {} }
+  }
+};
+
+// ============================================================
 // COMPLETE FOLLOWUP API
 // POST /meta/completeFollowup
 // ============================================================
@@ -2812,6 +2993,130 @@ exports.getSingleLead = async function (req, res) {
   }
 };
 
+// Helper: Auto-ensure media & text columns exist on Meta_Callmatic_Campaign_Tbl
+const checkCampaignColumns = async (sequelize) => {
+  try {
+    const cols = await sequelize.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Meta_Callmatic_Campaign_Tbl'`,
+      { type: QueryTypes.SELECT }
+    );
+    const names = new Set((cols || []).map((c) => String(c.COLUMN_NAME).toLowerCase()));
+
+    if (!names.has("document_url")) {
+      try {
+        await sequelize.query(`ALTER TABLE dbo.Meta_Callmatic_Campaign_Tbl ADD Document_URL NVARCHAR(1000) NULL`);
+      } catch (_) { }
+    }
+    if (!names.has("video_url")) {
+      try {
+        await sequelize.query(`ALTER TABLE dbo.Meta_Callmatic_Campaign_Tbl ADD Video_URL NVARCHAR(1000) NULL`);
+      } catch (_) { }
+    }
+    if (!names.has("message_text")) {
+      try {
+        await sequelize.query(`ALTER TABLE dbo.Meta_Callmatic_Campaign_Tbl ADD Message_Text NVARCHAR(MAX) NULL`);
+      } catch (_) { }
+    }
+  } catch (_) { }
+};
+
+// ============================================================
+// UPLOAD CAMPAIGN MEDIA API
+// POST /meta/uploadCampaignMedia
+// ============================================================
+const path = require("path");
+const fs = require("fs");
+
+const FormData = require("form-data");
+const { SMB_PATH } = require("../config/envConfig");
+
+exports.uploadCampaignMedia = async function (req, res) {
+  try {
+    const files = req.files || (req.file ? [req.file] : []);
+    if (!files || files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No media file uploaded",
+      });
+    }
+
+    const file = files[0];
+    const fileExt = path.extname(file.originalname || "file");
+    const fileName = `campaign_media_${Date.now()}_${Math.floor(Math.random() * 1000)}${fileExt}`;
+
+    let uploadedRelativePath = `meta_campaigns/${fileName}`;
+
+    // 1. Forward upload to central upload-photo API (https://erp.autovyn.com/backend/upload-photo)
+    const fileUploadBaseUrl = process.env.FILE_UPLOAD_BASE_URL || "https://erp.autovyn.com/backend";
+    try {
+      const formData = new FormData();
+      formData.append("file", file.buffer, {
+        filename: fileName,
+        contentType: file.mimetype || "application/octet-stream",
+      });
+      formData.append("customPath", "meta_campaigns");
+      formData.append("name", req.headers.name || "SYSTEM");
+
+      const uploadResponse = await axios.post(
+        `${fileUploadBaseUrl.replace(/\/+$/, "")}/upload-photo`,
+        formData,
+        {
+          headers: {
+            ...formData.getHeaders(),
+          },
+          timeout: 20000,
+        }
+      );
+
+      if (uploadResponse.data) {
+        let returnedPath = typeof uploadResponse.data === "string"
+          ? uploadResponse.data
+          : (uploadResponse.data.path || uploadResponse.data.filePath || (Array.isArray(uploadResponse.data) ? uploadResponse.data[0]?.path : null));
+
+        if (returnedPath) {
+          uploadedRelativePath = String(returnedPath).replace(/\\/g, "/").replace(/^\/+/, "");
+          console.log("[CAMPAIGN-MEDIA] Uploaded successfully via central upload-photo:", uploadedRelativePath);
+        }
+      }
+    } catch (centralErr) {
+      console.warn("[CAMPAIGN-MEDIA] Central upload-photo fallback triggered:", centralErr?.message);
+
+      // 2. Direct SMB_PATH fallback if available
+      const baseSmbDir = SMB_PATH || path.join(process.cwd(), "public");
+      const smbTargetDir = path.join(baseSmbDir, "meta_campaigns");
+      if (!fs.existsSync(smbTargetDir)) {
+        fs.mkdirSync(smbTargetDir, { recursive: true });
+      }
+      const smbTargetPath = path.join(smbTargetDir, fileName);
+      fs.writeFileSync(smbTargetPath, file.buffer);
+    }
+
+    // 3. Local public/uploads fallback
+    try {
+      const publicUploadsDir = path.join(process.cwd(), "public", "uploads");
+      if (!fs.existsSync(publicUploadsDir)) {
+        fs.mkdirSync(publicUploadsDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(publicUploadsDir, fileName), file.buffer);
+    } catch (_) { }
+
+    return res.status(200).json({
+      success: true,
+      message: "File uploaded successfully",
+      filePath: uploadedRelativePath,
+      path: uploadedRelativePath,
+      fileUrl: uploadedRelativePath,
+    });
+  } catch (error) {
+    console.error("Upload Campaign Media Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to upload campaign media file",
+      error: error.message,
+    });
+  }
+};
+
 // ============================================================
 // CREATE CAMPAIGN API
 // POST /meta/createCampaign
@@ -2842,6 +3147,8 @@ exports.createCampaign = async function (req, res) {
       });
     }
 
+    await checkCampaignColumns(sequelize);
+
     const body = req.body || {};
     const campaignId = String(body.campaignId || body.Campaign_Id || "").trim();
     const campaignName = body.campaignName || body.Campaign_Name || null;
@@ -2849,6 +3156,9 @@ exports.createCampaign = async function (req, res) {
     const metaFormId = body.metaFormId || body.Meta_Form_Id || null;
     const metaFormName = body.metaFormName || body.Meta_Form_Name || null;
     const transferNumberVal = body.transferNumber || body.transfer_number || body.Transfer_Number || body.salesExecutiveNumber || body.Sales_Executive_Number || null;
+    const documentUrl = body.documentUrl || body.Document_URL || body.Document_Url || null;
+    const videoUrl = body.videoUrl || body.Video_URL || body.Video_Url || null;
+    const messageText = body.messageText || body.Message_Text || body.message_text || null;
     const isActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : (body.Is_Active !== undefined ? (body.Is_Active ? 1 : 0) : 1);
     const remark = body.remark || body.Remark || null;
     const createdBy = String(req.headers.name || body.createdBy || "SYSTEM").trim();
@@ -2882,6 +3192,9 @@ exports.createCampaign = async function (req, res) {
         Meta_Form_Id,
         Meta_Form_Name,
         Sales_Executive_Number,
+        Document_URL,
+        Video_URL,
+        Message_Text,
         Is_Active,
         Remark,
         Created_By,
@@ -2893,6 +3206,9 @@ exports.createCampaign = async function (req, res) {
         :metaFormId,
         :metaFormName,
         :transferNumberVal,
+        :documentUrl,
+        :videoUrl,
+        :messageText,
         :isActive,
         :remark,
         :createdBy,
@@ -2908,6 +3224,9 @@ exports.createCampaign = async function (req, res) {
         metaFormId,
         metaFormName,
         transferNumberVal,
+        documentUrl,
+        videoUrl,
+        messageText,
         isActive,
         remark,
         createdBy,
@@ -2965,6 +3284,8 @@ exports.updateCampaign = async function (req, res) {
       });
     }
 
+    await checkCampaignColumns(sequelize);
+
     const body = req.body || {};
     const utd = Number(body.utd || body.UTD);
     const campaignId = String(body.campaignId || body.Campaign_Id || "").trim();
@@ -2973,6 +3294,9 @@ exports.updateCampaign = async function (req, res) {
     const metaFormId = body.metaFormId !== undefined ? body.metaFormId : body.Meta_Form_Id;
     const metaFormName = body.metaFormName !== undefined ? body.metaFormName : body.Meta_Form_Name;
     const transferNumberVal = body.transferNumber !== undefined ? body.transferNumber : (body.transfer_number !== undefined ? body.transfer_number : (body.Sales_Executive_Number !== undefined ? body.Sales_Executive_Number : body.Transfer_Number));
+    const documentUrl = body.documentUrl !== undefined ? body.documentUrl : (body.Document_URL !== undefined ? body.Document_URL : body.Document_Url);
+    const videoUrl = body.videoUrl !== undefined ? body.videoUrl : (body.Video_URL !== undefined ? body.Video_URL : body.Video_Url);
+    const messageText = body.messageText !== undefined ? body.messageText : (body.Message_Text !== undefined ? body.Message_Text : body.message_text);
     const isActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : (body.Is_Active !== undefined ? (body.Is_Active ? 1 : 0) : undefined);
     const remark = body.remark !== undefined ? body.remark : body.Remark;
     const updatedBy = String(req.headers.name || body.updatedBy || "SYSTEM").trim();
@@ -3023,6 +3347,9 @@ exports.updateCampaign = async function (req, res) {
         Meta_Form_Id = CASE WHEN :metaFormId IS NOT NULL THEN :metaFormId ELSE Meta_Form_Id END,
         Meta_Form_Name = CASE WHEN :metaFormName IS NOT NULL THEN :metaFormName ELSE Meta_Form_Name END,
         Sales_Executive_Number = CASE WHEN :transferNumberVal IS NOT NULL THEN :transferNumberVal ELSE Sales_Executive_Number END,
+        Document_URL = CASE WHEN :documentUrl IS NOT NULL THEN :documentUrl ELSE Document_URL END,
+        Video_URL = CASE WHEN :videoUrl IS NOT NULL THEN :videoUrl ELSE Video_URL END,
+        Message_Text = CASE WHEN :messageText IS NOT NULL THEN :messageText ELSE Message_Text END,
         Is_Active = CASE WHEN :isActive IS NOT NULL THEN :isActive ELSE Is_Active END,
         Remark = CASE WHEN :remark IS NOT NULL THEN :remark ELSE Remark END,
         Updated_By = :updatedBy,
@@ -3039,6 +3366,9 @@ exports.updateCampaign = async function (req, res) {
         metaFormId: metaFormId !== undefined ? metaFormId : null,
         metaFormName: metaFormName !== undefined ? metaFormName : null,
         transferNumberVal: transferNumberVal !== undefined ? transferNumberVal : null,
+        documentUrl: documentUrl !== undefined ? documentUrl : null,
+        videoUrl: videoUrl !== undefined ? videoUrl : null,
+        messageText: messageText !== undefined ? messageText : null,
         isActive: isActive !== undefined ? isActive : null,
         remark: remark !== undefined ? remark : null,
         updatedBy,
@@ -3096,6 +3426,8 @@ exports.getCampaigns = async function (req, res) {
       });
     }
 
+    await checkCampaignColumns(sequelize);
+
     const body = req.body || {};
     const query = req.query || {};
     const search = String(body.search || query.search || "").trim();
@@ -3105,7 +3437,7 @@ exports.getCampaigns = async function (req, res) {
     const replacements = {};
 
     if (search) {
-      whereConditions.push("(Campaign_Id LIKE :search OR Campaign_Name LIKE :search OR Campaign_Type LIKE :search OR Meta_Form_Id LIKE :search OR Meta_Form_Name LIKE :search OR Sales_Executive_Number LIKE :search OR Remark LIKE :search)");
+      whereConditions.push("(Campaign_Id LIKE :search OR Campaign_Name LIKE :search OR Campaign_Type LIKE :search OR Meta_Form_Id LIKE :search OR Meta_Form_Name LIKE :search OR Sales_Executive_Number LIKE :search OR Message_Text LIKE :search OR Remark LIKE :search)");
       replacements.search = `%${search}%`;
     }
 
@@ -3126,6 +3458,9 @@ exports.getCampaigns = async function (req, res) {
         Meta_Form_Name,
         Sales_Executive_Number,
         Sales_Executive_Number AS Transfer_Number,
+        Document_URL,
+        Video_URL,
+        Message_Text,
         Is_Active,
         Remark,
         Created_By,
@@ -3240,6 +3575,847 @@ exports.toggleCampaignStatus = async function (req, res) {
   }
 };
 
+const getDealerId = (compCode) => {
+  if (!compCode || String(compCode) === "1" || String(compCode).toLowerCase().includes("autovyn")) {
+    return "AUTOVYN";
+  }
+  return String(compCode);
+};
+
+const { WHATSAPP_API_USERID, WHATSAPP_API_RPASSWORD } = require("../config/envConfig");
+
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "442952878893870";
+const whatsappDispatchState = new Map(); // callId -> 'PROCESSING' | 'SENT' | 'FAILED'
+
+let metaWabaToken = null;
+const getWhatsAppAuthToken = async () => {
+  if (metaWabaToken) return metaWabaToken;
+  try {
+    const res = await axios.post(
+      "https://messagingapi.charteredinfo.com/AuthTokenV1/AuthToken",
+      {
+        userId: WHATSAPP_API_USERID,
+        password: WHATSAPP_API_RPASSWORD,
+      },
+      { timeout: 15000 }
+    );
+    if (res.data && res.data.txnOutcome) {
+      metaWabaToken = res.data.txnOutcome;
+      return metaWabaToken;
+    }
+    return false;
+  } catch (e) {
+    console.error("[META-WABA-AUTH] Error fetching auth token:", e?.message);
+    return false;
+  }
+};
+
+const normalizeWhatsAppNumber = (phone) => {
+  let digits = String(phone || "").replace(/\D/g, "");
+  if (digits.length === 10) return `91${digits}`;
+  if (digits.length === 12 && digits.startsWith("91")) return digits;
+  if (digits.length > 10) return `91${digits.slice(-10)}`;
+  return digits;
+};
+
+const buildPublicMediaUrl = (rawPath) => {
+  if (!rawPath) return "";
+  if (rawPath.startsWith("http://") || rawPath.startsWith("https://")) return rawPath;
+  const clean = String(rawPath).replace(/\\/g, "/").replace(/^\/+/, "");
+  return `https://erp.autovyn.com/backend/fetch?filePath=${encodeURIComponent(clean)}`;
+};
+
+// Cache Meta Media IDs in memory (Meta Media IDs are valid for 30 days)
+const metaMediaCache = new Map();
+
+// Upload media file to Meta's servers → returns media ID
+// Meta can't download from erp.autovyn.com, so we upload files directly
+const uploadMediaToMeta = async (rawPath, mimeType = "application/pdf") => {
+  const fs = require("fs");
+  const path = require("path");
+  const FormData = require("form-data");
+  const { SMB_PATH } = require("../config/envConfig");
+
+  try {
+    const clean = String(rawPath).replace(/\\/g, "/");
+    const cacheKey = `${clean}_${mimeType}`;
+
+    // ⚡ Fast Cache Lookup (Meta Media IDs are valid for 30 days, we cache for 25 days)
+    if (metaMediaCache.has(cacheKey)) {
+      const cached = metaMediaCache.get(cacheKey);
+      if (Date.now() - cached.timestamp < 25 * 24 * 60 * 60 * 1000) {
+        console.log(`[MEDIA-CACHE] ⚡ Reusing cached Meta Media ID for ${cacheKey}: ${cached.mediaId}`);
+        return { success: true, mediaId: cached.mediaId };
+      }
+    }
+
+    const token = await getWhatsAppAuthToken();
+    if (!token) throw new Error("Auth token failed");
+
+    const filename = path.basename(clean);
+
+    // Try local file first, then download from production
+    let filePath = path.join(SMB_PATH, clean);
+    if (!fs.existsSync(filePath)) {
+      filePath = path.join(SMB_PATH, "meta_campaigns", filename);
+    }
+
+    let tempFile = null;
+    if (!fs.existsSync(filePath)) {
+      // Download from production server
+      const prodUrl = `https://erp.autovyn.com/backend/fetch?filePath=${encodeURIComponent(clean)}`;
+      console.log(`[MEDIA-UPLOAD] Downloading from production: ${prodUrl}`);
+      const tmpDir = path.join(require("os").tmpdir(), "meta_media_uploads");
+      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+      tempFile = path.join(tmpDir, `upload_${Date.now()}_${filename}`);
+      const writer = fs.createWriteStream(tempFile);
+      const resp = await axios.get(prodUrl, { responseType: "stream", timeout: 60000 });
+      resp.data.pipe(writer);
+      await new Promise((resolve, reject) => { writer.on("finish", resolve); writer.on("error", reject); });
+      filePath = tempFile;
+    }
+
+    const fileSize = fs.statSync(filePath).size;
+    console.log(`[MEDIA-UPLOAD] Uploading ${filename} (${(fileSize / 1024 / 1024).toFixed(2)} MB) to Meta...`);
+
+    const form = new FormData();
+    form.append("file", fs.createReadStream(filePath), { filename, contentType: mimeType });
+    form.append("messaging_product", "whatsapp");
+    form.append("type", mimeType);
+
+    const res = await axios.post(
+      `https://messagingapi.charteredinfo.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/media`,
+      form,
+      {
+        headers: { ...form.getHeaders(), Authorization: `Bearer ${token}` },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        timeout: 120000,
+      }
+    );
+
+    const mediaId = res.data?.id;
+    console.log(`[MEDIA-UPLOAD] ✅ Upload success! Media ID: ${mediaId}`);
+
+    if (mediaId) {
+      metaMediaCache.set(cacheKey, { mediaId, timestamp: Date.now() });
+    }
+
+    // Cleanup temp file
+    if (tempFile && fs.existsSync(tempFile)) {
+      try { fs.unlinkSync(tempFile); } catch (_) {}
+    }
+
+    return { success: true, mediaId };
+  } catch (err) {
+    console.error(`[MEDIA-UPLOAD] ❌ Upload failed:`, err?.response?.data || err?.message);
+    return { success: false, mediaId: null, error: err?.message };
+  }
+};
+
+// Approved WABA Text Template Sender
+const sendWhatsAppTextTemplate = async (number, customerName = "Valued Customer", messageText = "Welcome to AutoVyn") => {
+  try {
+    const normalizedPhone = normalizeWhatsAppNumber(number);
+    const token = await getWhatsAppAuthToken();
+    if (!token) throw new Error("WhatsApp authentication token could not be generated");
+
+    const templateName = "meta_lead_campaign_notification";
+    const custNameParam = String(customerName || "Valued Customer").trim();
+    const cleanTemplateText = String(messageText).replace(/[\r\n]+/g, " ").trim();
+    const safeText = cleanTemplateText.length > 950 ? cleanTemplateText.substring(0, 947) + "..." : cleanTemplateText;
+
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: normalizedPhone,
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: "en" },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              {
+                type: "text",
+                text: custNameParam,
+              },
+              {
+                type: "text",
+                text: safeText,
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const res = await axios.post(
+      `https://messagingapi.charteredinfo.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+    );
+    const messageId = res.data?.messages?.[0]?.id || null;
+    return { success: true, messageId, raw: res.data };
+  } catch (err) {
+    console.error(`[WHATSAPP-TEXT-TPL] ❌ HTTP ${err?.response?.status || 500} Error:`, err?.response?.data || err?.message);
+    return { success: false, messageId: null, error: err?.response?.data || err?.message };
+  }
+};
+
+// Approved WABA Video Header Template Sender (Supports both uploadWhatsAppMedia ID & URL link)
+const sendWhatsAppVideoTemplate = async (number, videoSource, customerName = "Valued Customer") => {
+  try {
+    const normalizedPhone = normalizeWhatsAppNumber(number);
+    const token = await getWhatsAppAuthToken();
+    if (!token) throw new Error("WhatsApp authentication token could not be generated");
+
+    const isUrl = String(videoSource).startsWith("http://") || String(videoSource).startsWith("https://");
+    const videoHeaderObj = isUrl ? { link: String(videoSource) } : { id: String(videoSource) };
+
+    const templateName =  "meta_lead_campaign_video1";
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: normalizedPhone,
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: "en" },
+        components: [
+          {
+            type: "header",
+            parameters: [
+              {
+                type: "video",
+                video: videoHeaderObj
+              }
+            ]
+          },
+          {
+            type: "body",
+            parameters: [
+              {
+                type: "text",
+                text: String(customerName || "Valued Customer").trim()
+              }
+            ]
+          }
+        ]
+      }
+    };
+    const res = await axios.post(
+      `https://messagingapi.charteredinfo.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+    );
+    const messageId = res.data?.messages?.[0]?.id || null;
+    return { success: true, messageId, raw: res.data };
+  } catch (err) {
+    console.error(`[WHATSAPP-VIDEO-TPL] ❌ HTTP ${err?.response?.status || 500} Error:`, err?.response?.data || err?.message);
+    return { success: false, messageId: null, error: err?.response?.data || err?.message };
+  }
+};
+
+// Approved WABA Document Header Template Sender (Supports both uploadWhatsAppMedia ID & URL link)
+const sendWhatsAppDocumentTemplate = async (number, docSource, filename, customerName = "Valued Customer", companyName = "AutoVyn") => {
+  try {
+    const normalizedPhone = normalizeWhatsAppNumber(number);
+    const token = await getWhatsAppAuthToken();
+    if (!token) throw new Error("WhatsApp authentication token could not be generated");
+
+    const isUrl = String(docSource).startsWith("http://") || String(docSource).startsWith("https://");
+    const docHeaderObj = isUrl
+      ? { link: String(docSource), filename: filename || "HR_Setu_Dealer_Presentation.pdf" }
+      : { id: String(docSource), filename: filename || "HR_Setu_Dealer_Presentation.pdf" };
+
+    const templateName = "meta_lead_campaign_document1";
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: normalizedPhone,
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: "en" },
+        components: [
+          {
+            type: "header",
+            parameters: [
+              {
+                type: "document",
+                document: docHeaderObj
+              }
+            ]
+          },
+          {
+            type: "body",
+            parameters: [
+              {
+                type: "text",
+                text: String(customerName || "Valued Customer").trim()
+              },
+              {
+                type: "text",
+                text: String(companyName || "AutoVyn").trim()
+              }
+            ]
+          }
+        ]
+      }
+    };
+    const res = await axios.post(
+      `https://messagingapi.charteredinfo.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+    );
+    const messageId = res.data?.messages?.[0]?.id || null;
+    return { success: true, messageId, raw: res.data };
+  } catch (err) {
+    console.error(`[WHATSAPP-DOC-TPL] ❌ HTTP ${err?.response?.status || 500} Error:`, err?.response?.data || err?.message);
+    return { success: false, messageId: null, error: err?.response?.data || err?.message };
+  }
+};
+
+// Native WhatsApp Document (PDF) Sender (Retained for active 24h customer service session fallback)
+const sendWhatsAppNativeDocument = async (number, docUrl, filename, caption = "") => {
+  try {
+    const normalizedPhone = normalizeWhatsAppNumber(number);
+    const token = await getWhatsAppAuthToken();
+    if (!token) throw new Error("WhatsApp authentication token could not be generated");
+
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: normalizedPhone,
+      type: "document",
+      document: {
+        link: docUrl,
+        filename: filename || "Document.pdf",
+        caption: caption || "",
+      },
+    };
+    const res = await axios.post(
+      `https://messagingapi.charteredinfo.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+    );
+    const messageId = res.data?.messages?.[0]?.id || null;
+    return { success: true, messageId, raw: res.data };
+  } catch (err) {
+    console.error(`[WHATSAPP-NATIVE-DOC] ❌ HTTP ${err?.response?.status || 500} Error:`, err?.response?.data || err?.message);
+    return { success: false, messageId: null, error: err?.response?.data || err?.message };
+  }
+};
+
+// Native WhatsApp Video Sender (Retained for active 24h customer service session fallback)
+const sendWhatsAppNativeVideo = async (number, videoUrl, caption = "") => {
+  try {
+    const normalizedPhone = normalizeWhatsAppNumber(number);
+    const token = await getWhatsAppAuthToken();
+    if (!token) throw new Error("WhatsApp authentication token could not be generated");
+
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: normalizedPhone,
+      type: "video",
+      video: {
+        link: videoUrl,
+        caption: caption || "",
+      },
+    };
+    const res = await axios.post(
+      `https://messagingapi.charteredinfo.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+    );
+    const messageId = res.data?.messages?.[0]?.id || null;
+    return { success: true, messageId, raw: res.data };
+  } catch (err) {
+    console.error(`[WHATSAPP-NATIVE-VIDEO] ❌ HTTP ${err?.response?.status || 500} Error:`, err?.response?.data || err?.message);
+    return { success: false, messageId: null, error: err?.response?.data || err?.message };
+  }
+};
+
+// 🎯 3-Day Smart Followup & Demo Scheduling Policy Handler
+const handleSmartPostCallFollowup = async (activeSeq, leadUtd, rawStatus, callData) => {
+  try {
+    if (!leadUtd || !activeSeq) return;
+
+    // 1. Fetch current lead state
+    const leads = await activeSeq.query(
+      `SELECT TOP 1 UTD, ISNULL(status, 0) AS status, ISNULL(Call_Count, 0) AS Call_Count FROM dbo.Meta_Lead_Tbl WHERE UTD = :leadUtd`,
+      { replacements: { leadUtd }, type: QueryTypes.SELECT }
+    );
+    if (!leads || leads.length === 0) return;
+
+    const lead = leads[0];
+    const callCount = Number(lead.Call_Count || 1);
+    const isCompleted = ["completed", "call-transferred", "transferred", "ended"].includes(rawStatus);
+
+    // Check if appointment / demo was set
+    const isAppointmentSet = Boolean(callData?.appointment_set || callData?.demo_booked || callData?.variables?.appointment_set);
+
+    if (isAppointmentSet) {
+      // SCENARIO C: Demo Booked -> Mark status = 3 (NO MORE AUTOMATIC CALLS EVER!)
+      await activeSeq.query(
+        `UPDATE dbo.Meta_Lead_Tbl SET Call_Status = 'DEMO_BOOKED', status = 3, Updated_At = GETDATE() WHERE UTD = :leadUtd`,
+        { replacements: { leadUtd }, type: QueryTypes.UPDATE }
+      );
+      // Cancel any pending follow-ups
+      await activeSeq.query(
+        `UPDATE dbo.Meta_Lead_Followup_Tbl SET Followup_Status = 'CANCELLED', Remark = 'Cancelled due to Demo/Appointment booking' WHERE Meta_Lead_UTD = :leadUtd AND Followup_Status = 'PENDING'`,
+        { replacements: { leadUtd }, type: QueryTypes.UPDATE }
+      );
+      console.log(`[POST-CALL-SCHEDULER] 🎉 Demo/Appointment Booked for Lead #${leadUtd}! Marked status = 3. Automatic calls stopped.`);
+      return;
+    }
+
+    if (callCount >= 3) {
+      // SCENARIO A (End): 3 Days Limit Reached! Mark status = 9 (EXHAUSTED) -> NO MORE CALLS EVER!
+      await activeSeq.query(
+        `UPDATE dbo.Meta_Lead_Tbl SET Call_Status = 'EXHAUSTED_3_DAYS', status = 9, Updated_At = GETDATE() WHERE UTD = :leadUtd`,
+        { replacements: { leadUtd }, type: QueryTypes.UPDATE }
+      );
+      console.log(`[POST-CALL-SCHEDULER] 🛑 Max 3 Days Attempt Limit reached for Lead #${leadUtd} (Call_Count: ${callCount}). Marked status = 9 (EXHAUSTED). Automatic calls stopped.`);
+      return;
+    }
+
+    // Check if customer gave specific callback date & time
+    const cbDateRaw = callData?.callback_date || callData?.variables?.callback_date || null;
+    const cbTimeRaw = callData?.callback_time || callData?.variables?.callback_time || null;
+
+    let targetDate = null;
+    let targetTime = "11:00:00";
+    let purpose = isCompleted ? "Completed Call Followup" : "Unanswered Call Retry";
+
+    if (cbDateRaw && cbTimeRaw) {
+      // SCENARIO B: Customer gave specific time
+      targetDate = String(cbDateRaw).trim();
+      targetTime = String(cbTimeRaw).trim();
+      purpose = "Customer Requested Callback";
+      console.log(`[POST-CALL-SCHEDULER] ⏰ Customer requested callback on ${targetDate} at ${targetTime} for Lead #${leadUtd}`);
+    } else {
+      // SCENARIO A & D: No specific time given -> Schedule Tomorrow at 11:00 AM
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const yyyy = tomorrow.getFullYear();
+      const mm = String(tomorrow.getMonth() + 1).padStart(2, "0");
+      const dd = String(tomorrow.getDate()).padStart(2, "0");
+      targetDate = `${yyyy}-${mm}-${dd}`;
+      targetTime = "11:00:00";
+      console.log(`[POST-CALL-SCHEDULER] 📅 Auto-scheduling next day 11:00 AM call for Lead #${leadUtd} (Tomorrow: ${targetDate})`);
+    }
+
+    // Insert follow-up into Meta_Lead_Followup_Tbl
+    await activeSeq.query(
+      `INSERT INTO dbo.Meta_Lead_Followup_Tbl (
+         Meta_Lead_UTD, Followup_Date, Followup_Time, Purpose, Followup_Status, Remark, Created_By, Created_At
+       ) VALUES (
+         :leadUtd, :targetDate, :targetTime, :purpose, 'PENDING', :remark, 'AUTO_SCHEDULER', GETDATE()
+       )`,
+      {
+        replacements: {
+          leadUtd,
+          targetDate,
+          targetTime,
+          purpose,
+          remark: `Auto scheduled 11:00 AM next-day retry (Attempt ${callCount + 1} of 3)`
+        },
+        type: QueryTypes.INSERT
+      }
+    );
+
+    // Update Meta_Lead_Tbl status to 2 (Active Followup)
+    await activeSeq.query(
+      `UPDATE dbo.Meta_Lead_Tbl SET Call_Status = UPPER(:rawStatus), status = 2, Updated_At = GETDATE() WHERE UTD = :leadUtd`,
+      { replacements: { rawStatus, leadUtd }, type: QueryTypes.UPDATE }
+    );
+
+  } catch (err) {
+    console.error(`[POST-CALL-SCHEDULER] ❌ Error scheduling for Lead #${leadUtd}:`, err?.message);
+  }
+};
+
+// Background Call Status Poller for Meta Lead AI Calls
+const startMetaCallStatusPoller = (compCode, calleePhoneNumber, campaignId, leadUtd, callId, leadName) => {
+  if (!callId || !calleePhoneNumber) return;
+
+  console.log(`[META-CALL-POLLER] 🚀 Started background poller for Call ID: ${callId} | Phone: ${calleePhoneNumber}`);
+
+  let attempts = 0;
+  const maxAttempts = 48; // Poll every 5 seconds for up to 4 minutes (48 * 5s = 240s)
+  const pollIntervalMs = 5000;
+
+  const INTERMEDIATE_STATUSES = [
+    "initiated", "ringing", "queued", "answered", "in-progress",
+    "in_progress", "ongoing", "active", "started", "triggered", "created"
+  ];
+  const COMPLETED_STATUSES = [
+    "completed", "call-transferred", "transferred", "ended"
+  ];
+  const FAILED_TERMINAL_STATUSES = [
+    "failed", "busy", "no-answer", "no_answer", "cancelled", "rejected", "unreachable", "invalid"
+  ];
+
+  const intervalId = setInterval(async () => {
+    attempts++;
+    try {
+      let callDetails = null;
+      let callData = null;
+      try {
+        callDetails = await getCallStatus(callId);
+        callData = callDetails?.data || callDetails;
+      } catch (e) {
+        console.warn(`[META-CALL-POLLER] Status fetch warning for ${callId}: ${e?.message}`);
+      }
+
+      const rawStatus = String(callData?.status || callData?.call_status || "").toLowerCase().trim();
+
+      if (INTERMEDIATE_STATUSES.includes(rawStatus) || !rawStatus) {
+        console.log(`[META-CALL-POLLER] Status: ${rawStatus || 'pending'} | Waiting...`);
+        if (attempts >= maxAttempts) {
+          console.log(`[META-CALL-POLLER] ⏱️ Max polling attempts reached (${maxAttempts}) for ${callId}`);
+          clearInterval(intervalId);
+        }
+        return;
+      }
+
+      if (FAILED_TERMINAL_STATUSES.includes(rawStatus)) {
+        console.log(`[META-CALL-POLLER] 🛑 Call status = ${rawStatus}`);
+        console.log(`[POST-CALL-WHATSAPP] ⏭️ Skipped because call was not completed`);
+        clearInterval(intervalId);
+        if (leadUtd) {
+          try {
+            const activeSeq = await dbname('', getDealerId(compCode));
+            if (activeSeq) {
+              await handleSmartPostCallFollowup(activeSeq, leadUtd, rawStatus, callData);
+            }
+          } catch (_) {}
+        }
+        return;
+      }
+
+      if (COMPLETED_STATUSES.includes(rawStatus)) {
+        console.log(`[META-CALL-POLLER] 🏁 Status: completed | Terminal status 'completed' reached for Call ID: ${callId}`);
+        clearInterval(intervalId);
+        if (leadUtd) {
+          try {
+            const activeSeq = await dbname('', getDealerId(compCode));
+            if (activeSeq) {
+              await handleSmartPostCallFollowup(activeSeq, leadUtd, rawStatus, callData);
+            }
+          } catch (_) {}
+        }
+
+        // Dispatch WhatsApp Package ONCE AND ONLY ONCE upon call completion!
+        await sendPostCallWhatsAppPackage({
+          calleePhoneNumber: calleePhoneNumber,
+          campaignId: campaignId,
+          compCode: compCode,
+          customerName: leadName || "Valued Customer",
+          callId: callId,
+          leadUtd: leadUtd,
+        });
+      } else {
+        if (attempts >= maxAttempts) {
+          clearInterval(intervalId);
+        }
+      }
+
+    } catch (err) {
+      console.error(`[META-CALL-POLLER] Error polling ${callId}:`, err?.message);
+      if (attempts >= maxAttempts) {
+        clearInterval(intervalId);
+      }
+    }
+  }, pollIntervalMs);
+};
+
+// Helper: Send Post-Call WhatsApp Package (Text, PDF Document, Video) directly to customer WhatsApp
+const sendPostCallWhatsAppPackage = async ({ calleePhoneNumber, campaignId, compCode, campaignData = null, customerName = "Valued Customer", callId = null, leadUtd = null, reqSequelize = null }) => {
+  try {
+    if (!calleePhoneNumber) return;
+
+    // Idempotency Protection 1: In-Memory Call ID state check
+    if (callId) {
+      const currentState = whatsappDispatchState.get(callId);
+      if (currentState === "SENT" || currentState === "PROCESSING") {
+        console.log(`[POST-CALL-WHATSAPP] Checking duplicate guard...`);
+        console.log(`[POST-CALL-WHATSAPP] ⏭️ Already ${currentState} for Call ID: ${callId}. Skipping duplicate dispatch.`);
+        return;
+      }
+      whatsappDispatchState.set(callId, "PROCESSING");
+    }
+
+    const dlrCode = getDealerId(compCode);
+
+    // Normalized WhatsApp Phone Number
+    const normalizedPhone = normalizeWhatsAppNumber(calleePhoneNumber);
+    const digits = normalizedPhone.slice(-10);
+    if (digits.length !== 10) {
+      console.error(`[POST-CALL-WHATSAPP] Invalid customer phone number: ${calleePhoneNumber}`);
+      if (callId) whatsappDispatchState.set(callId, "FAILED");
+      return;
+    }
+
+    // 🛡️ Persistent Database Duplicate Guard:
+    // If this Lead or Phone Number ALREADY received WhatsApp previously, NEVER send again!
+    if (leadUtd || digits) {
+      try {
+        const activeSeq = reqSequelize || await dbname('', dlrCode);
+        if (activeSeq) {
+          const pastSent = await activeSeq.query(
+            `SELECT TOP 1 UTD FROM dbo.Meta_Lead_Activity_Tbl
+             WHERE Activity_Type = 'WHATSAPP_SENT'
+               AND (Meta_Lead_UTD = :leadUtd OR Remark LIKE :phoneMatch)`,
+            {
+              replacements: {
+                leadUtd: leadUtd || 0,
+                phoneMatch: `%${digits}%`
+              },
+              type: QueryTypes.SELECT
+            }
+          );
+          if (pastSent && pastSent.length > 0) {
+            console.log(`[POST-CALL-WHATSAPP] ⏭️ Lead #${leadUtd} / Phone ${digits} ALREADY received WhatsApp package previously in DB. Skipping duplicate dispatch.`);
+            if (callId) whatsappDispatchState.set(callId, "SENT");
+            return { success: true, skipped: true, reason: "ALREADY_SENT_TO_THIS_NUMBER" };
+          }
+        }
+      } catch (dbCheckErr) {
+        console.warn("[POST-CALL-WHATSAPP] DB Duplicate check warning:", dbCheckErr?.message);
+      }
+    }
+
+    let camp = campaignData;
+    if (!camp && campaignId) {
+      try {
+        const activeSeq = reqSequelize || await dbname('', dlrCode);
+        if (activeSeq) {
+          const campResult = await activeSeq.query(
+            `SELECT TOP 1 UTD, Campaign_Id, Campaign_Name, Message_Text, Document_URL, Video_URL FROM dbo.Meta_Callmatic_Campaign_Tbl WHERE Campaign_Id = :campaignId OR UTD = TRY_CAST(:campaignId AS INT) ORDER BY UTD DESC`,
+            { replacements: { campaignId: String(campaignId) }, type: QueryTypes.SELECT }
+          );
+          if (campResult && campResult.length > 0) {
+            camp = campResult[0];
+          }
+        }
+      } catch (dbErr) {
+        console.warn("[POST-CALL-WHATSAPP] DB Query warning:", dbErr?.message);
+      }
+    }
+
+    if (!camp) {
+      console.warn(`[POST-CALL-WHATSAPP] Campaign not found for Campaign ID: ${campaignId}`);
+      if (callId) whatsappDispatchState.set(callId, "FAILED");
+      return;
+    }
+
+    const messageText = camp.Message_Text?.trim() || null;
+    const documentUrl = camp.Document_URL || camp.Document_Url || null;
+    const videoUrl = camp.Video_URL || camp.Video_Url || null;
+
+    const fullDocUrl = buildPublicMediaUrl(documentUrl);
+    const fullVidUrl = buildPublicMediaUrl(videoUrl);
+
+    console.log(`[POST-CALL-WHATSAPP] Campaign found: ${camp.Campaign_Name || camp.Campaign_Id || campaignId}`);
+    console.log(`[POST-CALL-WHATSAPP] Recipient: ${normalizedPhone}`);
+
+    let textSent = false;
+    let videoSent = false;
+    let docSent = false;
+    let textMsgId = null;
+    let vidMsgId = null;
+    let docMsgId = null;
+
+    // ══════════════════════════════════════════════════════════════
+    // STEP 1: Upload media files to Meta's servers FIRST
+    // (Meta can't download from erp.autovyn.com — firewall blocks it)
+    // ══════════════════════════════════════════════════════════════
+    let pdfMediaId = null;
+    let vidMediaId = null;
+
+    if (documentUrl) {
+      console.log(`[POST-CALL-WHATSAPP] Uploading PDF to Meta...`);
+      const pdfUpload = await uploadMediaToMeta(documentUrl, "application/pdf");
+      if (pdfUpload?.success) {
+        pdfMediaId = pdfUpload.mediaId;
+        console.log(`[POST-CALL-WHATSAPP] ✅ PDF uploaded | Media ID: ${pdfMediaId}`);
+      } else {
+        console.error(`[POST-CALL-WHATSAPP] ❌ PDF upload failed: ${pdfUpload?.error}`);
+      }
+    }
+
+    if (videoUrl) {
+      console.log(`[POST-CALL-WHATSAPP] Uploading Video to Meta...`);
+      const vidUpload = await uploadMediaToMeta(videoUrl, "video/mp4");
+      if (vidUpload?.success) {
+        vidMediaId = vidUpload.mediaId;
+        console.log(`[POST-CALL-WHATSAPP] ✅ Video uploaded | Media ID: ${vidMediaId}`);
+      } else {
+        console.error(`[POST-CALL-WHATSAPP] ❌ Video upload failed: ${vidUpload?.error}`);
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // STEP 2: Send messages using Media IDs (not URLs)
+    // ══════════════════════════════════════════════════════════════
+
+    // ── MESSAGE 1: TEXT TEMPLATE ──
+    if (messageText) {
+      try {
+        console.log(`[POST-CALL-WHATSAPP] Sending text template...`);
+        const custNameParam = String(customerName || "Valued Customer").trim();
+        const cleanTemplateText = String(messageText).replace(/[\r\n]+/g, " ").trim();
+        const safeText = cleanTemplateText.length > 950 ? cleanTemplateText.substring(0, 947) + "..." : cleanTemplateText;
+
+        const textResult = await sendWhatsAppTextTemplate(digits, custNameParam, safeText);
+        if (textResult?.success) {
+          textSent = true;
+          textMsgId = textResult.messageId;
+          console.log(`[WHATSAPP-TEXT] ✅ Accepted | Message ID: ${textResult.messageId}`);
+        } else {
+          console.error(`[WHATSAPP-TEXT] ❌ Failed | Error: ${JSON.stringify(textResult?.error)}`);
+        }
+      } catch (tplErr) {
+        console.error(`[WHATSAPP-TEXT] ❌ Error:`, tplErr?.message);
+      }
+    }
+
+    // 5-second gap
+    if (pdfMediaId || vidMediaId) await new Promise((r) => setTimeout(r, 5000));
+
+    // ── MESSAGE 2: DOCUMENT TEMPLATE (with uploaded Media ID) ──
+    if (pdfMediaId) {
+      try {
+        let docFileName = String(documentUrl).split("/").pop().split("\\").pop();
+        try { docFileName = decodeURIComponent(docFileName); } catch (_) {}
+        docFileName = docFileName.replace(/%20/g, "_").replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_\-\.]/g, "");
+        if (docFileName.toLowerCase().endsWith(".pptx.pdf")) {
+          docFileName = docFileName.substring(0, docFileName.length - 9) + ".pdf";
+        }
+        if (!docFileName.toLowerCase().endsWith(".pdf")) docFileName += ".pdf";
+        if (!docFileName || docFileName === ".pdf" || docFileName.startsWith("campaign_media_") || docFileName === "Campaign_Document.pdf" || docFileName === "hr_setu_presentation.pdf") {
+          docFileName = `${(camp.Campaign_Name || "HR_Setu").replace(/\s+/g, "_")}_Dealer_Presentation.pdf`;
+        }
+
+        console.log(`[POST-CALL-WHATSAPP] Sending document template (Media ID: ${pdfMediaId}, Filename: ${docFileName})...`);
+        const docResult = await sendWhatsAppDocumentTemplate(digits, pdfMediaId, docFileName, customerName, camp.Campaign_Name || "AutoVyn");
+        if (docResult?.success) {
+          docSent = true;
+          docMsgId = docResult.messageId;
+          console.log(`[WHATSAPP-DOCUMENT] ✅ Accepted | Message ID: ${docResult.messageId}`);
+        } else {
+          console.error(`[WHATSAPP-DOCUMENT] ❌ Failed | Error: ${JSON.stringify(docResult?.error)}`);
+        }
+      } catch (docErr) {
+        console.error(`[WHATSAPP-DOCUMENT] ❌ Error:`, docErr?.message);
+      }
+    }
+
+    // 5-second gap
+    if (vidMediaId) await new Promise((r) => setTimeout(r, 5000));
+
+    // ── MESSAGE 3: NATIVE VIDEO (with uploaded Media ID) ──
+    if (vidMediaId) {
+      try {
+        console.log(`[POST-CALL-WHATSAPP] Sending native video (Media ID: ${vidMediaId})...`);
+        const token = await getWhatsAppAuthToken();
+        const vidSendRes = await axios.post(
+          `https://messagingapi.charteredinfo.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+          {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: normalizedPhone,
+            type: "video",
+            video: { id: vidMediaId, caption: `${camp.Campaign_Name || "AutoVyn"}` },
+          },
+          { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+        );
+        vidMsgId = vidSendRes.data?.messages?.[0]?.id || null;
+        if (vidMsgId) {
+          videoSent = true;
+          console.log(`[WHATSAPP-VIDEO] ✅ Accepted | Message ID: ${vidMsgId}`);
+        }
+      } catch (vidErr) {
+        console.error(`[WHATSAPP-VIDEO] ❌ Error:`, vidErr?.response?.data || vidErr?.message);
+      }
+    }
+
+    if (callId) {
+      whatsappDispatchState.set(callId, "SENT");
+    }
+
+    // 📝 Persistent Activity Log in DB to guarantee duplicate prevention forever
+    if (textSent || docSent || videoSent) {
+      try {
+        const activeSeq = reqSequelize || await dbname('', dlrCode);
+        if (activeSeq && leadUtd) {
+          await activeSeq.query(
+            `INSERT INTO dbo.Meta_Lead_Activity_Tbl (
+               Meta_Lead_UTD, Activity_Type, Activity_Status, Remark, Message_Id, Activity_Date, Created_By, Created_At
+             ) VALUES (
+               :leadUtd, 'WHATSAPP_SENT', 'COMPLETED', :remark, :msgId, GETDATE(), 'AUTO_WHATSAPP', GETDATE()
+             )`,
+            {
+              replacements: {
+                leadUtd,
+                remark: `Post-Call WhatsApp Package (Text, PDF Presentation, Video) delivered to ${digits}`,
+                msgId: textMsgId || docMsgId || vidMsgId || ""
+              },
+              type: QueryTypes.INSERT
+            }
+          );
+          console.log(`[POST-CALL-WHATSAPP] 📝 Recorded WHATSAPP_SENT in Meta_Lead_Activity_Tbl for Lead #${leadUtd}`);
+        }
+      } catch (logErr) {
+        console.warn("[POST-CALL-WHATSAPP] Activity log error:", logErr?.message);
+      }
+    }
+
+    console.log(`[POST-CALL-WHATSAPP] ✅ PACKAGE ACCEPTED BY PROVIDER (Text: ${textSent ? 'ACCEPTED' : 'SKIPPED'}, Video: ${videoSent ? 'ACCEPTED' : 'SKIPPED'}, Doc: ${docSent ? 'ACCEPTED' : 'SKIPPED'})`);
+
+    return {
+      text: { accepted: textSent, messageId: textMsgId, deliveryStatus: "PENDING" },
+      video: { accepted: videoSent, messageId: vidMsgId, deliveryStatus: "PENDING" },
+      document: { accepted: docSent, messageId: docMsgId, deliveryStatus: "PENDING" }
+    };
+
+  } catch (pkgErr) {
+    if (callId) whatsappDispatchState.set(callId, "FAILED");
+    console.error(`[POST-CALL-WHATSAPP] ❌ Package dispatch error:`, pkgErr?.message);
+    return { error: pkgErr?.message };
+  }
+};
+
+// Diagnostic test endpoint for WhatsApp package dispatches
+const testCampaignWhatsAppPackage = async (req, res) => {
+  try {
+    const { phone, campaignId, compCode } = req.body || req.query || {};
+    if (!phone) {
+      return res.status(400).json({ success: false, message: "phone parameter is required" });
+    }
+    const result = await sendPostCallWhatsAppPackage({
+      calleePhoneNumber: phone,
+      campaignId: campaignId || 1,
+      compCode: compCode || "1",
+      customerName: "Diagnostic Test User"
+    });
+    return res.status(200).json({
+      success: true,
+      message: "Diagnostic campaign package test executed",
+      result
+    });
+  } catch (err) {
+    console.error("[DIAGNOSTIC-TEST] Error:", err?.message);
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+};
+
+exports.testCampaignWhatsAppPackage = testCampaignWhatsAppPackage;
+
 // ============================================================
 // TRIGGER CALLMATIC AI CALL FOR A META LEAD
 // POST /meta/triggerLeadCall, POST /makeMetaCall
@@ -3299,7 +4475,14 @@ const triggerLeadCall = async function (req, res) {
     }
 
     const lead = leadResult[0];
-    const calleePhoneNumber = lead.Phone_Number;
+    const rawLeadPhone = String(lead.Phone_Number || "").trim();
+    const targetPhone = process.env.META_TEST_OVERRIDE_PHONE || rawLeadPhone;
+    const calleePhoneNumber = targetPhone;
+    if (process.env.META_TEST_OVERRIDE_PHONE) {
+      console.log(`[TRIGGER-CALL] 🎯 Test Phone Override Active: Call targeted to ${calleePhoneNumber} (Original Lead Phone: ${rawLeadPhone})`);
+    } else {
+      console.log(`[TRIGGER-CALL] 🚀 Live Lead Call Target: ${calleePhoneNumber} (Lead #${metaLeadUtd} - ${lead.Full_Name || "Customer"})`);
+    }
 
     if (!calleePhoneNumber || !String(calleePhoneNumber).trim()) {
       return res.status(400).json({
@@ -3320,7 +4503,7 @@ const triggerLeadCall = async function (req, res) {
     // Priority 1: Match active campaign by Lead's exact Meta_Form_Id
     if (lead.Form_Id) {
       const formMatchQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1 AND Meta_Form_Id = :formId
         ORDER BY UTD DESC
@@ -3337,7 +4520,7 @@ const triggerLeadCall = async function (req, res) {
     // Priority 2: Match by direct campaign_id if passed in request body
     if ((!campResult || campResult.length === 0) && campaignId) {
       const idMatchQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1 AND Campaign_Id = :campaignId
         ORDER BY UTD DESC
@@ -3351,7 +4534,7 @@ const triggerLeadCall = async function (req, res) {
     // Priority 3: Fallback to latest Active Campaign from Meta_Callmatic_Campaign_Tbl if no form match
     if (!campResult || campResult.length === 0) {
       const fallbackQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1
         ORDER BY UTD DESC
@@ -3498,6 +4681,22 @@ const triggerLeadCall = async function (req, res) {
       console.error("Activity log insert error (Non-critical):", actErr?.message);
     }
 
+    // 7. Start Call Status Poller (Triggers WhatsApp ONLY when call completes)
+    try {
+      if (callId) {
+        startMetaCallStatusPoller(
+          compCode,
+          calleePhoneNumber,
+          campaignId,
+          lead.UTD,
+          callId,
+          lead?.Full_Name || lead?.Name || "Customer"
+        );
+      }
+    } catch (waDispatchErr) {
+      console.error("[TRIGGER-CALL] Call Status Poller Start Error:", waDispatchErr?.message);
+    }
+
     return res.status(200).json({
       success: true,
       message: "Meta Lead AI Call Triggered Successfully",
@@ -3532,6 +4731,7 @@ const triggerLeadCall = async function (req, res) {
 exports.triggerLeadCall = triggerLeadCall;
 exports.makeMetaCall = triggerLeadCall;
 exports.triggerMetaCall = triggerLeadCall;
+exports.sendPostCallWhatsAppPackage = sendPostCallWhatsAppPackage;
 
 // ============================================================
 // GET META CALL LOGS
@@ -4218,4 +5418,9 @@ exports.getMetaCallRecording = async function (req, res) {
   }
 };
 
-
+exports.startMetaCallStatusPoller = startMetaCallStatusPoller;
+exports.sendPostCallWhatsAppPackage = sendPostCallWhatsAppPackage;
+exports.sendWhatsAppDocumentTemplate = sendWhatsAppDocumentTemplate;
+exports.sendWhatsAppVideoTemplate = sendWhatsAppVideoTemplate;
+exports.sendWhatsAppTextTemplate = sendWhatsAppTextTemplate;
+exports.autoSyncLeadCalls = autoSyncLeadCalls;

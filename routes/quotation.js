@@ -1,6 +1,7 @@
 const { dbname } = require("../utils/dbconfig");
 const { triggerSingleCall } = require("./callmati");
-const { startCallStatusPoller } = require("./GetCallRecordings");
+const { startCallStatusPoller, generateAppointmentToken, resolveCompCode } = require("./GetCallRecordings");
+const { SendWhatsAppMessgae } = require("./user");
 
 const checkColumns = async (sequelize) => {
   try {
@@ -17,19 +18,19 @@ const checkColumns = async (sequelize) => {
       try {
         await sequelize.query(`ALTER TABLE dbo.Srv_Reminder_Tbl ADD AI_Call_ID NVARCHAR(100) NULL`);
         names.add("ai_call_id");
-      } catch (_) {}
+      } catch (_) { }
     }
     if (!names.has("reminder_channel")) {
       try {
         await sequelize.query(`ALTER TABLE dbo.Srv_Reminder_Tbl ADD Reminder_Channel NVARCHAR(50) NULL`);
         names.add("reminder_channel");
-      } catch (_) {}
+      } catch (_) { }
     }
     if (!names.has("whatsapp_sent")) {
       try {
         await sequelize.query(`ALTER TABLE dbo.Srv_Reminder_Tbl ADD WhatsApp_Sent INT DEFAULT 0 NULL`);
         names.add("whatsapp_sent");
-      } catch (_) {}
+      } catch (_) { }
     }
 
     return {
@@ -52,7 +53,9 @@ exports.makeServiceReminderCall = async function (req, res) {
   let sequelize;
 
   try {
-    sequelize = await dbname(req, req.headers.compcode);
+    const rawComp = req.headers.compcode || req.body.compcode || req.query.compcode;
+    const targetComp = (!rawComp || String(rawComp).trim() === "1") ? "AUTOVYN" : String(rawComp).trim();
+    sequelize = await dbname(req, targetComp);
 
     const { reminder_utd } = req.body;
 
@@ -129,24 +132,24 @@ exports.makeServiceReminderCall = async function (req, res) {
         return res.status(404).send({
           success: false,
           message: `Reminder not found for UTD: ${cleanReminderUTD}`,
-          hint   : "Srv_Reminder_Tbl me ye UTD exist nahi karta ya status=0 hai",
+          hint: "Srv_Reminder_Tbl me ye UTD exist nahi karta ya status=0 hai",
         });
       }
 
       mainRow = mainResult[0];
 
-      if (mainRow.Reminder_Status !== "PENDING") {
+      if (mainRow.Reminder_Status === "CLOSED") {
         return res.status(400).send({
-          success       : false,
-          message       : `Reminder UTD ${cleanReminderUTD} ka status PENDING nahi hai`,
+          success: false,
+          message: `Reminder UTD ${cleanReminderUTD} is CLOSED`,
           current_status: mainRow.Reminder_Status,
-          hint          : "Sirf PENDING reminders pe call ho sakti hai",
-          reminderInfo  : {
-            Reminder_UTD   : mainRow.Reminder_UTD,
+          hint: "CLOSED reminders pe call disabled hai",
+          reminderInfo: {
+            Reminder_UTD: mainRow.Reminder_UTD,
             Reminder_Status: mainRow.Reminder_Status,
-            Call_Status    : mainRow.Call_Status,
-            Veh_Reg_No     : mainRow.Veh_Reg_No,
-            Cust_Name      : mainRow.Cust_Name,
+            Call_Status: mainRow.Call_Status,
+            Veh_Reg_No: mainRow.Veh_Reg_No,
+            Cust_Name: mainRow.Cust_Name,
           },
         });
       }
@@ -156,7 +159,7 @@ exports.makeServiceReminderCall = async function (req, res) {
       return res.status(500).send({
         success: false,
         message: "Reminder/Vehicle query failed",
-        error  : e1?.message,
+        error: e1?.message,
       });
     }
 
@@ -165,12 +168,12 @@ exports.makeServiceReminderCall = async function (req, res) {
     // ════════════════════════════════════════════════════════
     if (!mainRow.Cust_Mob || String(mainRow.Cust_Mob).trim() === "") {
       return res.status(400).send({
-        success     : false,
-        message     : "Customer mobile number not found in DB for this reminder",
+        success: false,
+        message: "Customer mobile number not found in DB for this reminder",
         reminderInfo: {
           Reminder_UTD: mainRow.Reminder_UTD,
-          Veh_Reg_No  : mainRow.Veh_Reg_No,
-          Cust_Name   : mainRow.Cust_Name,
+          Veh_Reg_No: mainRow.Veh_Reg_No,
+          Cust_Name: mainRow.Cust_Name,
         },
       });
     }
@@ -224,7 +227,7 @@ exports.makeServiceReminderCall = async function (req, res) {
       return res.status(400).send({
         success: false,
         message: `Active config not found for Loc_Code: ${locCode}`,
-        hint   : "Srv_Reminder_Config_Tbl me is Loc_Code ke liye status=1 wala row add karo",
+        hint: "Srv_Reminder_Config_Tbl me is Loc_Code ke liye status=1 wala row add karo",
       });
     }
 
@@ -242,9 +245,9 @@ exports.makeServiceReminderCall = async function (req, res) {
     //   Priority 1 → Srv_Cust_Vehi_Tbl (srv_exec_mobile)
     //   Priority 2 → Config table (Sales_Exec_Number) — Loc_Code wise
     // ════════════════════════════════════════════════════════
-    let execName    = mainRow.srv_exec_name     ? String(mainRow.srv_exec_name).trim()     : "";
+    let execName = mainRow.srv_exec_name ? String(mainRow.srv_exec_name).trim() : "";
     let execEmpCode = mainRow.srv_exec_Emp_Code ? String(mainRow.srv_exec_Emp_Code).trim() : "";
-    let execMobile  = mainRow.srv_exec_mobile   ? String(mainRow.srv_exec_mobile).trim()   : "";
+    let execMobile = mainRow.srv_exec_mobile ? String(mainRow.srv_exec_mobile).trim() : "";
 
     let execSource = "Not_Found";
 
@@ -260,8 +263,8 @@ exports.makeServiceReminderCall = async function (req, res) {
         : "";
 
       if (cfgExecMobile !== "") {
-        execMobile  = cfgExecMobile;
-        execSource  = "Config_Table";
+        execMobile = cfgExecMobile;
+        execSource = "Config_Table";
         console.log(
           "[AI-CALL] STEP4 — Exec mobile not found in Srv_Cust_Vehi_Tbl, using Config Sales_Exec_Number:",
           execMobile
@@ -302,8 +305,8 @@ exports.makeServiceReminderCall = async function (req, res) {
       }
       if (isNaN(baseDate.getTime())) baseDate = new Date();
 
-      const dd   = String(baseDate.getDate()).padStart(2, "0");
-      const mm   = String(baseDate.getMonth() + 1).padStart(2, "0");
+      const dd = String(baseDate.getDate()).padStart(2, "0");
+      const mm = String(baseDate.getMonth() + 1).padStart(2, "0");
       const yyyy = baseDate.getFullYear();
       return `${dd}/${mm}/${yyyy}`;
     };
@@ -325,24 +328,24 @@ exports.makeServiceReminderCall = async function (req, res) {
     // STEP 6 — Variables build (Config table driven)
     // ════════════════════════════════════════════════════════
     const variables = {
-      callee_name           : String(mainRow.Cust_Name  || "Customer").trim(),
-      vehicle_model         : String(mainRow.Model_Name || "").trim(),
-      vehicle_number        : String(mainRow.Veh_Reg_No || "").trim(),
-      showroom_name         : configRow.Service_Center_Name    || "",
-      service_center_name   : configRow.Service_Center_Name    || "",
+      callee_name: String(mainRow.Cust_Name || "Customer").trim(),
+      vehicle_model: String(mainRow.Model_Name || "").trim(),
+      vehicle_number: String(mainRow.Veh_Reg_No || "").trim(),
+      showroom_name: configRow.Service_Center_Name || "",
+      service_center_name: configRow.Service_Center_Name || "",
       service_center_address: configRow.Service_Center_Address || "",
-      working_hours         : configRow.Working_Hours          || "09:00 AM - 06:00 PM",
-      slot1_date            : slots.slot1_date,
-      slot1_time            : slots.slot1_time,
-      slot2_date            : slots.slot2_date,
-      slot2_time            : slots.slot2_time,
-      slot3_date            : slots.slot3_date,
-      slot3_time            : slots.slot3_time,
-      callback_date         : formatDate(mainRow.Followup_Date || mainRow.Reminder_Date) || "",
-      callback_time         : callbackTime,
-      transferNumber        : finalTransferNumber,
-      exec_name             : execName    || "",
-      exec_emp_code         : execEmpCode || "",
+      working_hours: configRow.Working_Hours || "09:00 AM - 06:00 PM",
+      slot1_date: slots.slot1_date,
+      slot1_time: slots.slot1_time,
+      slot2_date: slots.slot2_date,
+      slot2_time: slots.slot2_time,
+      slot3_date: slots.slot3_date,
+      slot3_time: slots.slot3_time,
+      callback_date: formatDate(mainRow.Followup_Date || mainRow.Reminder_Date) || "",
+      callback_time: callbackTime,
+      transferNumber: finalTransferNumber,
+      exec_name: execName || "",
+      exec_emp_code: execEmpCode || "",
     };
 
     // ════════════════════════════════════════════════════════
@@ -364,10 +367,10 @@ exports.makeServiceReminderCall = async function (req, res) {
       return res.status(502).send({
         success: false,
         message: "AI Call API failed",
-        error  : {
+        error: {
           message: callErr?.message,
-          status : callErr?.response?.status,
-          detail : callErr?.response?.data || null,
+          status: callErr?.response?.status,
+          detail: callErr?.response?.data || null,
         },
         debug: { phoneNumber, Campain_ID, variables },
       });
@@ -377,17 +380,17 @@ exports.makeServiceReminderCall = async function (req, res) {
     // callId extract — double nested handle
     // ════════════════════════════════════════════════════════
     const callId =
-      callResult?.callId               ||
-      callResult?.data?.callId         ||
-      callResult?.data?.data?.callId   ||
-      callResult?.calls?.[0]?.callId   ||
+      callResult?.callId ||
+      callResult?.data?.callId ||
+      callResult?.data?.data?.callId ||
+      callResult?.calls?.[0]?.callId ||
       null;
 
     const calledPhone =
-      callResult?.phoneNumber               ||
-      callResult?.data?.phoneNumber         ||
-      callResult?.data?.data?.phoneNumber   ||
-      callResult?.calls?.[0]?.phoneNumber   ||
+      callResult?.phoneNumber ||
+      callResult?.data?.phoneNumber ||
+      callResult?.data?.data?.phoneNumber ||
+      callResult?.calls?.[0]?.phoneNumber ||
       phoneNumber;
 
     // ════════════════════════════════════════════════════════
@@ -400,8 +403,8 @@ exports.makeServiceReminderCall = async function (req, res) {
            VALUES (:mob_no, :call_id, :call_type)`,
           {
             replacements: {
-              mob_no   : calledPhone,
-              call_id  : callId,
+              mob_no: calledPhone,
+              call_id: callId,
               call_type: CALL_CHANNEL,
             },
             type: sequelize.constructor.QueryTypes?.INSERT || "INSERT",
@@ -471,56 +474,68 @@ exports.makeServiceReminderCall = async function (req, res) {
     }
 
     // ════════════════════════════════════════════════════════
-    // STEP 9.5 — Auto Background Poller launch for auto WhatsApp dispatch
+    // STEP 9.5 — Auto Background Status Poller: Watches call
+    // status and sends WhatsApp automatically upon Call Completion
     // ════════════════════════════════════════════════════════
-    if (callId && mainRow.Reminder_UTD) {
-      const compCodeVal = req?.headers?.compcode || req?.body?.compcode || mainRow.Loc_Code;
-      startCallStatusPoller(compCodeVal, mainRow.Reminder_UTD, callId, mainRow.Cust_Vehi_UTD, calledPhone);
+    if (callId && cleanReminderUTD) {
+      try {
+        const rawComp = req.headers.compcode || req.body.compcode || req.query.compcode || targetComp;
+        startCallStatusPoller(
+          rawComp,
+          cleanReminderUTD,
+          callId,
+          mainRow.Cust_Vehi_UTD,
+          calledPhone
+        );
+        console.log(`[AI-CALL] 🚀 Background Poller started for UTD ${cleanReminderUTD} (callId: ${callId}) — will auto-check and send WhatsApp upon call completion.`);
+      } catch (pollErr) {
+        console.error("[AI-CALL] ⚠️ startCallStatusPoller trigger error:", pollErr?.message);
+      }
     }
 
     // ════════════════════════════════════════════════════════
     // STEP 10 — Success Response
     // ════════════════════════════════════════════════════════
     return res.status(200).send({
-      success  : true,
-      message  : "AI Call Triggered Successfully",
-      data     : callResult,
+      success: true,
+      message: "AI Call Triggered Successfully",
+      data: callResult,
       variables: variables,
-      slots    : slots,
-      reminder : {
-        Reminder_UTD     : mainRow.Reminder_UTD,
-        AI_Call_ID       : callId || null,
-        Cust_Name        : mainRow.Cust_Name,
-        Cust_Mob         : mainRow.Cust_Mob,
-        Veh_Reg_No       : mainRow.Veh_Reg_No,
-        Model_Name       : mainRow.Model_Name,
-        Reminder_Date    : mainRow.Reminder_Date,
-        Final_Due_Date   : mainRow.Final_Due_Date,
-        Followup_Date    : mainRow.Followup_Date,
+      slots: slots,
+      reminder: {
+        Reminder_UTD: mainRow.Reminder_UTD,
+        AI_Call_ID: callId || null,
+        Cust_Name: mainRow.Cust_Name,
+        Cust_Mob: mainRow.Cust_Mob,
+        Veh_Reg_No: mainRow.Veh_Reg_No,
+        Model_Name: mainRow.Model_Name,
+        Reminder_Date: mainRow.Reminder_Date,
+        Final_Due_Date: mainRow.Final_Due_Date,
+        Followup_Date: mainRow.Followup_Date,
         Call_Triggered_To: calledPhone,
-        callId           : callId           || null,
-        Reminder_Channel : CALL_CHANNEL,
-        Call_Status      : "INITIATED",
+        callId: callId || null,
+        Reminder_Channel: CALL_CHANNEL,
+        Call_Status: "INITIATED",
       },
       serviceExecutive: {
-        exec_name      : execName          || null,
-        exec_emp_code  : execEmpCode       || null,
-        exec_mobile    : execMobile        || null,
+        exec_name: execName || null,
+        exec_emp_code: execEmpCode || null,
+        exec_mobile: execMobile || null,
         transfer_number: finalTransferNumber,
-        source         : execSource, // "Srv_Cust_Vehi_Tbl" | "Config_Table" | "Not_Found"
+        source: execSource, // "Srv_Cust_Vehi_Tbl" | "Config_Table" | "Not_Found"
       },
       callInfo: {
         call_channel: CALL_CHANNEL,
-        call_type   : "MANUAL",
-        campaign_id : Campain_ID,
+        call_type: "MANUAL",
+        campaign_id: Campain_ID,
       },
       config: {
-        Loc_Code               : configRow.Loc_Code,
-        Service_Center_Name    : configRow.Service_Center_Name,
-        Service_Center_Address : configRow.Service_Center_Address,
-        Working_Hours          : configRow.Working_Hours,
-        Max_Attempts_Per_Day   : configRow.Max_Attempts_Per_Day,
-        Call_Delay_Ms          : configRow.Call_Delay_Ms,
+        Loc_Code: configRow.Loc_Code,
+        Service_Center_Name: configRow.Service_Center_Name,
+        Service_Center_Address: configRow.Service_Center_Address,
+        Working_Hours: configRow.Working_Hours,
+        Max_Attempts_Per_Day: configRow.Max_Attempts_Per_Day,
+        Call_Delay_Ms: configRow.Call_Delay_Ms,
       },
     });
 
@@ -532,16 +547,16 @@ exports.makeServiceReminderCall = async function (req, res) {
     return res.status(500).send({
       success: false,
       message: err?.message || "Error Occurred While Triggering AI Call",
-      debug  : {
+      debug: {
         status: err?.response?.status || null,
-        detail: err?.response?.data   || null,
+        detail: err?.response?.data || null,
       },
     });
   } finally {
     if (sequelize) {
       try {
         await sequelize.close();
-      } catch (_) {}
+      } catch (_) { }
     }
   }
 };

@@ -140,7 +140,8 @@ router.get("/delete-file", async (req, res) => {
 router.get("/fetch", async (req, res) => {
     try {
 
-        const filePath = req.query.filePath;
+        let filePath = req.query.filePath || "";
+        try { filePath = decodeURIComponent(filePath); } catch (_) {}
         const normalizedPath = filePath.replace(/\\/g, "/");
         const imagePath = path.join(SMB_PATH, normalizedPath);
         

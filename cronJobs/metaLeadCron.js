@@ -1,7 +1,7 @@
 // cronJobs/metaLeadCron.js
-const cron           = require("node-cron");
-const axios          = require("axios");
-const { dbname }     = require("../utils/dbconfig");
+const cron = require("node-cron");
+const axios = require("axios");
+const { dbname } = require("../utils/dbconfig");
 const { QueryTypes } = require("sequelize");
 
 
@@ -9,12 +9,12 @@ const { QueryTypes } = require("sequelize");
 // ⚙️  SYSTEM SETTINGS FOR META LEADS
 // ============================================================
 const META_CRON_SETTINGS = {
-  TIMEZONE            : "Asia/Kolkata",
-  SCH_TYPE            : "metalead",
-  MAX_DAILY_ATTEMPTS  : 3,
-  CALL_CHANNEL        : "META_LEAD_AUTO",
-  CALLMATIC_API_KEY   : process.env.CALLMATIC_API_KEY || "857e790e-ad5f-4816-9530-0ae643988229",
-  CALLMATIC_BASE_URL  : "https://api.callmatic.ai/v1",
+  TIMEZONE: "Asia/Kolkata",
+  SCH_TYPE: "metalead",
+  MAX_DAILY_ATTEMPTS: 3,
+  CALL_CHANNEL: "META_LEAD_AUTO",
+  CALLMATIC_API_KEY: process.env.CALLMATIC_API_KEY || "857e790e-ad5f-4816-9530-0ae643988229",
+  CALLMATIC_BASE_URL: "https://api.callmatic.ai/v1",
 };
 
 /**
@@ -88,7 +88,13 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
       return { success: false, reason: "Phone number missing" };
     }
 
-    const formattedPhone = formatPhoneNumber(rawPhone);
+    const targetPhone = process.env.META_TEST_OVERRIDE_PHONE || rawPhone;
+    const formattedPhone = formatPhoneNumber(targetPhone);
+    if (process.env.META_TEST_OVERRIDE_PHONE) {
+      console.log(`[META-INSTANT-CALL] 🎯 Test Phone Override Active: Call targeted to ${formattedPhone} (Original Lead Phone: ${rawPhone})`);
+    } else {
+      console.log(`[META-INSTANT-CALL] 🚀 Live Call Target: ${formattedPhone} (Lead #${metaLeadUtd} - ${lead.Full_Name || "Customer"})`);
+    }
 
     // 2. Fetch Active Campaign matching Form_Id or Latest Active
     let campResult = null;
@@ -142,6 +148,24 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
 
     console.log(`[META-INSTANT-CALL] ✅ AI Call Executed | Lead UTD: #${metaLeadUtd} | Phone: ${formattedPhone} | Call ID: ${callId}`);
 
+    if (callId) {
+      try {
+        const { startMetaCallStatusPoller } = require("../routes/metaWebhookRoutes");
+        if (typeof startMetaCallStatusPoller === "function") {
+          startMetaCallStatusPoller(
+            finalCompcode,
+            formattedPhone,
+            campaignId,
+            lead.UTD,
+            callId,
+            lead.Full_Name || "Valued Customer"
+          );
+        }
+      } catch (pollerErr) {
+        console.warn("[META-INSTANT-CALL] Poller launch warning:", pollerErr?.message);
+      }
+    }
+
     // 5. Insert Log Record into Meta_Call_Log_Tbl
     try {
       await sequelize.query(
@@ -177,14 +201,14 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
     try {
       await sequelize.query(
         `INSERT INTO dbo.Meta_Lead_Activity_Tbl (
-           Meta_Lead_UTD, Activity_Type, Title, Description, Created_By, Created_At
+           Meta_Lead_UTD, Activity_Type, Remark, Activity_Status, Created_By, Created_At
          ) VALUES (
-           :metaLeadUtd, 'CALL_INITIATED', 'Instant AI Call Initiated', :desc, 'AUTO_LEAD_CALLER', GETDATE()
+           :metaLeadUtd, 'CALL_INITIATED', :remark, 'COMPLETED', 'AUTO_LEAD_CALLER', GETDATE()
          )`,
         {
           replacements: {
             metaLeadUtd: lead.UTD,
-            desc: `Instant Callmatic AI Call triggered to ${formattedPhone}. Call ID: ${callId || "N/A"}`,
+            remark: `Instant Callmatic AI Call triggered to ${formattedPhone}. Call ID: ${callId || "N/A"}`,
           },
           type: QueryTypes.INSERT,
         }
@@ -193,11 +217,12 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
       console.error("[META-INSTANT-CALL] Activity Insert Error:", actErr?.message);
     }
 
-    // 7. Update Meta_Lead_Tbl
+    // 7. Update Meta_Lead_Tbl status to 1 (Called), Call_Status, Call_Count, and Last_Call_At
     try {
       await sequelize.query(
         `UPDATE dbo.Meta_Lead_Tbl
-         SET Call_Status = 'INITIATED',
+         SET status = 1,
+             Call_Status = 'INITIATED',
              Call_Count = ISNULL(Call_Count, 0) + 1,
              Last_Call_At = GETDATE(),
              Updated_At = GETDATE()
@@ -213,7 +238,7 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
     console.error(`[META-INSTANT-CALL] ❌ Failed for Lead UTD #${metaLeadUtd}:`, err?.message);
     return { success: false, error: err?.message };
   } finally {
-    if (sequelize) { try { await sequelize.close(); } catch (_) {} }
+    if (sequelize) { try { await sequelize.close(); } catch (_) { } }
   }
 }
 
@@ -230,13 +255,13 @@ async function processMetaLeadDealer(compcode) {
       compcode
     );
 
-    // Fetch uncalled or failed Meta leads created in last 7 days that haven't reached max daily attempts
+    // Fetch uncalled Meta leads (status = 0) created in last 7 days
     let rows = [];
     try {
       rows = await sequelize.query(
         `SELECT TOP 10 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Form_Id, Page_Id, Company_Name
          FROM dbo.Meta_Lead_Tbl
-         WHERE status = 0
+         WHERE ISNULL(status, 0) = 0
            AND Phone_Number IS NOT NULL AND LTRIM(RTRIM(Phone_Number)) <> ''
            AND Created_At >= DATEADD(day, -7, GETDATE())
          ORDER BY UTD DESC`,
@@ -274,7 +299,7 @@ async function processMetaLeadDealer(compcode) {
   } catch (err) {
     console.error(`[META-AUTO-CALL] [${compcode}] Error:`, err?.message);
   } finally {
-    if (sequelize) { try { await sequelize.close(); } catch (_) {} }
+    if (sequelize) { try { await sequelize.close(); } catch (_) { } }
   }
 
   return result;
@@ -323,7 +348,7 @@ async function processScheduledFollowupCalls(compcode) {
           callSource: "CRON_SCHEDULED_CALLBACK",
           createdBy: "AUTO_CRON",
         });
-        
+
         // Mark follow-up as COMPLETED
         await sequelize.query(
           `UPDATE dbo.Meta_Lead_Followup_Tbl
@@ -343,7 +368,7 @@ async function processScheduledFollowupCalls(compcode) {
   } catch (err) {
     console.error(`[META-SCHEDULED-CALL] [${finalCompcode}] Error:`, err?.message);
   } finally {
-    if (sequelize) { try { await sequelize.close(); } catch (_) {} }
+    if (sequelize) { try { await sequelize.close(); } catch (_) { } }
   }
 }
 
@@ -396,7 +421,7 @@ async function runMetaLeadAutoCallScheduler() {
   if (sequelize1) {
     try {
       await sequelize1.close();
-    } catch (_) {}
+    } catch (_) { }
   }
 }
 
@@ -435,7 +460,7 @@ async function processMetaLeadWebhookUpdates() {
   } catch (err) {
     console.error("[META-WEBHOOK-SYNC] Error:", err?.message);
   } finally {
-    if (sequelize) { try { await sequelize.close(); } catch (_) {} }
+    if (sequelize) { try { await sequelize.close(); } catch (_) { } }
   }
 }
 

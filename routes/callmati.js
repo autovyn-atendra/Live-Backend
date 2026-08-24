@@ -15,14 +15,14 @@ const headers = {
  * @param {String} phoneNumber
  * @param {Object} variables
  */
-const triggerSingleCall = async (phoneNumber, variables = {}) => {
+const triggerSingleCall = async (phoneNumber, variables = {}, campaignId = null) => {
   try {
     if (!phoneNumber) {
       throw new Error("Phone number is required");
     }
 
     const payload = {
-      campaignId: CALLMATIC_CONFIG.CAMPAIGN_ID,
+      campaignId: campaignId || CALLMATIC_CONFIG.CAMPAIGN_ID,
       phoneNumber,
       variables,
     };

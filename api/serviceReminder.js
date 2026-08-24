@@ -7,6 +7,7 @@ const {
   getVehicleCallHistory,
   getAppointmentFormDetails,
   saveCustomerAppointment,
+  renderServiceAppointmentPage,
 } = require("../routes/GetCallRecordings");
 const {
   runServiceReminderScheduler,
@@ -134,7 +135,7 @@ router.post("/getPendingTasksByExecutive",   CRM.getPendingTasksByExecutive);
 
 // const router = express.Router();
 
-router.post("/makeServiceReminderCall",      makeServiceReminderCall);
+router.post("/makeServiceReminderCall",makeServiceReminderCall);
 router.post("/callWebhook",  callWebhook);
 
 // ── NEW — Vehicle ki complete call history ─────────────────────
@@ -144,6 +145,11 @@ router.post("/call-history", getVehicleCallHistory);
 router.get("/get-appointment-details", getAppointmentFormDetails);
 router.post("/get-appointment-details", getAppointmentFormDetails);
 router.post("/save-appointment-details", saveCustomerAppointment);
+
+// ── NEW — Direct Backend HTML Interface for Appointment Booking ──
+router.get("/", renderServiceAppointmentPage);
+router.get("/service-appointment", renderServiceAppointmentPage);
+router.get("/service-appointment-page", renderServiceAppointmentPage);
 
 router.get("/test-cron/run-all", async (req, res) => {
   try {
