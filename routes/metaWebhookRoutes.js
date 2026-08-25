@@ -4169,7 +4169,7 @@ const sendPostCallWhatsAppPackage = async ({ calleePhoneNumber, campaignId, comp
           const pastSent = await activeSeq.query(
             `SELECT TOP 1 UTD FROM dbo.Meta_Lead_Activity_Tbl
              WHERE Activity_Type = 'WHATSAPP_SENT'
-               AND (Meta_Lead_UTD = :leadUtd OR Remark LIKE :phoneMatch)`,
+               AND (Meta_Lead_UTD = :leadUtd)`,
             {
               replacements: {
                 leadUtd: leadUtd || 0,
@@ -4476,13 +4476,8 @@ const triggerLeadCall = async function (req, res) {
 
     const lead = leadResult[0];
     const rawLeadPhone = String(lead.Phone_Number || "").trim();
-    const targetPhone = process.env.META_TEST_OVERRIDE_PHONE || rawLeadPhone;
-    const calleePhoneNumber = targetPhone;
-    if (process.env.META_TEST_OVERRIDE_PHONE) {
-      console.log(`[TRIGGER-CALL] 🎯 Test Phone Override Active: Call targeted to ${calleePhoneNumber} (Original Lead Phone: ${rawLeadPhone})`);
-    } else {
-      console.log(`[TRIGGER-CALL] 🚀 Live Lead Call Target: ${calleePhoneNumber} (Lead #${metaLeadUtd} - ${lead.Full_Name || "Customer"})`);
-    }
+    const calleePhoneNumber = rawLeadPhone;
+    console.log(`[TRIGGER-CALL] 🚀 Live Lead Call Target: ${calleePhoneNumber} (Lead #${metaLeadUtd} - ${lead.Full_Name || "Customer"})`);
 
     if (!calleePhoneNumber || !String(calleePhoneNumber).trim()) {
       return res.status(400).json({

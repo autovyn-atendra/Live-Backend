@@ -88,13 +88,8 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
       return { success: false, reason: "Phone number missing" };
     }
 
-    const targetPhone = process.env.META_TEST_OVERRIDE_PHONE || rawPhone;
-    const formattedPhone = formatPhoneNumber(targetPhone);
-    if (process.env.META_TEST_OVERRIDE_PHONE) {
-      console.log(`[META-INSTANT-CALL] 🎯 Test Phone Override Active: Call targeted to ${formattedPhone} (Original Lead Phone: ${rawPhone})`);
-    } else {
-      console.log(`[META-INSTANT-CALL] 🚀 Live Call Target: ${formattedPhone} (Lead #${metaLeadUtd} - ${lead.Full_Name || "Customer"})`);
-    }
+    const formattedPhone = formatPhoneNumber(rawPhone);
+    console.log(`[META-INSTANT-CALL] 🚀 Live Call Target: ${formattedPhone} (Lead #${metaLeadUtd} - ${lead.Full_Name || "Customer"})`);
 
     // 2. Fetch Active Campaign matching Form_Id or Latest Active
     let campResult = null;
@@ -255,7 +250,7 @@ async function processMetaLeadDealer(compcode) {
       compcode
     );
 
-    // Fetch uncalled Meta leads (status = 0) created in last 7 days
+    // Fetch uncalled Meta leads (status = 0) created in last 7 days (Limit to TOP 1 for testing)
     let rows = [];
     try {
       rows = await sequelize.query(
@@ -263,7 +258,7 @@ async function processMetaLeadDealer(compcode) {
          FROM dbo.Meta_Lead_Tbl
          WHERE ISNULL(status, 0) = 0
            AND Phone_Number IS NOT NULL AND LTRIM(RTRIM(Phone_Number)) <> ''
-           AND Created_At >= DATEADD(day, -7, GETDATE())
+           AND (UTD = 306 OR Phone_Number LIKE '%6266899053')
          ORDER BY UTD DESC`,
         {
           type: QueryTypes.SELECT,
@@ -276,7 +271,7 @@ async function processMetaLeadDealer(compcode) {
     result.totalFound = rows.length;
     if (rows.length === 0) return result;
 
-    console.log(`[META-AUTO-CALL] [${compcode}] Found ${rows.length} pending Meta leads for auto-calling.`);
+    console.log(`[META-AUTO-CALL] [${compcode}] Found ${rows.length} pending Meta leads for auto-calling (Executing 1 Call).`);
 
     for (const row of rows) {
       try {
@@ -293,8 +288,8 @@ async function processMetaLeadDealer(compcode) {
         result.callFailed++;
       }
 
-      // Inter-call delay (2 seconds)
-      await new Promise((r) => setTimeout(r, 2000));
+      // Break immediately — only 1 call
+      break;
     }
   } catch (err) {
     console.error(`[META-AUTO-CALL] [${compcode}] Error:`, err?.message);
@@ -318,7 +313,7 @@ async function processScheduledFollowupCalls(compcode) {
       finalCompcode
     );
 
-    // Fetch pending follow-ups due up to current date & time
+    // Fetch pending follow-ups due up to current date & time (Limit to TOP 1 for testing)
     const dueFollowups = await sequelize.query(
       `SELECT TOP 10 
           f.UTD AS Followup_UTD,
@@ -330,14 +325,15 @@ async function processScheduledFollowupCalls(compcode) {
        INNER JOIN dbo.Meta_Lead_Tbl l ON l.UTD = f.Meta_Lead_UTD
        WHERE f.Followup_Status = 'PENDING'
          AND ISNULL(l.status, 0) NOT IN (3, 9) -- Exclude exhausted/closed leads
+         AND (l.UTD = 306 OR l.Phone_Number LIKE '%6266899053')
          AND CAST(CONCAT(f.Followup_Date, ' ', ISNULL(NULLIF(LTRIM(RTRIM(f.Followup_Time)), ''), '00:00:00')) AS DATETIME) <= GETDATE()
        ORDER BY f.UTD ASC`,
       { type: QueryTypes.SELECT }
     );
 
-    if (!dueFollowups || dueFollowups.length === 0) return;
+    if (!dueFollowups || dueFollowups.length === 0) return false;
 
-    console.log(`[META-SCHEDULED-CALL] [${finalCompcode}] Found ${dueFollowups.length} due scheduled follow-up calls to trigger.`);
+    console.log(`[META-SCHEDULED-CALL] [${finalCompcode}] Found ${dueFollowups.length} due scheduled follow-up call to trigger.`);
 
     for (const item of dueFollowups) {
       try {
@@ -363,13 +359,15 @@ async function processScheduledFollowupCalls(compcode) {
         console.error(`[META-SCHEDULED-CALL] [${finalCompcode}] ❌ Failed scheduled call for Lead #${item.Meta_Lead_UTD}:`, err?.message);
       }
 
-      await new Promise((r) => setTimeout(r, 2000));
+      // Break immediately — only 1 call
+      return true;
     }
   } catch (err) {
     console.error(`[META-SCHEDULED-CALL] [${finalCompcode}] Error:`, err?.message);
   } finally {
     if (sequelize) { try { await sequelize.close(); } catch (_) { } }
   }
+  return false;
 }
 
 /**
@@ -411,11 +409,14 @@ async function runMetaLeadAutoCallScheduler() {
     const compcode = dealer.Dlr_Id;
 
     try {
-      await processScheduledFollowupCalls(compcode);
-      await processMetaLeadDealer(compcode);
+      const scheduledSent = await processScheduledFollowupCalls(compcode);
+      if (!scheduledSent) {
+        await processMetaLeadDealer(compcode);
+      }
     } catch (err) {
       console.error(`Meta Lead Auto-Call job failed for ${compcode}:`, err?.message);
     }
+    break; // Test ke liye only 1 single dealer execution
   }
 
   if (sequelize1) {
@@ -479,7 +480,7 @@ const startMetaLeadCron = () => {
 
   // ── Retry Uncalled Leads Every 5 Minutes ─────────────────
   cron.schedule(
-    "*/5 * * * *",
+    "*/2 * * * *",
     async () => {
       try { await runMetaLeadAutoCallScheduler(); }
       catch (err) { console.error("[META-AUTO-CALL-CRON] Error:", err?.message); }

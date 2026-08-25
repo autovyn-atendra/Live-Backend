@@ -50,7 +50,7 @@ app.use(bodyParser.urlencoded({ limit: "100mb", extended: true })); // Adjust th
 app.use(express.urlencoded({ extended: false }));
 app.use(logRequests);
 startServiceReminderCron();
-// startMetaLeadCron();
+startMetaLeadCron();
 
 app.use((req, res, next) => {
   const originalJson = res.json;

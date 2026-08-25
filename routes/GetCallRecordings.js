@@ -380,6 +380,23 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
 
   const CUSTOMER_RESPONSE_MAX_LEN = 400;
 
+  // ── Fetch existing reminder record to prevent overwriting booked appointments or duplicate WhatsApp ──
+  let alreadyBooked = false;
+  let alreadySentWa = false;
+  try {
+    const curRemRows = await sequelize.query(
+      `SELECT TOP 1 UTD, Appointment_Date, Appointment_Status, Reminder_Status, ISNULL(WhatsApp_Sent, 0) AS WhatsApp_Sent
+       FROM dbo.Srv_Reminder_Tbl WHERE UTD = :reminderUTD`,
+      { replacements: { reminderUTD: Number(reminderUTD) }, type: QueryTypes.SELECT }
+    );
+    const currentRem = curRemRows?.[0] || {};
+    alreadyBooked =
+      currentRem.Appointment_Status === "SCHEDULED" ||
+      currentRem.Reminder_Status === "CLOSED" ||
+      Boolean(currentRem.Appointment_Date);
+    alreadySentWa = Number(currentRem.WhatsApp_Sent) === 1;
+  } catch (_) {}
+
   const setClauses = [`Call_Status = :newCallStatus`];
   const replacements = { UTD: Number(reminderUTD), newCallStatus };
 
@@ -400,7 +417,7 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
       replacements.Contacted_By = `AI_SLOT_${parsed.slotNumber}`;
     }
     console.log(`[UPDATE] ✅ Appointment: ${parsed.appointmentDate} ${parsed.appointmentTime || ""}`);
-  } else if (callbackInfo && callbackInfo.callbackDate) {
+  } else if (!alreadyBooked && callbackInfo && callbackInfo.callbackDate) {
     setClauses.push(`Followup_Date     = CONVERT(date, :Followup_Date, 23)`);
     setClauses.push(`Reminder_Date     = CONVERT(date, :Followup_Date, 23)`);
     setClauses.push(`Reminder_Type     = 'FOLLOWUP'`);
@@ -562,6 +579,8 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
            c.Model_Name,
            r.Appointment_Date,
            r.Appointment_Time,
+           r.Appointment_Status,
+           r.Reminder_Status,
            r.Loc_Code,
            ${waSelectCols}
            COALESCE(mm1.Misc_Name, mm2.Misc_Name, '') AS Loc_Name,
@@ -582,7 +601,7 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
       if (custRows && custRows.length > 0 && custRows[0].Cust_Mob) {
         const cd = custRows[0];
 
-        if (Number(cd.WhatsApp_Sent) === 1) {
+        if (alreadySentWa || Number(cd.WhatsApp_Sent) === 1) {
           console.log(`[WHATSAPP] ℹ️ Post-Call WhatsApp already sent for UTD ${reminderUTD} — skipping duplicate send`);
         } else {
           const compCodeStr = resolveCompCode(
@@ -1520,6 +1539,7 @@ exports.saveCustomerAppointment = async (req, res) => {
       `Appointment_Date = CONVERT(date, :appointment_date, 23)`,
       `Appointment_Status = 'SCHEDULED'`,
       `Reminder_Status = 'CLOSED'`,
+      `WhatsApp_Sent = 1`,
       `Updated_At = GETDATE()`,
     ];
     const replacements = {
@@ -1585,9 +1605,13 @@ exports.renderServiceAppointmentPage = async (req, res) => {
   <title>AUTO-VYN ERP - Service Appointment Portal</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Inter', sans-serif; }
+    .flatpickr-calendar { border-radius: 1rem; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1); border: 1px solid #e2e8f0; }
+    .flatpickr-day.selected, .flatpickr-day.startRange, .flatpickr-day.endRange { background: #2563eb !important; border-color: #2563eb !important; }
   </style>
 </head>
 <body class="bg-slate-100 dark:bg-slate-950 min-h-screen pb-12 font-sans text-slate-800 dark:text-slate-100">
@@ -1667,7 +1691,7 @@ exports.renderServiceAppointmentPage = async (req, res) => {
 
           <div class="grid grid-cols-2 gap-3 pt-0.5">
             <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
-              <p class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">📅 Date</p>
+              <p class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">📅 Date (DD/MM/YYYY)</p>
               <p id="savedDate" class="text-sm font-semibold text-slate-800 dark:text-slate-100">-</p>
             </div>
             <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
@@ -1712,10 +1736,10 @@ exports.renderServiceAppointmentPage = async (req, res) => {
           </div>
 
           <div class="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
-            <!-- Date Selection -->
+            <!-- Date Selection (DD/MM/YYYY) -->
             <div class="flex flex-col gap-1">
-              <label class="text-xs font-bold text-slate-600 dark:text-slate-300">Appointment Date <span class="text-red-500">*</span></label>
-              <input type="date" id="appointmentDate" required class="h-12 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 text-sm font-medium focus:border-blue-600 focus:outline-none" />
+              <label class="text-xs font-bold text-slate-600 dark:text-slate-300">Appointment Date (DD/MM/YYYY) <span class="text-red-500">*</span></label>
+              <input type="text" id="appointmentDate" placeholder="DD/MM/YYYY" required class="h-12 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 text-sm font-semibold text-slate-800 dark:text-slate-100 focus:border-blue-600 focus:outline-none cursor-pointer" />
             </div>
 
             <!-- Time Slot Selection -->
@@ -1754,6 +1778,30 @@ exports.renderServiceAppointmentPage = async (req, res) => {
     const backendBaseUrl = "${backendBaseUrl}";
 
     let apptData = null;
+    let fpInstance = null;
+
+    function initDatePicker(defaultDateStr) {
+      if (fpInstance) {
+        fpInstance.destroy();
+      }
+      fpInstance = flatpickr("#appointmentDate", {
+        dateFormat: "Y-m-d",
+        altInput: true,
+        altFormat: "d/m/Y",
+        defaultDate: defaultDateStr || new Date(),
+        minDate: "today",
+        allowInput: true
+      });
+    }
+
+    function formatDisplayDate(dateStr) {
+      if (!dateStr) return "-";
+      const parts = String(dateStr).split("-");
+      if (parts.length === 3) {
+        return parts[2] + "/" + parts[1] + "/" + parts[0];
+      }
+      return dateStr;
+    }
 
     async function loadDetails() {
       try {
@@ -1784,9 +1832,8 @@ exports.renderServiceAppointmentPage = async (req, res) => {
       document.getElementById('displayServiceAddress').innerText = d.serviceAddress || 'Main Workshop';
 
       const todayStr = new Date().toISOString().split('T')[0];
-      const dateElem = document.getElementById('appointmentDate');
-      dateElem.min = todayStr;
-      dateElem.value = d.appointmentDate || todayStr;
+      const initialDate = d.appointmentDate || todayStr;
+      initDatePicker(initialDate);
 
       if (d.appointmentTime) {
         document.getElementById('appointmentTime').value = d.appointmentTime;
