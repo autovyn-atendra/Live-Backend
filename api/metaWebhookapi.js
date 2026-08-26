@@ -36,6 +36,8 @@ router.get("/getMetaLeads", MetaWebhookController.getMetaLeads);
 router.post("/getMetaLeads", MetaWebhookController.getMetaLeads);
 router.get("/leads", MetaWebhookController.getMetaLeads);
 router.post("/leads", MetaWebhookController.getMetaLeads);
+router.post("/createManualLead", MetaWebhookController.createManualLead);
+router.post("/addLead", MetaWebhookController.createManualLead);
 
 // ============================================================
 // META CRM ACTIVITIES API

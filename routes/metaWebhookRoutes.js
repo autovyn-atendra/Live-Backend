@@ -1594,6 +1594,15 @@ exports.getMetaLeads = async function (req, res) {
       }
     }
 
+    const leadSourceFilter = String(body.leadSource || body.filterLeadSource || query.leadSource || query.filterLeadSource || "").trim().toUpperCase();
+    if (leadSourceFilter) {
+      if (leadSourceFilter === "MANUAL" || leadSourceFilter === "MANUAL_ENTRY") {
+        whereConditions.push(`(Source = 'MANUAL_ENTRY' OR Source LIKE '%MANUAL%')`);
+      } else if (leadSourceFilter === "META" || leadSourceFilter === "META_AD" || leadSourceFilter === "META_WEBHOOK") {
+        whereConditions.push(`(Source IS NULL OR Source = 'META_WEBHOOK' OR Source LIKE '%META%')`);
+      }
+    }
+
     const whereClause = whereConditions.join(" AND ");
 
     const countQuery = `
@@ -2838,6 +2847,233 @@ exports.rescheduleFollowup = async function (req, res) {
 };
 
 // ============================================================
+// CREATE MANUAL LEAD API
+// POST /meta/createManualLead, POST /meta/addLead
+// ============================================================
+exports.createManualLead = async function (req, res) {
+  let sequelize = null;
+  let transaction = null;
+  try {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Company code (compcode) is required.",
+      });
+    }
+
+    sequelize = await dbname(req, compCode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
+
+    const body = req.body || {};
+    const fullName = String(body.fullName || body.dealerName || body.Full_Name || body.Dealer_Name || "").trim();
+    const rawPhone = String(body.phoneNumber || body.Phone_Number || body.phone || body.Mobile_Number || "").trim();
+    const designation = String(body.designation || body.Designation || body.jobTitle || "").trim();
+    const companyName = String(body.companyName || body.Company_Name || "").trim();
+    const noOfEmployees = String(body.noOfEmployees || body.No_Of_Employees || body.employeeCount || "").trim();
+    const moduleName = String(body.module || body.Module || body.moduleName || "").trim();
+    const campaignId = String(body.campaignId || body.Campaign_Id || body.formId || body.Form_Id || "").trim();
+    const email = String(body.email || body.Email || "").trim();
+    const city = String(body.city || body.City || "").trim();
+    const customQuestions = Array.isArray(body.customQuestions) ? body.customQuestions : [];
+    const remark = String(body.remark || body.Remark || "Manual Lead Entry").trim();
+    const createdBy = String(req.headers.name || body.createdBy || "MANUAL_USER").trim();
+
+    if (!fullName) {
+      return res.status(400).json({
+        success: false,
+        message: "Dealer / Contact Person Name is required.",
+      });
+    }
+
+    if (!rawPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Mobile / Phone Number is required.",
+      });
+    }
+
+    // Format phone number
+    let cleanPhone = rawPhone.replace(/\D/g, "");
+    if (cleanPhone.length === 10) {
+      cleanPhone = "91" + cleanPhone;
+    }
+
+    // If campaign selected, resolve Form_Id / Campaign details
+    let resolvedFormId = campaignId;
+    let resolvedCampaignName = "";
+    if (campaignId) {
+      const campRes = await sequelize.query(
+        `SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id FROM Meta_Callmatic_Campaign_Tbl WHERE Campaign_Id = :campaignId OR Meta_Form_Id = :campaignId`,
+        { replacements: { campaignId }, type: QueryTypes.SELECT }
+      );
+      if (campRes && campRes.length > 0) {
+        resolvedFormId = campRes[0].Meta_Form_Id || campRes[0].Campaign_Id || campaignId;
+        resolvedCampaignName = campRes[0].Campaign_Name || "";
+      }
+    }
+
+    // Build structured All_Fields JSON
+    const fieldData = {
+      full_name: fullName,
+      phone_number: cleanPhone,
+      dealer_name: fullName,
+      designation: designation || undefined,
+      company_name: companyName || undefined,
+      number_of_employees: noOfEmployees || undefined,
+      module: moduleName || undefined,
+      campaign_name: resolvedCampaignName || undefined,
+      campaign_id: campaignId || undefined,
+    };
+
+    // Append dynamic custom questions
+    if (customQuestions && customQuestions.length > 0) {
+      customQuestions.forEach((q, idx) => {
+        const qKey = String(q.question || q.key || `custom_field_${idx + 1}`).trim();
+        const qVal = String(q.answer || q.value || "").trim();
+        if (qKey && qVal) {
+          fieldData[qKey] = qVal;
+        }
+      });
+    }
+
+    const allFieldsJson = JSON.stringify(fieldData);
+    const generatedLeadId = `MANUAL_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    transaction = await sequelize.transaction();
+
+    // Insert into Meta_Lead_Tbl
+    const insertLeadSql = `
+      INSERT INTO Meta_Lead_Tbl (
+        Meta_Lead_Id,
+        Page_Id,
+        Form_Id,
+        Full_Name,
+        Phone_Number,
+        Email,
+        City,
+        Company_Name,
+        All_Fields,
+        Raw_Webhook_Value,
+        Source,
+        status,
+        Created_By,
+        Created_At
+      ) VALUES (
+        :metaLeadId,
+        'MANUAL_PAGE',
+        :formId,
+        :fullName,
+        :phoneNumber,
+        :email,
+        :city,
+        :companyName,
+        :allFields,
+        :rawWebhookValue,
+        'MANUAL_ENTRY',
+        0,
+        :createdBy,
+        GETDATE()
+      )
+    `;
+
+    await sequelize.query(insertLeadSql, {
+      replacements: {
+        metaLeadId: generatedLeadId,
+        formId: resolvedFormId || null,
+        fullName,
+        phoneNumber: cleanPhone,
+        email: email || null,
+        city: city || null,
+        companyName: companyName || null,
+        allFields: allFieldsJson,
+        rawWebhookValue: JSON.stringify({ source: "MANUAL_ENTRY", customQuestions, fieldData }),
+        createdBy,
+      },
+      type: QueryTypes.INSERT,
+      transaction,
+    });
+
+    // Fetch newly inserted lead UTD
+    const newLeadRes = await sequelize.query(
+      `SELECT TOP 1 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Created_At FROM Meta_Lead_Tbl WHERE Meta_Lead_Id = :metaLeadId ORDER BY UTD DESC`,
+      { replacements: { metaLeadId: generatedLeadId }, type: QueryTypes.SELECT, transaction }
+    );
+
+    const createdLead = newLeadRes?.[0] || {};
+    const newLeadUtd = createdLead.UTD;
+
+    // Log Activity
+    if (newLeadUtd) {
+      await sequelize.query(
+        `INSERT INTO Meta_Lead_Activity_Tbl (
+          Meta_Lead_UTD,
+          Activity_Type,
+          Activity_Status,
+          Remark,
+          Activity_Date,
+          Created_By,
+          Created_Name,
+          Created_At
+        ) VALUES (
+          :metaLeadUtd,
+          'LEAD_CREATED',
+          'COMPLETED',
+          :remark,
+          GETDATE(),
+          :createdBy,
+          :createdBy,
+          GETDATE()
+        )`,
+        {
+          replacements: {
+            metaLeadUtd: newLeadUtd,
+            remark: `Manual Lead created by ${createdBy}.${resolvedCampaignName ? ` Campaign: ${resolvedCampaignName}.` : ""}${moduleName ? ` Module: ${moduleName}.` : ""}`.trim(),
+            createdBy,
+          },
+          type: QueryTypes.INSERT,
+          transaction,
+        }
+      );
+    }
+
+    await transaction.commit();
+    transaction = null;
+
+    return res.status(200).json({
+      success: true,
+      message: "Manual lead added successfully!",
+      leadUtd: newLeadUtd,
+      data: createdLead,
+    });
+  } catch (err) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rErr) {}
+      transaction = null;
+    }
+    console.error("Create Manual Lead Error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create manual lead: " + (err.message || err),
+    });
+  }
+};
+
+// ============================================================
 // UPDATE LEAD STATUS API
 // POST /meta/updateLeadStatus
 // ============================================================
@@ -3622,11 +3858,13 @@ exports.toggleCampaignStatus = async function (req, res) {
 };
 
 const getDealerId = (compCode) => {
-  if (!compCode || String(compCode) === "1" || String(compCode).toLowerCase().includes("autovyn")) {
-    return "AUTOVYN";
+  const metaCode = (process.env.META_COMP_CODE || "autovyn").toLowerCase();
+  if (!compCode || String(compCode) === "1" || String(compCode).toLowerCase().includes(metaCode)) {
+    return process.env.META_COMP_CODE || "AUTOVYN";
   }
   return String(compCode);
 };
+
 
 const { WHATSAPP_API_USERID, WHATSAPP_API_RPASSWORD } = require("../config/envConfig");
 
@@ -4258,9 +4496,8 @@ const sendPostCallWhatsAppPackage = async ({ calleePhoneNumber, campaignId, comp
       return;
     }
 
-    // 🛡️ Persistent Database Duplicate Guard (Temporarily disabled for testing):
-    /*
-    if (leadUtd || digits) {
+    // 🛡️ Persistent Database Duplicate Guard:
+    if (leadUtd) {
       try {
         const activeSeq = reqSequelize || await dbname('', dlrCode);
         if (activeSeq) {
@@ -4271,7 +4508,6 @@ const sendPostCallWhatsAppPackage = async ({ calleePhoneNumber, campaignId, comp
             {
               replacements: {
                 leadUtd: leadUtd || 0,
-                phoneMatch: `%${digits}%`
               },
               type: QueryTypes.SELECT
             }
@@ -4286,7 +4522,6 @@ const sendPostCallWhatsAppPackage = async ({ calleePhoneNumber, campaignId, comp
         console.warn("[POST-CALL-WHATSAPP] DB Duplicate check warning:", dbCheckErr?.message);
       }
     }
-    */
 
     let camp = campaignData;
     if (!camp && campaignId) {
@@ -4377,7 +4612,7 @@ const sendPostCallWhatsAppPackage = async ({ calleePhoneNumber, campaignId, comp
           console.error(`[WHATSAPP-VIDEO] ❌ Video Template Failed:`, JSON.stringify(vidResult?.error));
           // Fallback to native video
           console.log(`[POST-CALL-WHATSAPP] Attempting fallback native video send...`);
-          const nativeRes = await sendWhatsAppNativeVideo(digits, fullVidUrl || videoUrl, `${camp.Campaign_Name || "AutoVyn"}`);
+          const nativeRes = await sendWhatsAppNativeVideo(digits, fullVidUrl || videoUrl, `${camp.Campaign_Name}`);
           if (nativeRes?.success) {
             videoSent = true;
             vidMsgId = nativeRes.messageId;
@@ -4662,7 +4897,7 @@ const triggerLeadCall = async function (req, res) {
     }
 
     // 3. Construct call variables with defaults for company_name & transferNumber
-    const companyName = body.company_name || body.companyName || lead.Company_Name || "AUTOVYN";
+    const companyName = body.company_name || body.companyName || lead.Company_Name;
     const transferNumber = campaignTransferNumber || body.transfer_number || body.transferNumber || process.env.META_TRANSFER_NUMBER || "9876543210";
     const calleeName = lead.Full_Name || "Customer";
 
