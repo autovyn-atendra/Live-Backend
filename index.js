@@ -22,11 +22,7 @@ const metaWebhookapi = require("./api/metaWebhookapi");
 const { startServiceReminderCron } = require("./cronJobs/cronJobs");
 const { startMetaLeadCron } = require("./cronJobs/metaLeadCron");
 const aiRoutes = require("./api/aiRoutes");
-const {
-  renderServiceAppointmentPage,
-  getAppointmentFormDetails,
-  saveCustomerAppointment,
-} = require("./routes/GetCallRecordings");
+
 
 
 
@@ -83,12 +79,6 @@ app.use((req, res, next) => {
 
   next();
 });
-
-// ── Public Unauthenticated Service Appointment Routes (HTML & AJAX) ──
-app.get("*/service-appointment*", renderServiceAppointmentPage);
-app.get("*/get-appointment-details*", getAppointmentFormDetails);
-app.post("*/get-appointment-details*", getAppointmentFormDetails);
-app.post("*/save-appointment-details*", saveCustomerAppointment);
 
 app.use("/meta", metaWebhookapi);
 apiModules.forEach((module) => {

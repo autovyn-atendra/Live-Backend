@@ -1092,7 +1092,17 @@ exports.getVehicleCallHistory = async (req, res) => {
     if (cleanVehicleCode || utdList.length > 0 || finalMobList.length > 0) {
       try {
         const remVehicleRows = await sequelize.query(
-          `SELECT DISTINCT r.AI_Call_ID, r.Reminder_Channel, r.UTD AS Reminder_UTD, c.Cust_Mob
+          `SELECT DISTINCT 
+             r.AI_Call_ID, 
+             r.Reminder_Channel, 
+             r.UTD AS Reminder_UTD, 
+             r.Customer_Response,
+             r.Appointment_Date,
+             r.Appointment_Time,
+             r.Appointment_Status,
+             r.Appointment_Remark,
+             r.Reminder_Status,
+             c.Cust_Mob
            FROM dbo.Srv_Reminder_Tbl r
            LEFT JOIN dbo.Srv_Cust_Vehi_Tbl c ON c.UTD = r.Cust_Vehi_UTD
            LEFT JOIN dbo.Srv_Mst_Vehi_Tbl m ON m.UTD = c.Tran_id
@@ -1112,7 +1122,17 @@ exports.getVehicleCallHistory = async (req, res) => {
         for (const r of (remVehicleRows || [])) {
           const cId = String(r.AI_Call_ID).trim();
           if (cId && !allCallIdMap.has(cId)) {
-            allCallIdMap.set(cId, { call_id: cId, channel: r.Reminder_Channel || "AI_CALL" });
+            allCallIdMap.set(cId, {
+              call_id: cId,
+              channel: r.Reminder_Channel || "AI_CALL",
+              customerResponse: r.Customer_Response || null,
+              appointmentDate: r.Appointment_Date || null,
+              appointmentTime: r.Appointment_Time || null,
+              appointmentStatus: r.Appointment_Status || null,
+              appointmentRemark: r.Appointment_Remark || null,
+              reminderStatus: r.Reminder_Status || null,
+              formSubmittedAt: r.Updated_At || null,
+            });
           }
         }
       } catch (remErr) {
@@ -1194,6 +1214,15 @@ exports.getVehicleCallHistory = async (req, res) => {
             phoneNumber: defaultMob,
             callChannel: isManual ? "MANUAL_CALL" : "AI_CALL",
             isManualCall: isManual,
+            formResponse: {
+              hasSubmittedForm: item.appointmentStatus === "SCHEDULED" || !!(item.appointmentDate),
+              scheduledDate: item.appointmentDate ? String(item.appointmentDate).split("T")[0] : null,
+              scheduledTime: item.appointmentTime || null,
+              serviceType: item.appointmentRemark || null,
+              customerResponse: item.customerResponse || (item.appointmentStatus === "SCHEDULED" ? "Appointment Confirmed via WhatsApp Form" : null),
+              appointmentStatus: item.appointmentStatus || (item.appointmentDate ? "SCHEDULED" : "PENDING"),
+              submittedAt: item.formSubmittedAt ? formatISO(item.formSubmittedAt) : null,
+            },
             chat: { messages: [] },
           });
           callNumber++;
@@ -1229,6 +1258,12 @@ exports.getVehicleCallHistory = async (req, res) => {
 
         const isManualCall = callChannel === "MANUAL_CALL";
 
+        const hasForm = item.appointmentStatus === "SCHEDULED" || !!(item.appointmentDate);
+        const formDate = item.appointmentDate ? (
+          typeof item.appointmentDate === "string" ? item.appointmentDate.split("T")[0]
+          : (item.appointmentDate instanceof Date ? item.appointmentDate.toISOString().split("T")[0] : String(item.appointmentDate))
+        ) : null;
+
         callHistories.push({
           Reminder: callNumber,
           _insertOrder: callNumber,
@@ -1246,10 +1281,24 @@ exports.getVehicleCallHistory = async (req, res) => {
           endTime: formatISO(callData?.endTime),
           uploadTime: formatISO(callData?.uploadTime),
 
-          appointmentSet: !!(parsed?.appointmentDate),
-          appointmentDate: parsed?.appointmentDate || null,
-          appointmentTime: parsed?.appointmentTime || null,
+          appointmentSet: !!(parsed?.appointmentDate || formDate),
+          appointmentDate: parsed?.appointmentDate || formDate || null,
+          appointmentTime: parsed?.appointmentTime || item.appointmentTime || null,
           appointmentSlot: parsed?.slotNumber ? `Slot ${parsed.slotNumber}` : null,
+          appointmentStatus: item.appointmentStatus || null,
+          appointmentRemark: item.appointmentRemark || null,
+          customerResponse: item.customerResponse || (item.appointmentStatus === "SCHEDULED" ? "Appointment Confirmed (Self-Booked via Link)" : null) || summaryText || null,
+
+          // ── FORM BOOKING SPECIFIC FIELDS (SEPARATE FROM CALL) ──
+          formResponse: {
+            hasSubmittedForm: hasForm,
+            scheduledDate: formDate,
+            scheduledTime: item.appointmentTime || null,
+            serviceType: item.appointmentRemark || null,
+            customerResponse: item.customerResponse || (item.appointmentStatus === "SCHEDULED" ? "Appointment Confirmed via WhatsApp Form" : null),
+            appointmentStatus: item.appointmentStatus || (formDate ? "SCHEDULED" : "PENDING"),
+            submittedAt: item.formSubmittedAt ? formatISO(item.formSubmittedAt) : null,
+          },
 
           summary: summaryText,
           category: category,

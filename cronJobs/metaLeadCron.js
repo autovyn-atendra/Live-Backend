@@ -324,7 +324,7 @@ async function processScheduledFollowupCalls(compcode) {
        FROM dbo.Meta_Lead_Followup_Tbl f
        INNER JOIN dbo.Meta_Lead_Tbl l ON l.UTD = f.Meta_Lead_UTD
        WHERE f.Followup_Status = 'PENDING'
-         AND ISNULL(l.status, 0) NOT IN (3, 9) -- Exclude exhausted/closed leads
+         AND ISNULL(l.status, 0) NOT IN (3, 5, 6, 8, 9) -- Exclude exhausted/won/lost/junk leads
          AND (l.UTD = 306 OR l.Phone_Number LIKE '%6266899053')
          AND CAST(CONCAT(f.Followup_Date, ' ', ISNULL(NULLIF(LTRIM(RTRIM(f.Followup_Time)), ''), '00:00:00')) AS DATETIME) <= GETDATE()
        ORDER BY f.UTD ASC`,
