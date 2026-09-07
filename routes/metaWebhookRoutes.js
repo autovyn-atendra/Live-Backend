@@ -4037,12 +4037,23 @@ const sendWhatsAppTextTemplate = async (number, customerName = "Valued Customer"
         ],
       },
     };
+
+    console.log(`\n================== [OUTGOING WHATSAPP TEXT MESSAGE] ==================`);
+    console.log(`📱 To Number         : ${normalizedPhone}`);
+    console.log(`📋 Template Name     : ${templateName} (en)`);
+    console.log(`👤 Body Param 1 (Name): "${custNameParam}"`);
+    console.log(`📝 Body Param 2 (Text): "${safeText}"`);
+    console.log(`----------------------- [MESSAGE PREVIEW] -----------------------`);
+    console.log(`Dear ${custNameParam},\n\n${safeText}`);
+    console.log(`======================================================================\n`);
+
     const res = await axios.post(
       `https://messagingapi.charteredinfo.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
       payload,
       { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
     );
     const messageId = res.data?.messages?.[0]?.id || null;
+    console.log(`[WHATSAPP-TEXT-TPL] ✅ Sent Successfully! Message ID: ${messageId}`);
     return { success: true, messageId, raw: res.data };
   } catch (err) {
     console.error(`[WHATSAPP-TEXT-TPL] ❌ HTTP ${err?.response?.status || 500} Error:`, err?.response?.data || err?.message);
@@ -4236,21 +4247,32 @@ const handleSmartPostCallFollowup = async (activeSeq, leadUtd, rawStatus, callDa
     const lead = leads[0];
     const isCompleted = ["completed", "call-transferred", "transferred", "ended"].includes(rawStatus);
 
-    // Check if appointment / demo was set
-    const isAppointmentSet = Boolean(callData?.appointment_set || callData?.demo_booked || callData?.variables?.appointment_set);
+    const callDurationSec = Number(callData?.call_duration || callData?.duration || callData?.callDuration || 0);
+    const turnsCount = Number(callData?.turns || callData?.total_turns || 0);
+    const transcriptText = String(callData?.transcript || callData?.transcripts || "").toLowerCase();
+
+    // 1. Check if demo / appointment requested or booked
+    const isAppointmentSet = Boolean(
+      callData?.appointment_set ||
+      callData?.demo_booked ||
+      callData?.variables?.appointment_set ||
+      transcriptText.includes("demo schedule") ||
+      transcriptText.includes("schedule demo") ||
+      transcriptText.includes("book demo")
+    );
 
     if (isAppointmentSet) {
-      // SCENARIO C: Demo Booked -> Mark status = 3 (NO MORE AUTOMATIC CALLS EVER!)
+      // 🛑 SCENARIO 1: Demo Booked / Requested -> Mark status = 4 (Demo Scheduled) & STOP ALL CALLS
       await activeSeq.query(
-        `UPDATE dbo.Meta_Lead_Tbl SET Call_Status = 'DEMO_BOOKED', status = 3, Updated_At = GETDATE() WHERE UTD = :leadUtd`,
+        `UPDATE dbo.Meta_Lead_Tbl SET Call_Status = 'DEMO_SCHEDULED', status = 4, Updated_At = GETDATE() WHERE UTD = :leadUtd`,
         { replacements: { leadUtd }, type: QueryTypes.UPDATE }
       );
       // Cancel any pending follow-ups
       await activeSeq.query(
-        `UPDATE dbo.Meta_Lead_Followup_Tbl SET Followup_Status = 'CANCELLED', Remark = 'Cancelled due to Demo/Appointment booking' WHERE Meta_Lead_UTD = :leadUtd AND Followup_Status = 'PENDING'`,
+        `UPDATE dbo.Meta_Lead_Followup_Tbl SET Followup_Status = 'CANCELLED', Remark = 'Cancelled due to Demo Scheduled' WHERE Meta_Lead_UTD = :leadUtd AND Followup_Status = 'PENDING'`,
         { replacements: { leadUtd }, type: QueryTypes.UPDATE }
       );
-      console.log(`[POST-CALL-SCHEDULER] 🎉 Demo/Appointment Booked for Lead #${leadUtd}! Marked status = 3. Automatic calls stopped.`);
+      console.log(`[POST-CALL-SCHEDULER] 🎉 Demo Scheduled for Lead #${leadUtd}! Marked status = 4. Automatic AI calls permanently stopped.`);
       return;
     }
 
@@ -4280,21 +4302,36 @@ const handleSmartPostCallFollowup = async (activeSeq, leadUtd, rawStatus, callDa
     let purpose = isCompleted ? "Completed Call Followup" : "Unanswered Call Retry";
     let remark = "";
 
+    // ── SCENARIO A: Customer explicitly requested a specific callback Date & Time ──
     if (cbDateRaw && cbTimeRaw) {
-      // SCENARIO B: Customer explicitly gave a callback time
       targetDate = String(cbDateRaw).trim();
       targetTime = String(cbTimeRaw).trim();
-      purpose = "Customer Requested Callback";
+      purpose = "Customer Requested Callback Time";
       remark = `Customer requested callback on ${targetDate} at ${targetTime}`;
       console.log(`[POST-CALL-SCHEDULER] ⏰ Customer requested callback on ${targetDate} at ${targetTime} for Lead #${leadUtd}`);
-    } else if (todayCalls < 2) {
-      // ── SCENARIO 1: First call of the day not answered -> Schedule SAME-DAY 2nd Call (2.5 hours later) ──
+    } 
+    // ── SCENARIO B: Customer answered call but gave no specific time / remained silent ──
+    else if (isCompleted) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const yyyy = tomorrow.getFullYear();
+      const mm = String(tomorrow.getMonth() + 1).padStart(2, "0");
+      const dd = String(tomorrow.getDate()).padStart(2, "0");
+      targetDate = `${yyyy}-${mm}-${dd}`;
+      targetTime = "11:00:00";
+      purpose = "Call Answered (No Specific Time) - Next Day 11:00 AM Followup";
+      remark = `Customer answered call (Duration: ${callDurationSec}s). Auto scheduled Next Day 11:00 AM follow-up.`;
+      console.log(`[POST-CALL-SCHEDULER] 📞 Call Answered — Auto-scheduling Next Day 11:00 AM for Lead #${leadUtd} (Date: ${targetDate})`);
+    } 
+    // ── SCENARIO C: Call NOT Answered / Busy / Unreachable (3-Day Policy, Max 2 calls/day, 3-hour gap) ──
+    else if (todayCalls < 2) {
+      // 1st call of the day missed -> Schedule SAME-DAY 2nd Call (3 Hours later)
       const now = new Date();
-      const retryTime = new Date(now.getTime() + 150 * 60 * 1000); // 2.5 hours later
+      const retryTime = new Date(now.getTime() + 180 * 60 * 1000); // 3 hours later
       const retryHour = retryTime.getHours();
 
       if (retryHour >= 19 || retryHour < 9) {
-        // If late evening (after 7 PM), schedule for Tomorrow at 11:00 AM
+        // If 3 hours later is after 7 PM, schedule for Tomorrow at 11:00 AM
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         const yyyy = tomorrow.getFullYear();
@@ -4303,7 +4340,7 @@ const handleSmartPostCallFollowup = async (activeSeq, leadUtd, rawStatus, callDa
         targetDate = `${yyyy}-${mm}-${dd}`;
         targetTime = "11:00:00";
         remark = `Late evening — Auto scheduled Next-Day 11:00 AM retry`;
-        console.log(`[POST-CALL-SCHEDULER] 🌙 Late evening — Scheduling Next Day 11:00 AM for Lead #${leadUtd} (Date: ${targetDate})`);
+        console.log(`[POST-CALL-SCHEDULER] 🌙 After 7 PM — Scheduling Next Day 11:00 AM for Lead #${leadUtd} (Date: ${targetDate})`);
       } else {
         const yyyy = now.getFullYear();
         const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -4312,21 +4349,22 @@ const handleSmartPostCallFollowup = async (activeSeq, leadUtd, rawStatus, callDa
         const min = String(retryTime.getMinutes()).padStart(2, "0");
         targetDate = `${yyyy}-${mm}-${dd}`;
         targetTime = `${hh}:${min}:00`;
-        remark = `Auto scheduled Same-Day 2nd Attempt Retry at ${targetTime}`;
-        console.log(`[POST-CALL-SCHEDULER] 🔄 Same-Day 2nd Call Scheduled at ${targetTime} for Lead #${leadUtd}`);
+        remark = `Auto scheduled Same-Day 2nd Attempt (3 Hours Gap) at ${targetTime}`;
+        console.log(`[POST-CALL-SCHEDULER] 🔄 Same-Day 2nd Call Scheduled at ${targetTime} (3hr gap) for Lead #${leadUtd}`);
       }
     } else {
-      // ── SCENARIO 2: 2 Calls already made today -> Schedule NEXT-DAY 11:00 AM ──
+      // 2 Calls already made today -> Check if 3 Distinct Days Completed
       if (distinctDays >= 3) {
-        // 3 Days Limit Reached! Mark status = 9 (EXHAUSTED)
+        // 3 Days Limit Reached! Mark status = 3 (EXHAUSTED), STOP CALLS
         await activeSeq.query(
-          `UPDATE dbo.Meta_Lead_Tbl SET Call_Status = 'EXHAUSTED_3_DAYS', status = 9, Updated_At = GETDATE() WHERE UTD = :leadUtd`,
+          `UPDATE dbo.Meta_Lead_Tbl SET Call_Status = 'EXHAUSTED_3_DAYS', status = 3, Updated_At = GETDATE() WHERE UTD = :leadUtd`,
           { replacements: { leadUtd }, type: QueryTypes.UPDATE }
         );
-        console.log(`[POST-CALL-SCHEDULER] 🛑 Max 3 Days Attempt Limit reached for Lead #${leadUtd} (3 Distinct Days Called). Marked status = 9 (EXHAUSTED).`);
+        console.log(`[POST-CALL-SCHEDULER] 🛑 Day 3 (Final Day) Limit reached for Lead #${leadUtd} (3 Days Called). Marked status = 3 (EXHAUSTED). Automatic calls ended.`);
         return;
       }
 
+      // Schedule Next-Day at 11:00 AM (Day 2 or Day 3)
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       const yyyy = tomorrow.getFullYear();

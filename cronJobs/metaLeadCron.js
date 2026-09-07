@@ -17,6 +17,9 @@ const META_CRON_SETTINGS = {
   CALLMATIC_BASE_URL: "https://api.callmatic.ai/v1",
 };
 
+let isSchedulerRunning = false;
+const activeCallLock = new Map(); // metaLeadUtd -> timestamp
+
 /**
  * Single Callmatic Call Helper
  */
@@ -63,14 +66,22 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
     const finalCompcode = compcode || process.env.META_COMP_CODE || "DB001";
     console.log(`\n[META-INSTANT-CALL] 🚀 Triggering call for Lead UTD #${metaLeadUtd} | Type: ${callType} | Source: ${callSource} | Comp: ${finalCompcode}`);
 
+    // 🔒 Idempotency Lock: Prevent multiple simultaneous calls to the same lead within 3 minutes
+    const lastTriggeredTime = activeCallLock.get(Number(metaLeadUtd));
+    if (lastTriggeredTime && Date.now() - lastTriggeredTime < 180000) {
+      console.log(`[META-CALL-LOCK] ⏭️ Lead #${metaLeadUtd} is currently LOCKED / in-progress. Skipping duplicate trigger.`);
+      return { success: false, skipped: true, reason: "Duplicate trigger in-progress (locked)" };
+    }
+    activeCallLock.set(Number(metaLeadUtd), Date.now());
+
     sequelize = await dbname(
       { query: "", headers: { compcode: finalCompcode, name: "metaLeadCron" } },
       finalCompcode
     );
 
-    // 1. Fetch Lead Details
+    // 1. Fetch Lead Details with Call Status & History
     const leads = await sequelize.query(
-      `SELECT TOP 1 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Form_Id, Page_Id, Company_Name
+      `SELECT TOP 1 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Form_Id, Page_Id, Company_Name, Source, status, Call_Status, Call_Count, Last_Call_At
        FROM dbo.Meta_Lead_Tbl
        WHERE UTD = :metaLeadUtd`,
       { replacements: { metaLeadUtd }, type: QueryTypes.SELECT }
@@ -82,6 +93,50 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
     }
 
     const lead = leads[0];
+    const isManualLead =
+      String(lead.Source || "").toUpperCase().includes("MANUAL") ||
+      String(lead.Meta_Lead_Id || "").startsWith("MANUAL_");
+    const isCronCall =
+      String(callType || "").toUpperCase() === "AUTO_AI_CALL" ||
+      String(callSource || "").toUpperCase().includes("CRON") ||
+      String(createdBy || "").toUpperCase().includes("CRON");
+
+    // 🛑 GUARD 1: NEVER AUTO-CALL MANUAL LEADS VIA CRON (Bypassed only for test number 6266899053)
+    const isTestNumber = String(lead.Phone_Number || "").includes("6266899053");
+    if (isManualLead && isCronCall && !isTestNumber) {
+      console.log(
+        `[META-CRON] ⏭️ Skipping Auto-Call for Manual Lead #${metaLeadUtd} (${lead.Full_Name || "Customer"}). Manual leads can only be called manually by user.`
+      );
+      return { success: false, skipped: true, reason: "Manual lead excluded from cron auto-calling" };
+    }
+
+    // 🛑 GUARD 2: COMPLETED CALL GUARD — If customer already completed a call, NEVER call again via Cron
+    if (isCronCall && (String(lead.Call_Status).toUpperCase() === "COMPLETED" || Number(lead.status) >= 2)) {
+      console.log(
+        `[META-CRON] ⏭️ Lead #${metaLeadUtd} (${lead.Full_Name || "Customer"}) call is already COMPLETED / Status=${lead.status}. Skipping cron retry.`
+      );
+      return { success: false, skipped: true, reason: "Call already completed" };
+    }
+
+    // 🛑 GUARD 3: MAX ATTEMPTS GUARD — Maximum 3 attempts
+    if (isCronCall && Number(lead.Call_Count || 0) >= META_CRON_SETTINGS.MAX_DAILY_ATTEMPTS) {
+      console.log(
+        `[META-CRON] ⏭️ Max attempts reached (${lead.Call_Count}/${META_CRON_SETTINGS.MAX_DAILY_ATTEMPTS}) for Lead #${metaLeadUtd}. Skipping.`
+      );
+      return { success: false, skipped: true, reason: "Max call attempts reached" };
+    }
+
+    // 🛑 GUARD 4: COOLDOWN GUARD — Minimum 4 hours between cron retry attempts
+    if (isCronCall && lead.Last_Call_At) {
+      const diffMinutes = (Date.now() - new Date(lead.Last_Call_At).getTime()) / (1000 * 60);
+      if (diffMinutes < 240) {
+        console.log(
+          `[META-CRON] ⏭️ Cooldown Active for Lead #${metaLeadUtd}: Last called ${Math.round(diffMinutes)} mins ago. Minimum 240 mins gap required.`
+        );
+        return { success: false, skipped: true, reason: `Cooldown active (${Math.round(diffMinutes)} mins ago)` };
+      }
+    }
+
     const rawPhone = lead.Phone_Number;
     if (!rawPhone) {
       console.warn(`[META-INSTANT-CALL] ⚠️ Phone number missing for Lead UTD #${metaLeadUtd}`);
@@ -250,15 +305,14 @@ async function processMetaLeadDealer(compcode) {
       compcode
     );
 
-    // Fetch uncalled Meta leads (status = 0) created in last 7 days (Limit to TOP 1 for testing)
+    // 🧪 TESTING MODE: Only fetch test number 6266899053
     let rows = [];
     try {
       rows = await sequelize.query(
-        `SELECT TOP 10 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Form_Id, Page_Id, Company_Name
+        `SELECT TOP 10 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Form_Id, Page_Id, Company_Name, Source
          FROM dbo.Meta_Lead_Tbl
          WHERE ISNULL(status, 0) = 0
-           AND Phone_Number IS NOT NULL AND LTRIM(RTRIM(Phone_Number)) <> ''
-           AND (UTD = 306 OR Phone_Number LIKE '%6266899053')
+           AND Phone_Number LIKE '%6266899053'
          ORDER BY UTD DESC`,
         {
           type: QueryTypes.SELECT,
@@ -271,7 +325,7 @@ async function processMetaLeadDealer(compcode) {
     result.totalFound = rows.length;
     if (rows.length === 0) return result;
 
-    console.log(`[META-AUTO-CALL] [${compcode}] Found ${rows.length} pending Meta leads for auto-calling (Executing 1 Call).`);
+    console.log(`[META-AUTO-CALL] [${compcode}] 🧪 Test Mode Active: Found ${rows.length} pending lead for 6266899053.`);
 
     for (const row of rows) {
       try {
@@ -282,14 +336,11 @@ async function processMetaLeadDealer(compcode) {
           callSource: "CRON_RETRY_SCHEDULER",
           createdBy: "AUTO_CRON",
         });
-        if (callRes.success) result.callSuccess++;
+        if (callRes?.success) result.callSuccess++;
         else result.callFailed++;
       } catch (callErr) {
         result.callFailed++;
       }
-
-      // Break immediately — only 1 call
-      break;
     }
   } catch (err) {
     console.error(`[META-AUTO-CALL] [${compcode}] Error:`, err?.message);
@@ -313,7 +364,7 @@ async function processScheduledFollowupCalls(compcode) {
       finalCompcode
     );
 
-    // Fetch pending follow-ups due up to current date & time (Limit to TOP 1 for testing)
+    // 🧪 TESTING MODE: Fetch pending follow-ups ONLY for 6266899053
     const dueFollowups = await sequelize.query(
       `SELECT TOP 10 
           f.UTD AS Followup_UTD,
@@ -324,8 +375,7 @@ async function processScheduledFollowupCalls(compcode) {
        FROM dbo.Meta_Lead_Followup_Tbl f
        INNER JOIN dbo.Meta_Lead_Tbl l ON l.UTD = f.Meta_Lead_UTD
        WHERE f.Followup_Status = 'PENDING'
-         AND ISNULL(l.status, 0) NOT IN (3, 5, 6, 8, 9) -- Exclude exhausted/won/lost/junk leads
-         AND (l.UTD = 306 OR l.Phone_Number LIKE '%6266899053')
+         AND l.Phone_Number LIKE '%6266899053'
          AND CAST(CONCAT(f.Followup_Date, ' ', ISNULL(NULLIF(LTRIM(RTRIM(f.Followup_Time)), ''), '00:00:00')) AS DATETIME) <= GETDATE()
        ORDER BY f.UTD ASC`,
       { type: QueryTypes.SELECT }
@@ -374,55 +424,65 @@ async function processScheduledFollowupCalls(compcode) {
  * Run Auto Call Scheduler across all dealers
  */
 async function runMetaLeadAutoCallScheduler() {
-  console.log("Running scheduled job for Meta Lead Auto-Call...");
+  if (isSchedulerRunning) {
+    console.log("[META-CRON] ⏭️ Scheduler already running in background. Skipping cycle.");
+    return;
+  }
+  isSchedulerRunning = true;
 
-  let sequelize1 = null;
   try {
-    sequelize1 = await dbname(
-      { query: "", headers: { compcode: "DBCON", name: "schedualer" } },
-      "DBCON"
-    );
-  } catch (err) {
-    console.error("[META-CRON] DBCON Connection Error:", err?.message);
-  }
+    console.log("Running scheduled job for Meta Lead Auto-Call...");
 
-  let Dlr_data = [];
-  if (sequelize1) {
+    let sequelize1 = null;
     try {
-      const [rows] = await sequelize1.query(
-        `SELECT Dlr_Id FROM DLR_SCH WHERE SCH_TYPE = 'metalead' AND export_type < 3`
+      sequelize1 = await dbname(
+        { query: "", headers: { compcode: "DBCON", name: "schedualer" } },
+        "DBCON"
       );
-      if (Array.isArray(rows) && rows.length > 0) {
-        Dlr_data = rows;
-      }
-    } catch (e) {
-      console.warn("[META-CRON] Query DLR_SCH fallback to default compcode:", e?.message);
-    }
-  }
-
-  if (Dlr_data.length === 0) {
-    const defaultCompcode = String(process.env.META_COMP_CODE || "autovyn").trim();
-    Dlr_data = [{ Dlr_Id: defaultCompcode }];
-  }
-
-  for (const dealer of Dlr_data) {
-    const compcode = dealer.Dlr_Id;
-
-    try {
-      const scheduledSent = await processScheduledFollowupCalls(compcode);
-      if (!scheduledSent) {
-        await processMetaLeadDealer(compcode);
-      }
     } catch (err) {
-      console.error(`Meta Lead Auto-Call job failed for ${compcode}:`, err?.message);
+      console.error("[META-CRON] DBCON Connection Error:", err?.message);
     }
-    break; // Test ke liye only 1 single dealer execution
-  }
 
-  if (sequelize1) {
-    try {
-      await sequelize1.close();
-    } catch (_) { }
+    let Dlr_data = [];
+    if (sequelize1) {
+      try {
+        const [rows] = await sequelize1.query(
+          `SELECT Dlr_Id FROM DLR_SCH WHERE SCH_TYPE = 'metalead' AND export_type < 3`
+        );
+        if (Array.isArray(rows) && rows.length > 0) {
+          Dlr_data = rows;
+        }
+      } catch (e) {
+        console.warn("[META-CRON] Query DLR_SCH fallback to default compcode:", e?.message);
+      }
+    }
+
+    if (Dlr_data.length === 0) {
+      const defaultCompcode = String(process.env.META_COMP_CODE || "autovyn").trim();
+      Dlr_data = [{ Dlr_Id: defaultCompcode }];
+    }
+
+    for (const dealer of Dlr_data) {
+      const compcode = dealer.Dlr_Id;
+
+      try {
+        const scheduledSent = await processScheduledFollowupCalls(compcode);
+        if (!scheduledSent) {
+          await processMetaLeadDealer(compcode);
+        }
+      } catch (err) {
+        console.error(`Meta Lead Auto-Call job failed for ${compcode}:`, err?.message);
+      }
+      break; // Single dealer execution
+    }
+
+    if (sequelize1) {
+      try {
+        await sequelize1.close();
+      } catch (_) { }
+    }
+  } finally {
+    isSchedulerRunning = false;
   }
 }
 
@@ -431,7 +491,7 @@ async function runMetaLeadAutoCallScheduler() {
 // ============================================================
 async function processMetaLeadWebhookUpdates() {
   let sequelize;
-  const compCode = String(process.env.META_COMP_CODE || "DB001").trim();
+  const compCode = String(process.env.META_COMP_CODE ).trim();
 
   try {
     sequelize = await dbname(
@@ -472,15 +532,15 @@ const startMetaLeadCron = () => {
   console.log("\n[META-CRON] ══════════════════════════════════════════");
   console.log("[META-CRON] Meta Lead Auto-Call & Sync Cron Registered ✅");
   console.log("[META-CRON] Instant Trigger   : On New Webhook Lead Arrival");
-  console.log("[META-CRON] Scheduled & Retry: Every 5 Minutes");
+  console.log("[META-CRON] Scheduled & Retry: Every 15 Minutes");
   console.log("[META-CRON] 3-Day Rule Limit  : Max 3 Attempts across 3 Days");
-  console.log("[META-CRON] Webhook Sync     : Every 3 Minutes");
+  console.log("[META-CRON] Webhook Sync     : Every 5 Minutes");
   console.log(`[META-CRON] Timezone         : ${META_CRON_SETTINGS.TIMEZONE}`);
   console.log("[META-CRON] ══════════════════════════════════════════\n");
 
-  // ── Retry Uncalled Leads Every 5 Minutes ─────────────────
+  // ── Retry Uncalled Leads Every 15 Minutes (Excludes Manual Leads) ──
   cron.schedule(
-    "*/2 * * * *",
+    "*/1 * * * *",
     async () => {
       try { await runMetaLeadAutoCallScheduler(); }
       catch (err) { console.error("[META-AUTO-CALL-CRON] Error:", err?.message); }
@@ -488,9 +548,9 @@ const startMetaLeadCron = () => {
     { timezone: META_CRON_SETTINGS.TIMEZONE }
   );
 
-  // ── Sync Webhook Call Responses Every 3 Minutes ───────────
+  // ── Sync Webhook Call Responses Every 5 Minutes ───────────
   cron.schedule(
-    "*/3 * * * *",
+    "*/5 * * * *",
     async () => {
       try { await processMetaLeadWebhookUpdates(); }
       catch (err) { console.error("[META-SYNC-CRON] Error:", err?.message); }
