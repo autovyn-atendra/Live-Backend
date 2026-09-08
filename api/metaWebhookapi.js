@@ -62,6 +62,7 @@ router.post("/getDashboardStats", MetaWebhookController.getMetaDashboardStats);
 // META LEAD STATUS & DETAIL API
 // ============================================================
 router.post("/updateLeadStatus", MetaWebhookController.updateLeadStatus);
+router.post("/updateLeadTemperature", MetaWebhookController.updateLeadTemperature);
 router.get("/getLead/:leadUtd", MetaWebhookController.getSingleLead);
 router.get("/getLead", MetaWebhookController.getSingleLead);
 router.post("/getLead", MetaWebhookController.getSingleLead);

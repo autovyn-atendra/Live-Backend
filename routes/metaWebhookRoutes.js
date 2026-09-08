@@ -1489,6 +1489,18 @@ exports.getMetaLeads = async function (req, res) {
       });
     }
 
+    try {
+      await sequelize.query(`
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.columns 
+          WHERE object_id = OBJECT_ID(N'Meta_Lead_Tbl') AND name = 'Temperature'
+        )
+        BEGIN
+          ALTER TABLE Meta_Lead_Tbl ADD Temperature VARCHAR(20) DEFAULT 'Warm';
+        END
+      `);
+    } catch (_) {}
+
     const body = req.body || {};
     const query = req.query || {};
 
@@ -1639,6 +1651,7 @@ exports.getMetaLeads = async function (req, res) {
         Raw_Webhook_Value,
         Source,
         status,
+        ISNULL(Temperature, 'Warm') AS Temperature,
         Created_By,
         Created_At
       FROM Meta_Lead_Tbl
@@ -1943,7 +1956,7 @@ exports.getActivities = async function (req, res) {
         `SELECT TOP 1 
            UTD, Meta_Lead_Id, Page_Id, Form_Id, Ad_Id, Ad_Group_Id, Full_Name, Phone_Number,
            Email, City, Company_Name, Meta_Created_At, Webhook_Created_At, All_Fields,
-           Raw_Meta_Response, Raw_Webhook_Value, Source, status, Created_By, Created_At
+           Raw_Meta_Response, Raw_Webhook_Value, Source, status, ISNULL(Temperature, 'Warm') AS Temperature, Created_By, Created_At
          FROM Meta_Lead_Tbl
          WHERE UTD = :leadUtd`,
         { replacements: { leadUtd }, type: QueryTypes.SELECT }
@@ -3180,6 +3193,139 @@ exports.updateLeadStatus = async function (req, res) {
     return res.status(500).json({
       success: false,
       message: "Failed to update lead status",
+      error: error.original?.message || error.message,
+    });
+  } finally {
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (err) { }
+    }
+  }
+};
+
+// ============================================================
+// UPDATE LEAD TEMPERATURE API
+// POST /meta/updateLeadTemperature
+// ============================================================
+exports.updateLeadTemperature = async function (req, res) {
+  let sequelize = null;
+  let transaction = null;
+  try {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Company code (compcode) is required.",
+      });
+    }
+
+    sequelize = await dbname(req, compCode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
+
+    const body = req.body || {};
+    const metaLeadUtd = Number(body.metaLeadUtd || body.Meta_Lead_UTD || body.leadUtd);
+    let temperature = String(body.temperature || body.Temperature || "Warm").trim();
+    if (!["Cold", "Warm", "Hot"].includes(temperature)) {
+      temperature = "Warm";
+    }
+    const updatedBy = String(req.headers.name || body.updatedBy || "SYSTEM").trim();
+
+    if (!metaLeadUtd || isNaN(metaLeadUtd)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid metaLeadUtd is required.",
+      });
+    }
+
+    // Ensure column exists
+    try {
+      await sequelize.query(`
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.columns 
+          WHERE object_id = OBJECT_ID(N'Meta_Lead_Tbl') AND name = 'Temperature'
+        )
+        BEGIN
+          ALTER TABLE Meta_Lead_Tbl ADD Temperature VARCHAR(20) DEFAULT 'Warm';
+        END
+      `);
+    } catch (cErr) { }
+
+    transaction = await sequelize.transaction();
+
+    // Fetch current temperature
+    const currentLeadRes = await sequelize.query(
+      `SELECT ISNULL(Temperature, 'Warm') AS oldTemp FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
+      { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+    );
+
+    if (!currentLeadRes || currentLeadRes.length === 0) {
+      await transaction.rollback();
+      transaction = null;
+      return res.status(404).json({
+        success: false,
+        message: "Meta Lead record not found.",
+      });
+    }
+
+    const oldTemp = currentLeadRes[0].oldTemp || "Warm";
+
+    // Update Temperature in Meta_Lead_Tbl
+    await sequelize.query(
+      `UPDATE Meta_Lead_Tbl SET Temperature = :temperature WHERE UTD = :metaLeadUtd`,
+      { replacements: { metaLeadUtd, temperature }, type: QueryTypes.UPDATE, transaction }
+    );
+
+    // Record Activity in Meta_Lead_Activity_Tbl
+    await sequelize.query(
+      `INSERT INTO Meta_Lead_Activity_Tbl (
+        Meta_Lead_UTD, Activity_Type, Activity_Status, Old_Value, New_Value, Remark, Activity_Date, Created_By, Created_Name, Created_At
+      ) VALUES (
+        :metaLeadUtd, 'TEMPERATURE_CHANGE', 'COMPLETED', :oldTemp, :temperature, :remark, GETDATE(), :updatedBy, :updatedBy, GETDATE()
+      )`,
+      {
+        replacements: {
+          metaLeadUtd,
+          oldTemp,
+          temperature,
+          remark: `Lead temperature changed: ${oldTemp} → ${temperature}`,
+          updatedBy,
+        },
+        type: QueryTypes.INSERT,
+        transaction,
+      }
+    );
+
+    await transaction.commit();
+    transaction = null;
+
+    return res.status(200).json({
+      success: true,
+      message: `Lead temperature updated to ${temperature} successfully`,
+      temperature,
+    });
+  } catch (error) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (err) { }
+    }
+    console.error("Update Lead Temperature Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update lead temperature",
       error: error.original?.message || error.message,
     });
   } finally {
