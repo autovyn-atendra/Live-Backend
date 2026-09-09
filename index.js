@@ -82,6 +82,8 @@ app.use((req, res, next) => {
 });
 
 app.use("/meta", metaWebhookapi);
+app.use("/bonvoice", metaWebhookapi);
+app.use("/bonvoiceWebhook", metaWebhookapi);
 apiModules.forEach((module) => {
   const filePath = path.join(__dirname, `swagger/${module}.json`);
   try {

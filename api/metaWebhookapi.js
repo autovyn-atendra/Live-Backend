@@ -5,6 +5,8 @@ const MetaWebhookController = require(
   "../routes/metaWebhookRoutes"
 );
 
+const { bonvoiceWebhook } = require("../routes/bonvoice1");
+
 // ============================================================
 // META WEBHOOK VERIFY
 // GET /webhook
@@ -24,6 +26,16 @@ router.post(
   "/webhook",
   MetaWebhookController.receiveMetaWebhook
 );
+
+// ============================================================
+// BONVOICE AI CALL WEBHOOK
+// POST /meta/bonvoiceWebhook, POST /meta/bonvoice/webhook
+// ============================================================
+router.post("/bonvoiceWebhook", express.raw({ type: "*/*" }), bonvoiceWebhook);
+router.post("/bonvoice/webhook", express.raw({ type: "*/*" }), bonvoiceWebhook);
+router.get("/bonvoiceWebhook", (req, res) => res.json({ status: true, message: "Bonvoice webhook endpoint is active" }));
+router.get("/bonvoice/webhook", (req, res) => res.json({ status: true, message: "Bonvoice webhook endpoint is active" }));
+
 
 
 
@@ -63,9 +75,16 @@ router.post("/getDashboardStats", MetaWebhookController.getMetaDashboardStats);
 // ============================================================
 router.post("/updateLeadStatus", MetaWebhookController.updateLeadStatus);
 router.post("/updateLeadTemperature", MetaWebhookController.updateLeadTemperature);
+router.post("/updateLeadDetails", MetaWebhookController.updateLeadDetails);
+router.post("/updateMetaLead", MetaWebhookController.updateLeadDetails);
 router.get("/getLead/:leadUtd", MetaWebhookController.getSingleLead);
 router.get("/getLead", MetaWebhookController.getSingleLead);
 router.post("/getLead", MetaWebhookController.getSingleLead);
+
+// ============================================================
+// MICROSOFT TEAMS PRODUCT DEMO SCHEDULING API
+// ============================================================
+router.post("/scheduleTeamsDemo", MetaWebhookController.scheduleTeamsDemo);
 
 const multer = require("multer");
 const upload = multer({ limits: { fileSize: 100 * 1024 * 1024 } });

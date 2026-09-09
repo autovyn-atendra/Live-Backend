@@ -1,7 +1,14 @@
 const axios = require("axios");
+const nodemailer = require("nodemailer");
 const { QueryTypes } = require("sequelize");
 const { dbname } = require("../utils/dbconfig");
-const { getCallStatus, getCallRecording } = require("./callmati");
+const { getCallStatus: getCallmaticStatus, getCallRecording: getCallmaticRecording, getCallStatus, getCallRecording } = require("./callmati");
+const {
+  createLeadAndCall,
+  getLead: getBonvoiceLead,
+  getLatestCallStatus: getBonvoiceLatestCallStatus,
+  getCallRecording: getBonvoiceRecording,
+} = require("./bonvoice1");
 
 
 const CALLMATIC_CONFIG = {
@@ -1499,7 +1506,7 @@ exports.getMetaLeads = async function (req, res) {
           ALTER TABLE Meta_Lead_Tbl ADD Temperature VARCHAR(20) DEFAULT 'Warm';
         END
       `);
-    } catch (_) {}
+    } catch (_) { }
 
     const body = req.body || {};
     const query = req.query || {};
@@ -1734,6 +1741,7 @@ const STATUS_LABELS = {
   4: "Demo Scheduled",
   5: "Won",
   6: "Lost",
+  7: "Busy",
   8: "Junk",
   9: "3-Day Exhausted",
 };
@@ -1970,13 +1978,13 @@ exports.getActivities = async function (req, res) {
 
         try {
           if (typeof l.All_Fields === "string") parsedAllFields = JSON.parse(l.All_Fields);
-        } catch (_) {}
+        } catch (_) { }
         try {
           if (typeof l.Raw_Meta_Response === "string") parsedRawMeta = JSON.parse(l.Raw_Meta_Response);
-        } catch (_) {}
+        } catch (_) { }
         try {
           if (typeof l.Raw_Webhook_Value === "string") parsedRawWebhook = JSON.parse(l.Raw_Webhook_Value);
-        } catch (_) {}
+        } catch (_) { }
 
         leadData = {
           ...l,
@@ -2487,7 +2495,7 @@ exports.getMetaDashboardStats = async function (req, res) {
       error: error.message
     });
   } finally {
-    if (sequelize) { try { await sequelize.close(); } catch (_) {} }
+    if (sequelize) { try { await sequelize.close(); } catch (_) { } }
   }
 };
 
@@ -3075,7 +3083,7 @@ exports.createManualLead = async function (req, res) {
     if (transaction) {
       try {
         await transaction.rollback();
-      } catch (rErr) {}
+      } catch (rErr) { }
       transaction = null;
     }
     console.error("Create Manual Lead Error:", err);
@@ -3338,6 +3346,158 @@ exports.updateLeadTemperature = async function (req, res) {
 };
 
 // ============================================================
+// UPDATE LEAD DETAILS (ALL_FIELDS & EMAIL & PROFILE) API
+// POST /meta/updateLeadDetails
+// ============================================================
+exports.updateLeadDetails = async function (req, res) {
+  let sequelize = null;
+  let transaction = null;
+  try {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Company code (compcode) is required.",
+      });
+    }
+
+    sequelize = await dbname(req, compCode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
+
+    const body = req.body || {};
+    const metaLeadUtd = Number(body.metaLeadUtd || body.Meta_Lead_UTD || body.leadUtd);
+    const updatedBy = String(req.headers.name || body.updatedBy || "SYSTEM").trim();
+    const email = body.email !== undefined ? (body.email ? String(body.email).trim() : null) : undefined;
+    const fullName = body.fullName !== undefined ? (body.fullName ? String(body.fullName).trim() : null) : undefined;
+    const companyName = body.companyName !== undefined ? (body.companyName ? String(body.companyName).trim() : null) : undefined;
+    const city = body.city !== undefined ? (body.city ? String(body.city).trim() : null) : undefined;
+    const phoneNumber = body.phoneNumber !== undefined ? (body.phoneNumber ? String(body.phoneNumber).trim() : null) : undefined;
+
+    let allFields = body.allFields;
+    if (allFields !== undefined && typeof allFields === "object" && allFields !== null) {
+      allFields = JSON.stringify(allFields);
+    } else if (allFields !== undefined && typeof allFields === "string") {
+      allFields = allFields.trim();
+    }
+
+    if (!metaLeadUtd || isNaN(metaLeadUtd)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid metaLeadUtd is required.",
+      });
+    }
+
+    transaction = await sequelize.transaction();
+
+    // Check if lead exists
+    const currentLeadRes = await sequelize.query(
+      `SELECT * FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
+      { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+    );
+
+    if (!currentLeadRes || currentLeadRes.length === 0) {
+      await transaction.rollback();
+      transaction = null;
+      return res.status(404).json({
+        success: false,
+        message: "Meta Lead record not found.",
+      });
+    }
+
+    // Build update set
+    const updateFields = [];
+    const replacements = { metaLeadUtd, updatedBy };
+
+    if (email !== undefined) {
+      updateFields.push("Email = :email");
+      replacements.email = email;
+    }
+    if (allFields !== undefined) {
+      updateFields.push("All_Fields = :allFields");
+      replacements.allFields = allFields;
+    }
+    if (fullName !== undefined) {
+      updateFields.push("Full_Name = :fullName");
+      replacements.fullName = fullName;
+    }
+    if (companyName !== undefined) {
+      updateFields.push("Company_Name = :companyName");
+      replacements.companyName = companyName;
+    }
+    if (city !== undefined) {
+      updateFields.push("City = :city");
+      replacements.city = city;
+    }
+    if (phoneNumber !== undefined) {
+      updateFields.push("Phone_Number = :phoneNumber");
+      replacements.phoneNumber = phoneNumber;
+    }
+
+    if (updateFields.length > 0) {
+      await sequelize.query(
+        `UPDATE Meta_Lead_Tbl SET ${updateFields.join(", ")} WHERE UTD = :metaLeadUtd`,
+        { replacements, type: QueryTypes.UPDATE, transaction }
+      );
+    }
+
+    // Insert Activity Log
+    await sequelize.query(
+      `INSERT INTO Meta_Lead_Activity_Tbl (
+        Meta_Lead_UTD, Activity_Type, Activity_Status, Remark, Activity_Date, Created_By, Created_Name, Created_At
+      ) VALUES (
+        :metaLeadUtd, 'LEAD_UPDATED', 'COMPLETED', 'Lead details & submitted form responses updated', GETDATE(), :updatedBy, :updatedBy, GETDATE()
+      )`,
+      { replacements: { metaLeadUtd, updatedBy }, type: QueryTypes.INSERT, transaction }
+    );
+
+    await transaction.commit();
+    transaction = null;
+
+    // Fetch updated lead
+    const updatedLeadRes = await sequelize.query(
+      `SELECT * FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
+      { replacements: { metaLeadUtd }, type: QueryTypes.SELECT }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Lead details updated successfully",
+      data: updatedLeadRes?.[0] || null,
+    });
+  } catch (error) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (err) { }
+    }
+    console.error("Update Lead Details Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update lead details",
+      error: error.original?.message || error.message,
+    });
+  } finally {
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (err) { }
+    }
+  }
+};
+
+// ============================================================
 // GET SINGLE LEAD MASTER DETAILS API
 // GET /meta/getLead/:leadUtd
 // ============================================================
@@ -3443,6 +3603,11 @@ const checkCampaignColumns = async (sequelize) => {
     if (!names.has("message_text")) {
       try {
         await sequelize.query(`ALTER TABLE dbo.Meta_Callmatic_Campaign_Tbl ADD Message_Text NVARCHAR(MAX) NULL`);
+      } catch (_) { }
+    }
+    if (!names.has("bon_voice_prompt_name")) {
+      try {
+        await sequelize.query(`ALTER TABLE dbo.Meta_Callmatic_Campaign_Tbl ADD Bon_voice_Prompt_Name NVARCHAR(255) NULL`);
       } catch (_) { }
     }
   } catch (_) { }
@@ -3579,6 +3744,7 @@ exports.createCampaign = async function (req, res) {
 
     const body = req.body || {};
     const campaignId = String(body.campaignId || body.Campaign_Id || "").trim();
+    const bonVoicePromptName = body.bonVoicePromptName || body.Bon_voice_Prompt_Name || body.bon_voice_prompt_name || null;
     const campaignName = body.campaignName || body.Campaign_Name || null;
     const campaignType = body.campaignType || body.Campaign_Type || "CALLMATIC";
     const metaFormId = body.metaFormId || body.Meta_Form_Id || null;
@@ -3615,6 +3781,7 @@ exports.createCampaign = async function (req, res) {
     const insertSql = `
       INSERT INTO Meta_Callmatic_Campaign_Tbl (
         Campaign_Id,
+        Bon_voice_Prompt_Name,
         Campaign_Name,
         Campaign_Type,
         Meta_Form_Id,
@@ -3629,6 +3796,7 @@ exports.createCampaign = async function (req, res) {
         Created_At
       ) VALUES (
         :campaignId,
+        :bonVoicePromptName,
         :campaignName,
         :campaignType,
         :metaFormId,
@@ -3647,6 +3815,7 @@ exports.createCampaign = async function (req, res) {
     await sequelize.query(insertSql, {
       replacements: {
         campaignId,
+        bonVoicePromptName,
         campaignName,
         campaignType,
         metaFormId,
@@ -3717,8 +3886,9 @@ exports.updateCampaign = async function (req, res) {
     const body = req.body || {};
     const utd = Number(body.utd || body.UTD);
     const campaignId = String(body.campaignId || body.Campaign_Id || "").trim();
+    const bonVoicePromptName = body.bonVoicePromptName !== undefined ? body.bonVoicePromptName : (body.Bon_voice_Prompt_Name !== undefined ? body.Bon_voice_Prompt_Name : (body.bon_voice_prompt_name !== undefined ? body.bon_voice_prompt_name : null));
     const campaignName = body.campaignName !== undefined ? body.campaignName : body.Campaign_Name;
-    const campaignType = body.campaignType !== undefined ? body.campaignType : body.Campaign_Type;
+    const campaignType = body.campaignType !== undefined ? body.campaignType : (body.Campaign_Type || "CALLMATIC");
     const metaFormId = body.metaFormId !== undefined ? body.metaFormId : body.Meta_Form_Id;
     const metaFormName = body.metaFormName !== undefined ? body.metaFormName : body.Meta_Form_Name;
     const transferNumberVal = body.transferNumber !== undefined ? body.transferNumber : (body.transfer_number !== undefined ? body.transfer_number : (body.Sales_Executive_Number !== undefined ? body.Sales_Executive_Number : body.Transfer_Number));
@@ -3770,6 +3940,7 @@ exports.updateCampaign = async function (req, res) {
       UPDATE Meta_Callmatic_Campaign_Tbl
       SET 
         Campaign_Id = CASE WHEN :campaignId IS NOT NULL AND :campaignId != '' THEN :campaignId ELSE Campaign_Id END,
+        Bon_voice_Prompt_Name = CASE WHEN :bonVoicePromptName IS NOT NULL THEN :bonVoicePromptName ELSE Bon_voice_Prompt_Name END,
         Campaign_Name = CASE WHEN :campaignName IS NOT NULL THEN :campaignName ELSE Campaign_Name END,
         Campaign_Type = CASE WHEN :campaignType IS NOT NULL THEN :campaignType ELSE Campaign_Type END,
         Meta_Form_Id = CASE WHEN :metaFormId IS NOT NULL THEN :metaFormId ELSE Meta_Form_Id END,
@@ -3789,6 +3960,7 @@ exports.updateCampaign = async function (req, res) {
       replacements: {
         utd,
         campaignId: campaignId || null,
+        bonVoicePromptName: bonVoicePromptName !== undefined ? bonVoicePromptName : null,
         campaignName: campaignName !== undefined ? campaignName : null,
         campaignType: campaignType !== undefined ? campaignType : null,
         metaFormId: metaFormId !== undefined ? metaFormId : null,
@@ -3865,7 +4037,7 @@ exports.getCampaigns = async function (req, res) {
     const replacements = {};
 
     if (search) {
-      whereConditions.push("(Campaign_Id LIKE :search OR Campaign_Name LIKE :search OR Campaign_Type LIKE :search OR Meta_Form_Id LIKE :search OR Meta_Form_Name LIKE :search OR Sales_Executive_Number LIKE :search OR Message_Text LIKE :search OR Remark LIKE :search)");
+      whereConditions.push("(Campaign_Id LIKE :search OR Bon_voice_Prompt_Name LIKE :search OR Campaign_Name LIKE :search OR Campaign_Type LIKE :search OR Meta_Form_Id LIKE :search OR Meta_Form_Name LIKE :search OR Sales_Executive_Number LIKE :search OR Message_Text LIKE :search OR Remark LIKE :search)");
       replacements.search = `%${search}%`;
     }
 
@@ -3880,6 +4052,7 @@ exports.getCampaigns = async function (req, res) {
       SELECT 
         UTD,
         Campaign_Id,
+        Bon_voice_Prompt_Name,
         Campaign_Name,
         Campaign_Type,
         Meta_Form_Id,
@@ -4133,7 +4306,7 @@ const uploadMediaToMeta = async (rawPath, mimeType = "application/pdf") => {
 
     // Cleanup temp file
     if (tempFile && fs.existsSync(tempFile)) {
-      try { fs.unlinkSync(tempFile); } catch (_) {}
+      try { fs.unlinkSync(tempFile); } catch (_) { }
     }
 
     return { success: true, mediaId };
@@ -4455,7 +4628,7 @@ const handleSmartPostCallFollowup = async (activeSeq, leadUtd, rawStatus, callDa
       purpose = "Customer Requested Callback Time";
       remark = `Customer requested callback on ${targetDate} at ${targetTime}`;
       console.log(`[POST-CALL-SCHEDULER] ⏰ Customer requested callback on ${targetDate} at ${targetTime} for Lead #${leadUtd}`);
-    } 
+    }
     // ── SCENARIO B: Customer answered call but gave no specific time / remained silent ──
     else if (isCompleted) {
       const tomorrow = new Date();
@@ -4468,7 +4641,7 @@ const handleSmartPostCallFollowup = async (activeSeq, leadUtd, rawStatus, callDa
       purpose = "Call Answered (No Specific Time) - Next Day 11:00 AM Followup";
       remark = `Customer answered call (Duration: ${callDurationSec}s). Auto scheduled Next Day 11:00 AM follow-up.`;
       console.log(`[POST-CALL-SCHEDULER] 📞 Call Answered — Auto-scheduling Next Day 11:00 AM for Lead #${leadUtd} (Date: ${targetDate})`);
-    } 
+    }
     // ── SCENARIO C: Call NOT Answered / Busy / Unreachable (3-Day Policy, Max 2 calls/day, 3-hour gap) ──
     else if (todayCalls < 2) {
       // 1st call of the day missed -> Schedule SAME-DAY 2nd Call (3 Hours later)
@@ -4558,11 +4731,248 @@ const handleSmartPostCallFollowup = async (activeSeq, leadUtd, rawStatus, callDa
   }
 };
 
-// Background Call Status Poller for Meta Lead AI Calls
-const startMetaCallStatusPoller = (compCode, calleePhoneNumber, campaignId, leadUtd, callId, leadName) => {
+/**
+ * Robust Transcript Parser to convert JSON Array, String lines, or unstructured text into WhatsApp-style chat array
+ */
+const parseTranscriptToArray = (transcriptRaw, leadName = "Customer", providerName = "AI Agent") => {
+  if (!transcriptRaw) return [];
+  if (Array.isArray(transcriptRaw)) {
+    return transcriptRaw.map((item, idx) => {
+      if (typeof item === "string") {
+        return {
+          sender: idx % 2 === 0 ? "bot" : "human",
+          role: idx % 2 === 0 ? "agent" : "user",
+          speaker: idx % 2 === 0 ? providerName : leadName,
+          text: item,
+          message: item,
+        };
+      }
+      const roleStr = String(item.role || item.speaker || item.sender || item.from || "").toLowerCase();
+      const isUser = roleStr.includes("user") || roleStr.includes("human") || roleStr.includes("customer") || roleStr.includes("caller") || roleStr.includes("client");
+      const text = item.text || item.content || item.message || item.transcript || "";
+      return {
+        ...item,
+        sender: isUser ? "human" : "bot",
+        role: isUser ? "user" : "agent",
+        speaker: isUser ? (item.speaker || leadName) : (item.speaker || providerName),
+        text,
+        message: text,
+      };
+    });
+  }
+
+  if (typeof transcriptRaw === "string") {
+    const trimmedRaw = transcriptRaw.trim();
+    if (!trimmedRaw) return [];
+
+    try {
+      const parsed = JSON.parse(trimmedRaw);
+      if (Array.isArray(parsed)) return parseTranscriptToArray(parsed, leadName, providerName);
+      if (typeof parsed === "object" && parsed !== null) {
+        if (Array.isArray(parsed.transcript)) return parseTranscriptToArray(parsed.transcript, leadName, providerName);
+        if (Array.isArray(parsed.messages)) return parseTranscriptToArray(parsed.messages, leadName, providerName);
+      }
+    } catch (_) { }
+
+    // Split on speaker prefixes (Agent:|User:|Bot:|Human:|Caller:|Customer:|Assistant:)
+    const splitRegex = /(Agent:|User:|Bot:|Human:|Caller:|Customer:|Assistant:)/i;
+    const tokens = trimmedRaw.split(splitRegex);
+    const messages = [];
+
+    if (tokens.length > 1) {
+      let currentSpeaker = "";
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i].trim();
+        if (!token) continue;
+        if (/^(Agent|User|Bot|Human|Caller|Customer|Assistant):$/i.test(token)) {
+          currentSpeaker = token.replace(":", "").toLowerCase();
+        } else if (currentSpeaker) {
+          const isUser = currentSpeaker.includes("user") || currentSpeaker.includes("human") || currentSpeaker.includes("customer") || currentSpeaker.includes("caller");
+          const cleanText = token.replace(/^["'`]|["'`]$/g, "").trim();
+          if (cleanText) {
+            messages.push({
+              sender: isUser ? "human" : "bot",
+              role: isUser ? "user" : "agent",
+              speaker: isUser ? leadName : providerName,
+              text: cleanText,
+              message: cleanText,
+            });
+          }
+          currentSpeaker = "";
+        }
+      }
+      if (messages.length > 0) return messages;
+    }
+
+    // Fallback: split by lines
+    const lines = trimmedRaw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length > 1) {
+      return lines.map((line, idx) => {
+        const isAgent = /^(agent|bot|assistant)\s*:/i.test(line);
+        const isUser = /^(user|human|caller|customer)\s*:/i.test(line);
+        const cleanText = line.replace(/^(agent|bot|assistant|user|human|caller|customer)\s*:\s*/i, "").replace(/^["'`]|["'`]$/g, "").trim();
+        const effectiveUser = isUser || (!isAgent && idx % 2 !== 0);
+        return {
+          sender: effectiveUser ? "human" : "bot",
+          role: effectiveUser ? "user" : "agent",
+          speaker: effectiveUser ? leadName : providerName,
+          text: cleanText || line,
+          message: cleanText || line,
+        };
+      });
+    }
+
+    return [{
+      sender: "bot",
+      role: "agent",
+      speaker: providerName,
+      text: trimmedRaw,
+      message: trimmedRaw,
+    }];
+  }
+
+  return [];
+};
+
+// Unified Call Status Fetcher: Retrieves call status, summary, duration, transcript, and recording for both Callmatic & Bonvoice
+const fetchUnifiedCallStatus = async (callId, callType = "") => {
+  if (!callId) return null;
+  const cleanId = String(callId).trim();
+  const isNumericId = /^\d+$/.test(cleanId);
+  const isBonvoice = String(callType || "").toUpperCase().includes("BONVOICE") || isNumericId;
+
+  let callData = null;
+
+  if (isBonvoice) {
+    try {
+      const bonRes = await getBonvoiceLead(cleanId);
+      const bonLead = bonRes?.data || bonRes;
+      const latestCall =
+        bonLead?.latestCall ||
+        bonLead?.latest_call ||
+        bonLead?.call ||
+        (Array.isArray(bonLead?.calls) && bonLead.calls[0]) ||
+        {};
+
+      const rawStatus = String(latestCall?.status || latestCall?.call_status || bonLead?.leadStatus || bonLead?.status || "completed").toLowerCase();
+      const rawSummary = latestCall?.summary || latestCall?.call_summary || bonLead?.summary || null;
+      const rawTranscript = latestCall?.transcript || latestCall?.call_transcript || bonLead?.transcript || [];
+      const dur = Number(
+        latestCall?.duration_seconds !== undefined
+          ? latestCall.duration_seconds
+          : (latestCall?.duration !== undefined
+            ? latestCall.duration
+            : (bonLead?.duration !== undefined ? bonLead.duration : 0))
+      );
+      const rawDuration = isNaN(dur) ? 0 : dur;
+      const rawRecordingUrl = latestCall?.recording_url || latestCall?.recordingUrl || (latestCall?.id ? `https://voiceai.bonvoice.com/api/public/recordings/${latestCall.id}` : null);
+
+      callData = {
+        provider: "BONVOICE",
+        status: rawStatus,
+        duration: rawDuration,
+        summary: rawSummary,
+        transcript: parseTranscriptToArray(rawTranscript, bonLead?.name || "Customer", "Bonvoice AI Agent"),
+        recordingUrl: rawRecordingUrl,
+        recording_url: rawRecordingUrl,
+        callId: latestCall?.callId || latestCall?.id || cleanId,
+        leadId: bonLead?.id || cleanId,
+        leadStatus: bonLead?.leadStatus,
+        conversionScore: bonLead?.conversionScore,
+        raw: bonLead,
+      };
+      return callData;
+    } catch (bonErr) {
+      console.warn(`[UNIFIED-CALL-STATUS] Bonvoice status fetch warning for ${cleanId}:`, bonErr?.message);
+    }
+  }
+
+  // Try Callmatic (or fallback if not bonvoice or bonvoice failed)
+  try {
+    const cmRes = await getCallmaticStatus(cleanId);
+    const cmData = cmRes?.data || cmRes;
+    if (cmData && (cmData.status || cmData.call_status || cmData.id || cmData.callId)) {
+      const dur = Number(
+        cmData?.duration !== undefined
+          ? cmData.duration
+          : (cmData?.duration_seconds !== undefined
+            ? cmData.duration_seconds
+            : (cmData?.call_duration || 0))
+      );
+      callData = {
+        provider: "CALLMATIC",
+        status: String(cmData?.status || cmData?.call_status || "initiated").toLowerCase(),
+        duration: isNaN(dur) ? 0 : dur,
+        summary:
+          cmData?.summary ||
+          cmData?.call_summary ||
+          cmData?.analysis?.summary ||
+          cmData?.overview ||
+          cmData?.result_summary ||
+          cmData?.transcript_summary ||
+          null,
+        transcript: parseTranscriptToArray(cmData?.transcript || cmData?.messages || cmData?.call_transcript, "Customer", "Callmatic AI Agent"),
+        recordingUrl: cmData?.recordingUrl || cmData?.recording_url || null,
+        recording_url: cmData?.recordingUrl || cmData?.recording_url || null,
+        callId: cmData?.callId || cmData?.id || cleanId,
+        raw: cmData,
+      };
+      return callData;
+    }
+  } catch (cmErr) {
+    if (!isBonvoice) {
+      console.warn(`[UNIFIED-CALL-STATUS] Callmatic status fetch warning for ${cleanId}:`, cmErr?.message);
+    }
+  }
+
+  // If not identified or Callmatic failed, try Bonvoice as fallback
+  if (!isBonvoice) {
+    try {
+      const bonRes = await getBonvoiceLead(cleanId);
+      const bonLead = bonRes?.data || bonRes;
+      if (bonLead && (bonLead.id || bonLead.latestCall || bonLead.leadStatus)) {
+        const latestCall =
+          bonLead?.latestCall ||
+          bonLead?.latest_call ||
+          bonLead?.call ||
+          (Array.isArray(bonLead?.calls) && bonLead.calls[0]) ||
+          {};
+
+        const dur = Number(
+          latestCall?.duration_seconds !== undefined
+            ? latestCall.duration_seconds
+            : (latestCall?.duration !== undefined
+              ? latestCall.duration
+              : (bonLead?.duration || 0))
+        );
+
+        callData = {
+          provider: "BONVOICE",
+          status: String(latestCall?.status || latestCall?.call_status || bonLead?.leadStatus || bonLead?.status || "completed").toLowerCase(),
+          duration: isNaN(dur) ? 0 : dur,
+          summary: latestCall?.summary || latestCall?.call_summary || bonLead?.summary || null,
+          transcript: parseTranscriptToArray(latestCall?.transcript || bonLead?.transcript, bonLead?.name || "Customer", "Bonvoice AI Agent"),
+          recordingUrl: latestCall?.recording_url || latestCall?.recordingUrl || (latestCall?.id ? `https://voiceai.bonvoice.com/api/public/recordings/${latestCall.id}` : null),
+          recording_url: latestCall?.recording_url || latestCall?.recordingUrl || null,
+          callId: latestCall?.callId || latestCall?.id || cleanId,
+          leadId: bonLead?.id || cleanId,
+          leadStatus: bonLead?.leadStatus,
+          conversionScore: bonLead?.conversionScore,
+          raw: bonLead,
+        };
+        return callData;
+      }
+    } catch (_) { }
+  }
+
+  return null;
+};
+
+// Background Call Status Poller for Meta Lead AI Calls (Callmatic & Bonvoice)
+const startMetaCallStatusPoller = (compCode, calleePhoneNumber, campaignId, leadUtd, callId, leadName, callType = "") => {
   if (!callId || !calleePhoneNumber) return;
 
-  console.log(`[META-CALL-POLLER] 🚀 Started background poller for Call ID: ${callId} | Phone: ${calleePhoneNumber}`);
+  console.log(`[META-CALL-POLLER] 🚀 Started background poller for Call ID: ${callId} | Phone: ${calleePhoneNumber} | Type: ${callType || 'CALLMATIC'}`);
 
   let attempts = 0;
   const maxAttempts = 48; // Poll every 5 seconds for up to 4 minutes (48 * 5s = 240s)
@@ -4570,31 +4980,29 @@ const startMetaCallStatusPoller = (compCode, calleePhoneNumber, campaignId, lead
 
   const INTERMEDIATE_STATUSES = [
     "initiated", "ringing", "queued", "answered", "in-progress",
-    "in_progress", "ongoing", "active", "started", "triggered", "created"
+    "in_progress", "ongoing", "active", "started", "triggered", "created", "pending"
   ];
   const COMPLETED_STATUSES = [
-    "completed", "call-transferred", "transferred", "ended"
+    "completed", "call-transferred", "transferred", "ended", "success"
   ];
   const FAILED_TERMINAL_STATUSES = [
-    "failed", "busy", "no-answer", "no_answer", "cancelled", "rejected", "unreachable", "invalid"
+    "failed", "busy", "no-answer", "no_answer", "cancelled", "rejected", "unreachable", "invalid", "not_answered"
   ];
 
   const intervalId = setInterval(async () => {
     attempts++;
     try {
-      let callDetails = null;
       let callData = null;
       try {
-        callDetails = await getCallStatus(callId);
-        callData = callDetails?.data || callDetails;
+        callData = await fetchUnifiedCallStatus(callId, callType);
       } catch (e) {
         console.warn(`[META-CALL-POLLER] Status fetch warning for ${callId}: ${e?.message}`);
       }
 
-      const rawStatus = String(callData?.status || callData?.call_status || "").toLowerCase().trim();
+      const rawStatus = String(callData?.status || "").toLowerCase().trim();
 
       if (INTERMEDIATE_STATUSES.includes(rawStatus) || !rawStatus) {
-        console.log(`[META-CALL-POLLER] Status: ${rawStatus || 'pending'} | Waiting...`);
+        console.log(`[META-CALL-POLLER] Status: ${rawStatus || 'pending'} | Waiting... (${attempts}/${maxAttempts})`);
         if (attempts >= maxAttempts) {
           console.log(`[META-CALL-POLLER] ⏱️ Max polling attempts reached (${maxAttempts}) for ${callId}`);
           clearInterval(intervalId);
@@ -4612,13 +5020,13 @@ const startMetaCallStatusPoller = (compCode, calleePhoneNumber, campaignId, lead
             if (activeSeq) {
               await handleSmartPostCallFollowup(activeSeq, leadUtd, rawStatus, callData);
             }
-          } catch (_) {}
+          } catch (_) { }
         }
         return;
       }
 
       if (COMPLETED_STATUSES.includes(rawStatus)) {
-        console.log(`[META-CALL-POLLER] 🏁 Status: completed | Terminal status 'completed' reached for Call ID: ${callId}`);
+        console.log(`[META-CALL-POLLER] 🏁 Status: completed | Terminal status '${rawStatus}' reached for Call ID: ${callId}`);
         clearInterval(intervalId);
         if (leadUtd) {
           try {
@@ -4626,7 +5034,7 @@ const startMetaCallStatusPoller = (compCode, calleePhoneNumber, campaignId, lead
             if (activeSeq) {
               await handleSmartPostCallFollowup(activeSeq, leadUtd, rawStatus, callData);
             }
-          } catch (_) {}
+          } catch (_) { }
         }
 
         // Dispatch WhatsApp Package ONCE AND ONLY ONCE upon call completion!
@@ -4815,7 +5223,7 @@ const sendPostCallWhatsAppPackage = async ({ calleePhoneNumber, campaignId, comp
     if (pdfMediaId) {
       try {
         let docFileName = String(documentUrl).split("/").pop().split("\\").pop();
-        try { docFileName = decodeURIComponent(docFileName); } catch (_) {}
+        try { docFileName = decodeURIComponent(docFileName); } catch (_) { }
         docFileName = docFileName.replace(/%20/g, "_").replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_\-\.]/g, "");
         if (docFileName.toLowerCase().endsWith(".pptx.pdf")) {
           docFileName = docFileName.substring(0, docFileName.length - 9) + ".pdf";
@@ -4981,7 +5389,7 @@ const triggerLeadCall = async function (req, res) {
 
     // 1. Fetch Lead Details from Meta_Lead_Tbl
     const leadSql = `
-      SELECT TOP 1 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Form_Id, Page_Id, Company_Name, status
+      SELECT TOP 1 UTD, Meta_Lead_Id, Full_Name, Phone_Number, Email, Form_Id, Page_Id, Company_Name, status
       FROM Meta_Lead_Tbl
       WHERE UTD = :metaLeadUtd
     `;
@@ -5009,19 +5417,21 @@ const triggerLeadCall = async function (req, res) {
       });
     }
 
-    // 2. Fetch Active Callmatic Campaign Configuration from Meta_Callmatic_Campaign_Tbl based on lead's Form_Id
+    // 2. Fetch Active Campaign Configuration from Meta_Callmatic_Campaign_Tbl
     let campaignId = body.campaign_id || body.Campaign_Id || null;
     let campaignName = body.campaign_name || body.Campaign_Name || null;
     let metaFormId = body.meta_form_id || body.Meta_Form_Id || lead.Form_Id || null;
     let metaFormName = body.meta_form_name || body.Meta_Form_Name || null;
     let campaignTransferNumber = null;
+    let campaignType = "CALLMATIC";
+    let bonVoicePromptName = null;
 
     let campResult = [];
 
     // Priority 1: Match active campaign by Lead's exact Meta_Form_Id
     if (lead.Form_Id) {
       const formMatchQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Campaign_Type, Bon_voice_Prompt_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1 AND Meta_Form_Id = :formId
         ORDER BY UTD DESC
@@ -5038,7 +5448,7 @@ const triggerLeadCall = async function (req, res) {
     // Priority 2: Match by direct campaign_id if passed in request body
     if ((!campResult || campResult.length === 0) && campaignId) {
       const idMatchQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Campaign_Type, Bon_voice_Prompt_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1 AND Campaign_Id = :campaignId
         ORDER BY UTD DESC
@@ -5052,7 +5462,7 @@ const triggerLeadCall = async function (req, res) {
     // Priority 3: Fallback to latest Active Campaign from Meta_Callmatic_Campaign_Tbl if no form match
     if (!campResult || campResult.length === 0) {
       const fallbackQuery = `
-        SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
+        SELECT TOP 1 Campaign_Id, Campaign_Name, Campaign_Type, Bon_voice_Prompt_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number, Document_URL, Video_URL, Message_Text
         FROM Meta_Callmatic_Campaign_Tbl
         WHERE Is_Active = 1
         ORDER BY UTD DESC
@@ -5069,6 +5479,8 @@ const triggerLeadCall = async function (req, res) {
       metaFormId = camp.Meta_Form_Id || metaFormId;
       metaFormName = camp.Meta_Form_Name || metaFormName;
       campaignTransferNumber = camp.Sales_Executive_Number || camp.Transfer_Number || null;
+      campaignType = String(camp.Campaign_Type || body.campaignType || body.campaign_type || "CALLMATIC").toUpperCase();
+      bonVoicePromptName = camp.Bon_voice_Prompt_Name || campaignId || null;
     }
 
     if (!campaignId) {
@@ -5092,31 +5504,64 @@ const triggerLeadCall = async function (req, res) {
       transferNumber: transferNumber,
     };
 
-    // 4. Trigger Single Callmatic AI Call
+    // Clean phone number format
+    let formattedPhone = String(calleePhoneNumber).trim().replace(/[^\d+]/g, "");
+    if (formattedPhone.startsWith("0")) formattedPhone = formattedPhone.substring(1);
+    if (formattedPhone.length === 10) formattedPhone = `+91${formattedPhone}`;
+    else if (formattedPhone.length === 12 && formattedPhone.startsWith("91")) formattedPhone = `+${formattedPhone}`;
+
+    const isBonvoice = campaignType === "BONVOICE";
     let callResult;
-    try {
-      // Clean phone number format
-      let formattedPhone = String(calleePhoneNumber).trim().replace(/[^\d+]/g, "");
-      if (formattedPhone.startsWith("0")) formattedPhone = formattedPhone.substring(1);
-      if (formattedPhone.length === 10) formattedPhone = `+91${formattedPhone}`;
-      else if (formattedPhone.length === 12 && formattedPhone.startsWith("91")) formattedPhone = `+${formattedPhone}`;
+    let callId = null;
 
-      callResult = await triggerSingleCall(formattedPhone, variables, campaignId);
-    } catch (callErr) {
-      const apiErrDetail = callErr?.response?.data?.message || callErr?.response?.data?.error || callErr?.message;
-      console.error("Callmatic AI Call Error:", callErr?.response?.data || callErr?.message);
-      return res.status(500).json({
-        success: false,
-        message: apiErrDetail ? `Callmatic API: ${apiErrDetail}` : "Failed to trigger Callmatic AI call",
-        error: callErr?.response?.data || callErr?.message,
-      });
+    // 4. Trigger AI Call (BONVOICE or CALLMATIC based on Campaign_Type)
+    if (isBonvoice) {
+      console.log(`[TRIGGER-CALL] 📞 Routing call via BONVOICE (Campaign Type: BONVOICE, Lead #${metaLeadUtd})`);
+      try {
+        const bonVoicePayload = {
+          name: lead.Full_Name || calleeName,
+          phone: formattedPhone,
+          email: lead.Email || null,
+          company: companyName || lead.Company_Name || null,
+          program: campaignName || campaignId || null,
+          column1: campaignTransferNumber || null,
+          column2: body.column2 || null,
+          column3: body.column3 || null,
+          promptName: bonVoicePromptName || campaignId || null,
+        };
+
+        console.log("[TRIGGER-CALL] 📤 Bonvoice Payload:", bonVoicePayload);
+        callResult = await createLeadAndCall(bonVoicePayload);
+        callId = callResult?.leadId || callResult?.callId || callResult?.id || callResult?.data?.leadId || callResult?.data?.callId || null;
+      } catch (callErr) {
+        const apiErrDetail = callErr?.response?.data?.message || callErr?.data?.message || callErr?.message;
+        console.error("Bonvoice AI Call Error:", callErr?.response?.data || callErr?.message);
+        return res.status(500).json({
+          success: false,
+          message: apiErrDetail ? `Bonvoice API: ${apiErrDetail}` : "Failed to trigger Bonvoice AI call",
+          error: callErr?.response?.data || callErr?.message,
+        });
+      }
+    } else {
+      console.log(`[TRIGGER-CALL] 📞 Routing call via CALLMATIC (Campaign Type: CALLMATIC, Lead #${metaLeadUtd})`);
+      try {
+        callResult = await triggerSingleCall(formattedPhone, variables, campaignId);
+        callId = callResult?.callId || callResult?.id || callResult?.data?.callId || null;
+      } catch (callErr) {
+        const apiErrDetail = callErr?.response?.data?.message || callErr?.response?.data?.error || callErr?.message;
+        console.error("Callmatic AI Call Error:", callErr?.response?.data || callErr?.message);
+        return res.status(500).json({
+          success: false,
+          message: apiErrDetail ? `Callmatic API: ${apiErrDetail}` : "Failed to trigger Callmatic AI call",
+          error: callErr?.response?.data || callErr?.message,
+        });
+      }
     }
-
-    const callId = callResult?.callId || callResult?.id || callResult?.data?.callId || null;
 
     // 5. Insert Log Record into Meta_Call_Log_Tbl (system-versioned temporal table)
     let logInserted = false;
     try {
+      const effectiveCallType = isBonvoice ? "BONVOICE_AI_CALL" : (body.call_type || body.callType || "MANUAL_AI_CALL");
       const insertLogSql = `
         INSERT INTO Meta_Call_Log_Tbl (
           Meta_Lead_UTD,
@@ -5152,7 +5597,7 @@ const triggerLeadCall = async function (req, res) {
           metaLeadUtd: lead.UTD,
           metaLeadId: lead.Meta_Lead_Id || null,
           callId: callId || null,
-          callType: body.call_type || body.callType || "MANUAL_AI_CALL",
+          callType: effectiveCallType,
           callSource: body.call_source || body.callSource || "META_LEAD",
           campaignId: campaignId || null,
           campaignName: campaignName || null,
@@ -5170,6 +5615,7 @@ const triggerLeadCall = async function (req, res) {
 
     // 6. Log Activity in Meta_Lead_Activity_Tbl
     try {
+      const providerLabel = isBonvoice ? "Bonvoice" : "Callmatic";
       const insertActivitySql = `
         INSERT INTO Meta_Lead_Activity_Tbl (
           Meta_Lead_UTD,
@@ -5190,7 +5636,7 @@ const triggerLeadCall = async function (req, res) {
       await sequelize.query(insertActivitySql, {
         replacements: {
           metaLeadUtd: lead.UTD,
-          desc: `Callmatic AI Call triggered to ${calleePhoneNumber}. Call ID: ${callId || "N/A"}`,
+          desc: `${providerLabel} AI Call triggered to ${calleePhoneNumber}. Call ID / Lead ID: ${callId || "N/A"}`,
           createdBy: body.created_by || body.createdBy || "ADMIN",
         },
         type: QueryTypes.INSERT,
@@ -5199,9 +5645,9 @@ const triggerLeadCall = async function (req, res) {
       console.error("Activity log insert error (Non-critical):", actErr?.message);
     }
 
-    // 7. Start Call Status Poller (Triggers WhatsApp ONLY when call completes)
-    try {
-      if (callId) {
+    // 7. Start Call Status Poller if Callmatic (Bonvoice delivers webhooks directly)
+    if (!isBonvoice && callId) {
+      try {
         startMetaCallStatusPoller(
           compCode,
           calleePhoneNumber,
@@ -5210,14 +5656,15 @@ const triggerLeadCall = async function (req, res) {
           callId,
           lead?.Full_Name || lead?.Name || "Customer"
         );
+      } catch (waDispatchErr) {
+        console.error("[TRIGGER-CALL] Call Status Poller Start Error:", waDispatchErr?.message);
       }
-    } catch (waDispatchErr) {
-      console.error("[TRIGGER-CALL] Call Status Poller Start Error:", waDispatchErr?.message);
     }
 
     return res.status(200).json({
       success: true,
-      message: "Meta Lead AI Call Triggered Successfully",
+      message: `${isBonvoice ? "Bonvoice" : "Callmatic"} AI Call Triggered Successfully`,
+      provider: isBonvoice ? "BONVOICE" : "CALLMATIC",
       data: callResult,
       callId: callId,
       variables: variables,
@@ -5374,7 +5821,7 @@ const extractScheduleFromText = (summaryText = "", transcriptArr = []) => {
         targetDate = parsed;
         hasSpecificSchedule = true;
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // Explicit Time
@@ -5496,7 +5943,7 @@ const syncAiCallSummaryAndFollowup = async (sequelize, metaLeadUtd, callId, summ
         if (distinctDays >= 3 || totalCalls >= 3) {
           // Total 3 days or 3 attempts reached without answer — STOP ALL CALLS
           console.log(`[3-DAY-RETRY-RULE] Lead #${metaLeadUtd} reached ${distinctDays} days / ${totalCalls} calls without response. Marking EXHAUSTED & stopping calls.`);
-          
+
           await sequelize.query(
             `UPDATE Meta_Lead_Tbl SET status = 3, Updated_At = GETDATE() WHERE UTD = :metaLeadUtd`,
             { replacements: { metaLeadUtd }, type: QueryTypes.UPDATE }
@@ -5552,8 +5999,8 @@ const syncAiCallSummaryAndFollowup = async (sequelize, metaLeadUtd, callId, summ
       // ── SUCCESSFUL OR CUSTOMER-SCHEDULED FOLLOWUP ──────────────
       const targetFollowupDate = scheduleInfo.date;
       const targetFollowupTime = scheduleInfo.time;
-      const scheduleReason = scheduleInfo.hasSpecificSchedule 
-        ? `Scheduled by Customer during Call (${targetFollowupDate} ${targetFollowupTime})` 
+      const scheduleReason = scheduleInfo.hasSpecificSchedule
+        ? `Scheduled by Customer during Call (${targetFollowupDate} ${targetFollowupTime})`
         : `Auto Follow-up based on AI Call Summary`;
 
       await sequelize.query(
@@ -5638,7 +6085,7 @@ const autoSyncLeadCalls = async (sequelize, leadUtd) => {
   if (!sequelize || !leadUtd) return;
   try {
     const callLogs = await sequelize.query(
-      `SELECT Call_Id, Phone_Number, Created_At FROM Meta_Call_Log_Tbl WHERE Meta_Lead_UTD = :leadUtd ORDER BY UTD DESC`,
+      `SELECT Call_Id, Call_Type, Phone_Number, Created_At FROM Meta_Call_Log_Tbl WHERE Meta_Lead_UTD = :leadUtd ORDER BY UTD DESC`,
       { replacements: { leadUtd }, type: QueryTypes.SELECT }
     );
 
@@ -5649,30 +6096,33 @@ const autoSyncLeadCalls = async (sequelize, leadUtd) => {
 
       let callData = null;
       try {
-        const apiRes = await getCallStatus(log.Call_Id);
-        callData = apiRes?.data || apiRes;
-      } catch (_) {}
+        callData = await fetchUnifiedCallStatus(log.Call_Id, log.Call_Type);
+      } catch (_) { }
 
       if (!callData || !callData.status) {
         const whRows = await sequelize.query(
-          `SELECT TOP 1 * FROM dbo.call_webhook_dtl WHERE call_id = :callId OR (phone_number = :phone AND phone_number IS NOT NULL AND phone_number != '') ORDER BY id DESC`,
+          `SELECT TOP 1 * FROM dbo.call_webhook_dtl 
+           WHERE call_id = :callId OR lead_id = :callId OR (phone_number = :phone AND phone_number IS NOT NULL AND phone_number != '') 
+           ORDER BY id DESC`,
           { replacements: { callId: log.Call_Id, phone: log.Phone_Number || "" }, type: QueryTypes.SELECT }
         );
         if (whRows && whRows.length > 0) {
+          const isBv = String(log.Call_Type || "").includes("BONVOICE") || (whRows[0].lead_id ? true : false);
+          const pName = isBv ? "Bonvoice" : "Callmatic";
           callData = {
+            provider: pName,
             status: whRows[0].status,
-            duration: whRows[0].duration,
+            duration: whRows[0].duration !== null && !isNaN(whRows[0].duration) ? Number(whRows[0].duration) : 0,
             summary: whRows[0].summary,
-            transcript: whRows[0].transcript
-              ? typeof whRows[0].transcript === "string"
-                ? JSON.parse(whRows[0].transcript)
-                : whRows[0].transcript
-              : [],
+            transcript: parseTranscriptToArray(whRows[0].transcript, "Customer", `${pName} AI Agent`),
+            recordingUrl: whRows[0].recording_url,
           };
         }
       }
 
       const status = String(callData?.status || callData?.call_status || "completed").toLowerCase();
+      const isBonvoice = String(log.Call_Type || "").includes("BONVOICE") || callData?.provider === "BONVOICE";
+      const defaultAgentName = isBonvoice ? "Bonvoice AI Agent" : "Callmatic AI Agent";
       const summary =
         callData?.summary ||
         callData?.call_summary ||
@@ -5681,7 +6131,7 @@ const autoSyncLeadCalls = async (sequelize, leadUtd) => {
         callData?.result_summary ||
         callData?.transcript_summary ||
         (Array.isArray(callData?.transcript) && callData.transcript.length > 0
-          ? `Call completed with ${callData.transcript.length} turns. Customer interacted with Callmatic AI Agent.`
+          ? `Call completed with ${callData.transcript.length} turns. Customer interacted with ${defaultAgentName}.`
           : null);
       const duration = callData?.duration || callData?.call_duration || 0;
 
@@ -5700,7 +6150,7 @@ const autoSyncLeadCalls = async (sequelize, leadUtd) => {
 };
 
 // ============================================================
-// GET META CALL ENRICHED HISTORY WITH CALLMATIC STATUS & RECORDINGS
+// GET META CALL ENRICHED HISTORY WITH CALLMATIC & BONVOICE STATUS & RECORDINGS
 // GET /getMetaCallHistory, POST /getMetaCallHistory
 // ============================================================
 exports.getMetaCallHistory = async function (req, res) {
@@ -5810,46 +6260,72 @@ exports.getMetaCallHistory = async function (req, res) {
       });
     }
 
-    // ── Enrich with Callmatic API Real-time status, summary, duration, transcript ──
+    // ── Enrich with Unified (Callmatic & Bonvoice) Real-time status, summary, duration, transcript ──
     const enrichedLogs = await Promise.all(
       logs.map(async (log) => {
         let callData = null;
+        let dbRow = null;
 
         if (log.Call_Id) {
           try {
-            const apiRes = await getCallStatus(log.Call_Id);
-            callData = apiRes?.data || apiRes;
+            callData = await fetchUnifiedCallStatus(log.Call_Id, log.Call_Type);
           } catch (apiErr) {
-            console.warn(`[META-HISTORY] Callmatic API status failed for ${log.Call_Id}:`, apiErr?.message);
+            console.warn(`[META-HISTORY] Unified status failed for ${log.Call_Id}:`, apiErr?.message);
           }
 
-          // DB Webhook fallback if API status failed or returned empty
-          if (!callData || !callData.status) {
+          // DB Webhook fallback
+          try {
             const whRows = await sequelize.query(
               `SELECT TOP 1 * FROM dbo.call_webhook_dtl
-               WHERE call_id = :callId OR (phone_number = :phone AND phone_number IS NOT NULL AND phone_number != '')
+               WHERE call_id = :callId OR lead_id = :callId OR (phone_number = :phone AND phone_number IS NOT NULL AND phone_number != '')
                ORDER BY id DESC`,
               { replacements: { callId: log.Call_Id, phone: log.Phone_Number || "" }, type: QueryTypes.SELECT }
             );
 
             if (whRows && whRows.length > 0) {
-              callData = {
-                callId: whRows[0].call_id,
-                phoneNumber: whRows[0].phone_number,
-                status: whRows[0].status,
-                duration: whRows[0].duration,
-                summary: whRows[0].summary,
-                transcript: whRows[0].transcript
-                  ? typeof whRows[0].transcript === "string"
-                    ? JSON.parse(whRows[0].transcript)
-                    : whRows[0].transcript
-                  : [],
-              };
+              dbRow = whRows[0];
             }
+          } catch (_) { }
+        }
+
+        const isBonvoice = String(log.Call_Type || "").includes("BONVOICE") || callData?.provider === "BONVOICE" || Boolean(dbRow?.lead_id);
+        const providerName = isBonvoice ? "Bonvoice" : "Callmatic";
+
+        const rawSummary =
+          callData?.summary ||
+          dbRow?.summary ||
+          null;
+
+        const rawTranscript =
+          callData?.transcript ||
+          dbRow?.transcript ||
+          [];
+
+        const parsedTranscript = parseTranscriptToArray(rawTranscript, log.Full_Name || "Customer", `${providerName} AI Agent`);
+
+        let rawDuration = null;
+        if (callData?.duration !== undefined && callData?.duration !== null && !isNaN(callData?.duration) && Number(callData.duration) > 0) {
+          rawDuration = Number(callData.duration);
+        } else if (dbRow?.duration !== undefined && dbRow?.duration !== null && !isNaN(dbRow?.duration) && Number(dbRow.duration) > 0) {
+          rawDuration = Number(dbRow.duration);
+        } else if (dbRow?.start_time && dbRow?.end_time) {
+          const s = new Date(dbRow.start_time).getTime();
+          const e = new Date(dbRow.end_time).getTime();
+          if (!isNaN(s) && !isNaN(e) && e > s) {
+            rawDuration = Math.round((e - s) / 1000);
           }
         }
 
-        const callStatus = String(callData?.status || callData?.call_status || "initiated").toLowerCase();
+        // Fallback: If duration is still 0/null and transcript has timestamps
+        if ((!rawDuration || rawDuration === 0) && Array.isArray(rawTranscript) && rawTranscript.length > 1) {
+          const firstTs = rawTranscript[0]?.timestamp;
+          const lastTs = rawTranscript[rawTranscript.length - 1]?.timestamp;
+          if (firstTs && lastTs && lastTs > firstTs) {
+            rawDuration = Math.round(lastTs - firstTs);
+          }
+        }
+
+        const callStatus = String(callData?.status || dbRow?.status || "completed").toLowerCase();
 
         const resObj = {
           UTD: log.UTD,
@@ -5858,6 +6334,7 @@ exports.getMetaCallHistory = async function (req, res) {
           Call_Id: log.Call_Id,
           Call_Type: log.Call_Type,
           Call_Source: log.Call_Source,
+          Provider: providerName,
           Campaign_Id: log.Campaign_Id,
           Campaign_Name: log.Campaign_Name,
           Meta_Form_Id: log.Meta_Form_Id,
@@ -5867,19 +6344,14 @@ exports.getMetaCallHistory = async function (req, res) {
           Created_By: log.Created_By,
           Created_At: log.Created_At,
           status: callStatus,
-          duration: callData?.duration || callData?.call_duration || null,
+          duration: rawDuration,
           summary:
-            callData?.summary ||
-            callData?.call_summary ||
-            callData?.analysis?.summary ||
-            callData?.overview ||
-            callData?.result_summary ||
-            callData?.transcript_summary ||
-            (Array.isArray(callData?.transcript) && callData.transcript.length > 0
-              ? `Call completed with ${callData.transcript.length} turns. Customer interacted with Callmatic AI Agent.`
+            rawSummary ||
+            (parsedTranscript.length > 0
+              ? `Call completed with ${parsedTranscript.length} turns. Customer interacted with ${providerName} AI Agent.`
               : null),
-          transcript: callData?.transcript || callData?.call_transcript || [],
-          recordingUrl: callData?.recordingUrl || callData?.recording_url || null,
+          transcript: parsedTranscript,
+          recordingUrl: callData?.recordingUrl || dbRow?.recording_url || null,
           callData: callData || null,
         };
 
@@ -5893,7 +6365,7 @@ exports.getMetaCallHistory = async function (req, res) {
               callStatus,
               resObj.duration || 0
             );
-          } catch (_) {}
+          } catch (_) { }
         }
 
         return resObj;
@@ -5919,7 +6391,7 @@ exports.getMetaCallHistory = async function (req, res) {
 };
 
 // ============================================================
-// STREAM META CALL RECORDING AUDIO
+// STREAM META CALL RECORDING AUDIO (CALLMATIC & BONVOICE)
 // GET /getMetaCallRecording/:callId
 // ============================================================
 exports.getMetaCallRecording = async function (req, res) {
@@ -5928,10 +6400,586 @@ exports.getMetaCallRecording = async function (req, res) {
     if (!callId) {
       return res.status(400).json({ Status: false, Message: "callId is required" });
     }
-    await getCallRecording(callId, res);
+
+    const cleanId = String(callId).trim();
+    const isNumericId = /^\d+$/.test(cleanId);
+
+    // 1. Bonvoice IDs are numeric (e.g. Lead ID 1022997 or Call ID 1172527)
+    if (isNumericId) {
+      try {
+        await getBonvoiceRecording(cleanId, res);
+        return;
+      } catch (bvErr) {
+        console.warn(`[CALL-RECORDING] Bonvoice streaming failed for numeric ID ${cleanId}:`, bvErr?.message);
+      }
+    }
+
+    // 2. Try Callmatic streaming
+    try {
+      const response = await axios.get(
+        `${CALLMATIC_CONFIG.BASE_URL}/recordings/${cleanId}`,
+        {
+          headers: { "api-key": CALLMATIC_CONFIG.API_KEY },
+          responseType: "stream",
+          timeout: 30000,
+        }
+      );
+
+      res.setHeader("Content-Type", response.headers["content-type"] || "audio/mpeg");
+      response.data.pipe(res);
+      return;
+    } catch (cmErr) {
+      console.log(`[CALL-RECORDING] Callmatic streaming failed for ${cleanId}:`, cmErr?.response?.data || cmErr?.message);
+    }
+
+    // 3. Fallback to Bonvoice if non-numeric and Callmatic failed
+    if (!isNumericId && !res.headersSent) {
+      try {
+        await getBonvoiceRecording(cleanId, res);
+        return;
+      } catch (bvErr) {
+        console.warn(`[CALL-RECORDING] Bonvoice fallback failed for ${cleanId}:`, bvErr?.message);
+      }
+    }
+
+    if (!res.headersSent) {
+      return res.status(404).json({
+        Status: false,
+        Message: `Recording not found for Call ID '${cleanId}' on either Callmatic or Bonvoice.`,
+      });
+    }
   } catch (err) {
     if (!res.headersSent) {
       return res.status(500).json({ Status: false, Message: err?.message });
+    }
+  }
+};
+
+// ============================================================
+// MICROSOFT TEAMS PRODUCT DEMO SCHEDULER
+// POST /scheduleTeamsDemo
+// ============================================================
+const mailTransporter1 = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: "automailerautovyn@gmail.com",
+    pass: "azucvdumhwegelzg",
+  },
+});
+
+const mailTransporter2 = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: "AUTOVYN.MAILER@gmail.com",
+    pass: "lamdgvthpjetawtr",
+  },
+});
+
+async function sendEmailWithFallback(toEmail, subject, htmlContent) {
+  if (!toEmail) return false;
+  const bcc = ["ayushi@autovyn.com"];
+  const mailOptions1 = {
+    from: "AUTOVYN.MAILER@gmail.com",
+    to: toEmail,
+    bcc: bcc,
+    subject: subject,
+    html: htmlContent,
+  };
+  const mailOptions2 = {
+    from: "automailerautovyn@gmail.com",
+    to: toEmail,
+    bcc: bcc,
+    subject: subject,
+    html: htmlContent,
+  };
+
+  try {
+    await mailTransporter1.sendMail(mailOptions1);
+    console.log(`[TEAMS-DEMO-EMAIL] Email sent to ${toEmail} via primary mailer`);
+    return true;
+  } catch (err1) {
+    console.warn(`[TEAMS-DEMO-EMAIL] Primary mailer failed for ${toEmail}:`, err1?.message);
+    try {
+      await mailTransporter2.sendMail(mailOptions2);
+      console.log(`[TEAMS-DEMO-EMAIL] Email sent to ${toEmail} via fallback mailer`);
+      return true;
+    } catch (err2) {
+      console.error(`[TEAMS-DEMO-EMAIL] Fallback mailer failed for ${toEmail}:`, err2?.message);
+      return false;
+    }
+  }
+}
+
+exports.scheduleTeamsDemo = async function (req, res) {
+  let sequelize;
+
+  try {
+    const compcode = String(
+      req.headers.compcode || req.body.compcode || req.query.compcode || "autovyn"
+    ).trim();
+
+    const {
+      leadUtd,
+      metaLeadId,
+      customerName,
+      customerEmail,
+      customerMobile,
+      demoDate,
+      demoTime,
+      demoRemark,
+      demoPlatform = "MICROSOFT_TEAMS",
+      demoExecutiveEmail,
+      demoExecutiveCode,
+      demoExecutiveName,
+      userCode,
+      userName,
+      userEmail,
+    } = req.body || {};
+
+    // ── STEP 1: VALIDATION ──
+    if (!leadUtd) {
+      return res.status(400).json({ success: false, message: "Lead UTD is required." });
+    }
+    if (!demoDate) {
+      return res.status(400).json({ success: false, message: "Demo Date is required." });
+    }
+    if (!demoTime) {
+      return res.status(400).json({ success: false, message: "Demo Time is required." });
+    }
+    if (!customerEmail || !String(customerEmail).includes("@")) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid Customer/Lead email is required for Microsoft Teams meeting invitation.",
+      });
+    }
+
+    // ── STEP 2: MICROSOFT GRAPH CREDENTIALS CHECK ──
+    const tenantId = process.env.MS_TENANT_ID;
+    const clientId = process.env.MS_CLIENT_ID;
+    const clientSecret = process.env.MS_CLIENT_SECRET;
+    const organizerEmail = process.env.MS_ORGANIZER_EMAIL;
+
+    if (!tenantId || !clientId || !clientSecret || !organizerEmail) {
+      console.error("[MS-TEAMS] Missing Microsoft Graph environment variables:", {
+        MS_TENANT_ID: !!tenantId,
+        MS_CLIENT_ID: !!clientId,
+        MS_CLIENT_SECRET: !!clientSecret,
+        MS_ORGANIZER_EMAIL: !!organizerEmail,
+      });
+      return res.status(500).json({
+        success: false,
+        message:
+          "Microsoft Teams configuration is incomplete on server (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_ORGANIZER_EMAIL).",
+      });
+    }
+
+    // ── STEP 3: DATABASE CONNECTION & DEMO_CC_EMAILS LOOKUP ──
+    sequelize = await dbname(req, compcode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection failed while preparing Teams Demo schedule.",
+      });
+    }
+
+    let campaignCcEmails = [];
+    try {
+      const campRows = await sequelize.query(
+        `SELECT TOP 1 Demo_CC_Emails FROM Meta_Callmatic_Campaign_Tbl WHERE Is_Active = 1 ORDER BY UTD DESC`,
+        { type: QueryTypes.SELECT }
+      );
+      if (campRows && campRows[0]?.Demo_CC_Emails) {
+        campaignCcEmails = String(campRows[0].Demo_CC_Emails)
+          .split(/[,;]/)
+          .map((e) => e.trim())
+          .filter((e) => e && e.includes("@"));
+        console.log("[MS-TEAMS] Found Demo_CC_Emails from Meta_Callmatic_Campaign_Tbl:", campaignCcEmails);
+      }
+    } catch (campErr) {
+      console.warn("[MS-TEAMS] Demo_CC_Emails lookup warning:", campErr?.message);
+    }
+
+    // ── STEP 4: ACQUIRE MICROSOFT GRAPH OAUTH TOKEN ──
+    let accessToken;
+    try {
+      const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+      const tokenParams = new URLSearchParams();
+      tokenParams.append("client_id", clientId);
+      tokenParams.append("scope", "https://graph.microsoft.com/.default");
+      tokenParams.append("client_secret", clientSecret);
+      tokenParams.append("grant_type", "client_credentials");
+
+      const tokenRes = await axios.post(tokenUrl, tokenParams.toString(), {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        timeout: 15000,
+      });
+
+      accessToken = tokenRes.data?.access_token;
+      if (!accessToken) {
+        throw new Error("Empty access_token returned by Microsoft Identity platform");
+      }
+    } catch (authErr) {
+      console.error("[MS-TEAMS] Microsoft Graph Authentication Failed:", authErr?.response?.data || authErr.message);
+      return res.status(502).json({
+        success: false,
+        message: "Microsoft Graph authentication failed. Please check Microsoft Tenant/Client credentials.",
+        error: authErr?.response?.data?.error_description || authErr.message,
+      });
+    }
+
+    // ── STEP 5: CALCULATE DATES & BUILD CALENDAR EVENT ──
+    // Format Demo Date & Time in IST (e.g. 2026-09-10T14:30:00)
+    const cleanTime = String(demoTime).trim().length === 5 ? `${demoTime}:00` : demoTime;
+    const startDateTimeStr = `${demoDate}T${cleanTime}`;
+
+    // Add 30 minutes default duration
+    const startDateObj = new Date(`${demoDate}T${cleanTime}`);
+    let endDateTimeStr;
+    if (!isNaN(startDateObj.getTime())) {
+      const endDateObj = new Date(startDateObj.getTime() + 30 * 60 * 1000);
+      const eY = endDateObj.getFullYear();
+      const eM = String(endDateObj.getMonth() + 1).padStart(2, "0");
+      const eD = String(endDateObj.getDate()).padStart(2, "0");
+      const eH = String(endDateObj.getHours()).padStart(2, "0");
+      const eMin = String(endDateObj.getMinutes()).padStart(2, "0");
+      const eS = String(endDateObj.getSeconds()).padStart(2, "0");
+      endDateTimeStr = `${eY}-${eM}-${eD}T${eH}:${eMin}:${eS}`;
+    } else {
+      endDateTimeStr = `${demoDate}T${cleanTime}`;
+    }
+
+    // Attendees list
+    const attendees = [
+      {
+        emailAddress: {
+          address: String(customerEmail).trim(),
+          name: customerName || "Customer",
+        },
+        type: "required",
+      },
+    ];
+
+    const allTeamEmails = [
+      ...campaignCcEmails,
+      demoExecutiveEmail,
+      userEmail,
+    ].filter(Boolean);
+
+    const distinctTeamEmails = Array.from(
+      new Set(allTeamEmails.map((e) => String(e).trim().toLowerCase()))
+    ).filter((e) => e && e !== String(customerEmail).trim().toLowerCase());
+
+    for (const email of distinctTeamEmails) {
+      attendees.push({
+        emailAddress: {
+          address: email,
+          name: email.split("@")[0],
+        },
+        type: "required",
+      });
+    }
+
+    const eventPayload = {
+      subject: `Product Demo - ${customerName || "Customer"}`,
+      body: {
+        contentType: "HTML",
+        content: `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #1e293b; line-height: 1.6;">
+          <p><strong>AUTOVYN Product Demo Session</strong></p>
+          <p><strong>Customer:</strong> ${customerName || "Customer"} (${customerMobile || "N/A"})</p>
+          <p><strong>Agenda:</strong> ${demoRemark || "Product Demo & Feature Walkthrough"}</p>
+          <p><strong>Scheduled By:</strong> ${userName || "AUTOVYN Team"}</p>
+        </div>`,
+      },
+      start: {
+        dateTime: startDateTimeStr,
+        timeZone: "India Standard Time",
+      },
+      end: {
+        dateTime: endDateTimeStr,
+        timeZone: "India Standard Time",
+      },
+      isOnlineMeeting: true,
+      onlineMeetingProvider: "teamsForBusiness",
+      attendees,
+    };
+
+    // ── STEP 6: CREATE MICROSOFT TEAMS CALENDAR EVENT ──
+    let msEvent;
+    try {
+      const createEventUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(organizerEmail)}/events`;
+      const eventRes = await axios.post(createEventUrl, eventPayload, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 25000,
+      });
+      msEvent = eventRes.data;
+    } catch (createErr) {
+      console.error("[MS-TEAMS] Calendar Event Creation Failed:", createErr?.response?.data || createErr.message);
+      return res.status(502).json({
+        success: false,
+        message: "Failed to create Microsoft Teams meeting on Calendar.",
+        error: createErr?.response?.data?.error?.message || createErr.message,
+      });
+    }
+
+    const eventId = msEvent?.id;
+    const teamsJoinUrl =
+      msEvent?.onlineMeeting?.joinUrl ||
+      msEvent?.onlineMeetingUrl ||
+      msEvent?.webLink ||
+      null;
+
+    if (!teamsJoinUrl) {
+      console.error("[MS-TEAMS] Teams joinUrl is missing in Graph API response:", msEvent);
+      return res.status(502).json({
+        success: false,
+        message: "Microsoft Calendar event created but Teams join URL could not be generated.",
+      });
+    }
+
+    console.log(`[MS-TEAMS] ✅ Teams Meeting Created successfully! Event ID: ${eventId} | Join URL: ${teamsJoinUrl}`);
+
+    // ── STEP 7: DATABASE TRANSACTION & STAGE UPDATE ──
+    // 1. Update Lead Status to "Demo Scheduled" (Status Code 4)
+    await sequelize.query(
+      `UPDATE Meta_Lead_Tbl
+       SET status = 4, Updated_At = GETDATE()
+       WHERE UTD = :leadUtd`,
+      { replacements: { leadUtd }, type: QueryTypes.UPDATE }
+    );
+
+    // 2. Insert Record in Meta_Lead_Followup_Tbl
+    const followupPurpose = `Product Demo (Microsoft Teams)`;
+    const followupRemark = `Microsoft Teams Demo Scheduled for ${demoDate} ${demoTime}. Agenda: ${demoRemark || "Product Demo"}. Teams URL: ${teamsJoinUrl} [Event ID: ${eventId}]`;
+
+    await sequelize.query(
+      `INSERT INTO Meta_Lead_Followup_Tbl (
+        Meta_Lead_UTD, Followup_Date, Followup_Time, Followup_Type, Followup_Status,
+        Purpose, Remark, Assigned_To, Assigned_Name, Created_By, Created_At
+      ) VALUES (
+        :leadUtd, :fDate, :fTime, 'DEMO', 'PENDING',
+        :purpose, :remark, :assignedTo, :assignedName, :createdBy, GETDATE()
+      )`,
+      {
+        replacements: {
+          leadUtd,
+          fDate: demoDate,
+          fTime: demoTime,
+          purpose: followupPurpose,
+          remark: followupRemark,
+          assignedTo: demoExecutiveCode || userCode || null,
+          assignedName: demoExecutiveName || userName || "Demo Executive",
+          createdBy: userCode || "ADMIN",
+        },
+        type: QueryTypes.INSERT,
+      }
+    );
+
+    // 3. Insert Activity Timeline in Meta_Lead_Activity_Tbl
+    const activityRemark = `Microsoft Teams Demo scheduled for ${demoDate} at ${demoTime}. Agenda: ${demoRemark || "Product Demo"}. Join URL: ${teamsJoinUrl}`;
+
+    await sequelize.query(
+      `INSERT INTO Meta_Lead_Activity_Tbl (
+        Meta_Lead_UTD, Activity_Type, Activity_Status, Old_Value, New_Value,
+        Remark, Message_Id, Activity_Date, Created_By, Created_Name, Created_At
+      ) VALUES (
+        :leadUtd, 'DEMO_SCHEDULED', 'COMPLETED', 'In Pipeline', 'Demo Scheduled',
+        :remark, :eventId, GETDATE(), :createdBy, :createdName, GETDATE()
+      )`,
+      {
+        replacements: {
+          leadUtd,
+          remark: activityRemark,
+          eventId: String(eventId).substring(0, 100),
+          createdBy: userCode || "ADMIN",
+          createdName: userName || "Admin",
+        },
+        type: QueryTypes.INSERT,
+      }
+    );
+
+    console.log(`[MS-TEAMS] 📝 Database records updated for Lead #${leadUtd} (Stage: Demo Scheduled).`);
+
+    // ── STEP 8: SEND APPLICATION EMAILS ──
+    let formattedDemoDate = demoDate;
+    try {
+      if (demoDate && /^\d{4}-\d{2}-\d{2}$/.test(String(demoDate).trim())) {
+        const [y, m, d] = String(demoDate).trim().split("-");
+        formattedDemoDate = `${d}/${m}/${y}`;
+      } else if (demoDate) {
+        const parsedD = new Date(demoDate);
+        if (!isNaN(parsedD.getTime())) {
+          const dd = String(parsedD.getDate()).padStart(2, "0");
+          const mm = String(parsedD.getMonth() + 1).padStart(2, "0");
+          const yyyy = parsedD.getFullYear();
+          formattedDemoDate = `${dd}/${mm}/${yyyy}`;
+        }
+      }
+    } catch (_) { }
+
+    // EMAIL 1: CUSTOMER / LEAD
+    const customerSubject = `Product Demo Scheduled - Microsoft Teams`;
+    const customerHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Product Demo Scheduled</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b;">
+  <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+    <div style="background-color: #4F46E5; padding: 24px 32px; text-align: left;">
+      <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 700;">AUTOVYN Product Demo</h1>
+      <p style="color: #e0e7ff; margin: 4px 0 0 0; font-size: 14px;">Microsoft Teams Online Meeting</p>
+    </div>
+    <div style="padding: 32px;">
+      <p style="font-size: 16px; margin: 0 0 16px 0;">Hello <strong>${customerName || "Customer"}</strong>,</p>
+      <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0;">Your product demo has been scheduled successfully. Please find the meeting details below:</p>
+      
+      <div style="background-color: #f1f5f9; border-radius: 12px; padding: 20px; margin-bottom: 28px; border: 1px solid #e2e8f0;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr>
+            <td style="padding: 8px 0; color: #64748b; font-weight: 600; width: 130px;">📅 Demo Date:</td>
+            <td style="padding: 8px 0; color: #0f172a; font-weight: 700;">${formattedDemoDate}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #64748b; font-weight: 600;">⏰ Demo Time:</td>
+            <td style="padding: 8px 0; color: #0f172a; font-weight: 700;">${demoTime} (IST)</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #64748b; font-weight: 600;">💻 Platform:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">Microsoft Teams</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #64748b; font-weight: 600; vertical-align: top;">📝 Agenda:</td>
+            <td style="padding: 8px 0; color: #0f172a;">${demoRemark || "AUTOVYN Product Demo & Feature Walkthrough"}</td>
+          </tr>
+        </table>
+      </div>
+
+      <div style="text-align: center; margin-bottom: 32px;">
+        <a href="${teamsJoinUrl}" target="_blank" style="display: inline-block; background-color: #4F46E5; color: #ffffff; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 28px; border-radius: 10px; box-shadow: 0 4px 10px rgba(79, 70, 229, 0.3);">
+          Join Microsoft Teams Meeting ➔
+        </a>
+        <p style="font-size: 12px; color: #94a3b8; margin: 12px 0 0 0;">Or copy link: <a href="${teamsJoinUrl}" style="color: #4F46E5; word-break: break-all;">${teamsJoinUrl}</a></p>
+      </div>
+
+      <p style="font-size: 14px; line-height: 1.5; color: #64748b; margin: 0;">
+        Regards,<br>
+        <strong style="color: #0f172a;">AUTOVYN</strong>
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    // Dispatch Email 1 to Customer
+    sendEmailWithFallback(customerEmail, customerSubject, customerHtml).catch((e) =>
+      console.warn("[TEAMS-DEMO] Customer email dispatch warning:", e?.message)
+    );
+
+    // EMAIL 2: INTERNAL TEAM MEMBERS (All CC emails from Meta_Callmatic_Campaign_Tbl & Host)
+    if (distinctTeamEmails.length > 0) {
+      const internalSubject = `Demo Scheduled - ${customerName || "Customer"}`;
+      const internalHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Demo Scheduled</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b;">
+  <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+    <div style="background-color: #1E293B; padding: 24px 32px; text-align: left;">
+      <h1 style="color: #ffffff; margin: 0; font-size: 20px; font-weight: 700;">🎯 Demo Scheduled - ${customerName || "Customer"}</h1>
+      <p style="color: #94a3b8; margin: 4px 0 0 0; font-size: 14px;">Microsoft Teams Calendar Notification</p>
+    </div>
+    <div style="padding: 32px;">
+      <p style="font-size: 15px; color: #15803d; font-weight: 700; margin: 0 0 16px 0;">✅ Demo successfully scheduled.</p>
+      
+      <div style="background-color: #f8fafc; border-radius: 12px; padding: 20px; margin-bottom: 24px; border: 1px solid #e2e8f0;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600; width: 140px;">👤 Customer:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${customerName || "N/A"}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">✉️ Customer Email:</td>
+            <td style="padding: 6px 0; color: #0f172a;">${customerEmail || "N/A"}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">📱 Customer Mobile:</td>
+            <td style="padding: 6px 0; color: #0f172a;">${customerMobile || "N/A"}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">📅 Demo Date:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${formattedDemoDate}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">⏰ Demo Time:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${demoTime} (IST)</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">💻 Platform:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">Microsoft Teams</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600; vertical-align: top;">📝 Agenda:</td>
+            <td style="padding: 6px 0; color: #0f172a;">${demoRemark || "Product Demo Session"}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">🆔 Lead UTD:</td>
+            <td style="padding: 6px 0; color: #4F46E5; font-weight: 700;">#${leadUtd}</td>
+          </tr>
+        </table>
+      </div>
+
+      <div style="text-align: center; margin-bottom: 24px;">
+        <a href="${teamsJoinUrl}" target="_blank" style="display: inline-block; background-color: #1E293B; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; padding: 12px 24px; border-radius: 10px;">
+          Join Microsoft Teams Meeting
+        </a>
+      </div>
+
+      <p style="font-size: 13px; color: #94a3b8; margin: 0;">
+        Scheduled By: <strong>${userName || "ADMIN"}</strong> (${userEmail || "System"})
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      // Dispatch to each internal team member
+      for (const recipient of distinctTeamEmails) {
+        sendEmailWithFallback(recipient, internalSubject, internalHtml).catch((e) =>
+          console.warn(`[TEAMS-DEMO] Team email dispatch warning for ${recipient}:`, e?.message)
+        );
+      }
+    }
+
+    // ── STEP 8: SUCCESS RESPONSE ──
+    return res.status(200).json({
+      success: true,
+      message: "Demo scheduled successfully and Teams meeting invitation sent.",
+      data: {
+        eventId,
+        joinUrl: teamsJoinUrl,
+        demoDate,
+        demoTime,
+        leadUtd,
+        platform: "MICROSOFT_TEAMS",
+      },
+    });
+  } catch (error) {
+    console.error("[MS-TEAMS] scheduleTeamsDemo error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "An unexpected error occurred while scheduling the Microsoft Teams demo.",
+    });
+  } finally {
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (_) { }
     }
   }
 };
@@ -5942,3 +6990,5 @@ exports.sendWhatsAppDocumentTemplate = sendWhatsAppDocumentTemplate;
 exports.sendWhatsAppVideoTemplate = sendWhatsAppVideoTemplate;
 exports.sendWhatsAppTextTemplate = sendWhatsAppTextTemplate;
 exports.autoSyncLeadCalls = autoSyncLeadCalls;
+exports.fetchUnifiedCallStatus = fetchUnifiedCallStatus;
+exports.syncAiCallSummaryAndFollowup = syncAiCallSummaryAndFollowup;

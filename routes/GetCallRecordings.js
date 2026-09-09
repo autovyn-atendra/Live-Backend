@@ -3,6 +3,7 @@
 const { dbname } = require("../utils/dbconfig");
 const { QueryTypes } = require("sequelize");
 const { getCallStatus, getCallRecording } = require("./callmati");
+const { getCallRecording: getBonvoiceRecording } = require("./bonvoice1");
 const { SendWhatsAppMessgae } = require("./user");
 const jwt = require("jsonwebtoken");
 
@@ -292,7 +293,7 @@ const parseCallbackFromSummary = (summaryText, variables, transcript) => {
   }
   return null;
 };
- 
+
 // ════════════════════════════════════════════════════════════════
 // Dynamic column checker & auto-migration for Srv_Reminder_Tbl
 // ════════════════════════════════════════════════════════════════
@@ -395,7 +396,7 @@ const updateReminderFromCallDetails = async (sequelize, reminderUTD, callData, c
       currentRem.Reminder_Status === "CLOSED" ||
       Boolean(currentRem.Appointment_Date);
     alreadySentWa = Number(currentRem.WhatsApp_Sent) === 1;
-  } catch (_) {}
+  } catch (_) { }
 
   const setClauses = [`Call_Status = :newCallStatus`];
   const replacements = { UTD: Number(reminderUTD), newCallStatus };
@@ -729,7 +730,7 @@ const startCallStatusPoller = (compcode, reminderUTD, callId, cvUTD, searchMob) 
           }
         } catch (_) {
         } finally {
-          if (seqCheck) { try { await seqCheck.close(); } catch (_) {} }
+          if (seqCheck) { try { await seqCheck.close(); } catch (_) { } }
         }
       }
 
@@ -764,7 +765,7 @@ const startCallStatusPoller = (compcode, reminderUTD, callId, cvUTD, searchMob) 
       } catch (dbErr) {
         console.error(`[CALL-POLLER] ❌ Error updating DB for UTD ${reminderUTD}:`, dbErr?.message);
       } finally {
-        if (sequelize) { try { await sequelize.close(); } catch (_) {} }
+        if (sequelize) { try { await sequelize.close(); } catch (_) { } }
       }
 
     } catch (err) {
@@ -1261,7 +1262,7 @@ exports.getVehicleCallHistory = async (req, res) => {
         const hasForm = item.appointmentStatus === "SCHEDULED" || !!(item.appointmentDate);
         const formDate = item.appointmentDate ? (
           typeof item.appointmentDate === "string" ? item.appointmentDate.split("T")[0]
-          : (item.appointmentDate instanceof Date ? item.appointmentDate.toISOString().split("T")[0] : String(item.appointmentDate))
+            : (item.appointmentDate instanceof Date ? item.appointmentDate.toISOString().split("T")[0] : String(item.appointmentDate))
         ) : null;
 
         callHistories.push({
@@ -1426,11 +1427,56 @@ exports.GetCallRecordings = async (req, res) => {
       });
     }
 
-    // getCallRecording khud hi response handle karta hai (stream ya error json)
-    await getCallRecording(callId, res);
+    const cleanId = String(callId).trim();
+    const isNumericId = /^\d+$/.test(cleanId);
+
+    // 1. Bonvoice IDs are numeric (e.g. Lead ID 1022997 or Call ID 1172527)
+    if (isNumericId) {
+      try {
+        await getBonvoiceRecording(cleanId, res);
+        return;
+      } catch (bvErr) {
+        console.warn(`[GetCallRecordings] Bonvoice recording failed for numeric ID ${cleanId}:`, bvErr?.message);
+      }
+    }
+
+    // 2. Try Callmatic streaming
+    try {
+      const axios = require("axios");
+      const CALLMATIC_CONFIG = {
+        API_KEY: process.env.CALLMATIC_API_KEY || "857e790e-ad5f-4816-9530-0ae643988229",
+        BASE_URL: "https://api.callmatic.ai/v1",
+      };
+      const response = await axios.get(
+        `${CALLMATIC_CONFIG.BASE_URL}/recordings/${cleanId}`,
+        {
+          headers: { "api-key": CALLMATIC_CONFIG.API_KEY },
+          responseType: "stream",
+          timeout: 30000,
+        }
+      );
+
+      res.setHeader("Content-Type", response.headers["content-type"] || "audio/mpeg");
+      response.data.pipe(res);
+      return;
+    } catch (cmErr) {
+      console.log(`[GetCallRecordings] Callmatic streaming failed for ${cleanId}:`, cmErr?.response?.data || cmErr?.message);
+    }
+
+    // 3. Fallback to Bonvoice
+    if (!isNumericId && !res.headersSent) {
+      try {
+        await getBonvoiceRecording(cleanId, res);
+        return;
+      } catch (bvErr) {
+        console.warn(`[GetCallRecordings] Bonvoice fallback failed for ${cleanId}:`, bvErr?.message);
+      }
+    }
+
+    if (!res.headersSent) {
+      return res.status(404).json({ Status: false, Message: "Recording not found on Callmatic or Bonvoice" });
+    }
   } catch (err) {
-    // headers already sent ho chuke ho sakte hain (stream case me),
-    // isliye check zaroori hai
     if (!res.headersSent) {
       return res.status(500).json({ Status: false, Message: err?.message });
     }

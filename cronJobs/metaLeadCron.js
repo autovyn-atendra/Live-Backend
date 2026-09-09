@@ -3,6 +3,7 @@ const cron = require("node-cron");
 const axios = require("axios");
 const { dbname } = require("../utils/dbconfig");
 const { QueryTypes } = require("sequelize");
+const { createLeadAndCall } = require("../routes/bonvoice1");
 
 
 // ============================================================
@@ -150,7 +151,7 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
     let campResult = null;
     if (lead.Form_Id) {
       campResult = await sequelize.query(
-        `SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
+        `SELECT TOP 1 Campaign_Id, Campaign_Name, Campaign_Type, Bon_voice_Prompt_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
          FROM dbo.Meta_Callmatic_Campaign_Tbl
          WHERE Is_Active = 1 AND Meta_Form_Id = :formId
          ORDER BY UTD DESC`,
@@ -160,7 +161,7 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
 
     if (!campResult || campResult.length === 0) {
       campResult = await sequelize.query(
-        `SELECT TOP 1 Campaign_Id, Campaign_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
+        `SELECT TOP 1 Campaign_Id, Campaign_Name, Campaign_Type, Bon_voice_Prompt_Name, Meta_Form_Id, Meta_Form_Name, Sales_Executive_Number
          FROM dbo.Meta_Callmatic_Campaign_Tbl
          WHERE Is_Active = 1
          ORDER BY UTD DESC`,
@@ -179,6 +180,9 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
     const metaFormId = camp.Meta_Form_Id || lead.Form_Id || "";
     const metaFormName = camp.Meta_Form_Name || "";
     const campaignTransferNumber = camp.Sales_Executive_Number || camp.Transfer_Number || null;
+    const campaignType = String(camp.Campaign_Type || "CALLMATIC").toUpperCase();
+    const bonVoicePromptName = camp.Bon_voice_Prompt_Name || campaignId || null;
+    const isBonvoice = campaignType === "BONVOICE";
 
     // 3. Prepare Call Variables
     const companyName = lead.Company_Name || "AUTOVYN";
@@ -192,13 +196,32 @@ async function triggerInstantMetaLeadCall({ metaLeadUtd, compcode, callType = "A
       transferNumber: transferNumber,
     };
 
-    // 4. Execute Single AI Call
-    const callResult = await triggerSingleCall(formattedPhone, variables, campaignId);
-    const callId = callResult?.callId || callResult?.id || callResult?.data?.callId || null;
+    // 4. Execute Single AI Call (Bonvoice or Callmatic)
+    let callResult;
+    let callId = null;
 
-    console.log(`[META-INSTANT-CALL] ✅ AI Call Executed | Lead UTD: #${metaLeadUtd} | Phone: ${formattedPhone} | Call ID: ${callId}`);
+    if (isBonvoice) {
+      console.log(`[META-INSTANT-CALL] 📞 Routing call via BONVOICE (Campaign Type: BONVOICE, Lead #${metaLeadUtd})`);
+      const bonVoicePayload = {
+        name: lead.Full_Name || calleeName,
+        phone: formattedPhone,
+        email: lead.Email || null,
+        company: companyName,
+        program: campaignName || campaignId,
+        column1: campaignTransferNumber || null,
+        promptName: bonVoicePromptName,
+      };
+      callResult = await createLeadAndCall(bonVoicePayload);
+      callId = callResult?.leadId || callResult?.callId || callResult?.id || callResult?.data?.leadId || callResult?.data?.callId || null;
+    } else {
+      console.log(`[META-INSTANT-CALL] 📞 Routing call via CALLMATIC (Campaign Type: CALLMATIC, Lead #${metaLeadUtd})`);
+      callResult = await triggerSingleCall(formattedPhone, variables, campaignId);
+      callId = callResult?.callId || callResult?.id || callResult?.data?.callId || null;
+    }
 
-    if (callId) {
+    console.log(`[META-INSTANT-CALL] ✅ AI Call Executed (${isBonvoice ? "BONVOICE" : "CALLMATIC"}) | Lead UTD: #${metaLeadUtd} | Phone: ${formattedPhone} | Call ID: ${callId}`);
+
+    if (!isBonvoice && callId) {
       try {
         const { startMetaCallStatusPoller } = require("../routes/metaWebhookRoutes");
         if (typeof startMetaCallStatusPoller === "function") {
@@ -491,7 +514,7 @@ async function runMetaLeadAutoCallScheduler() {
 // ============================================================
 async function processMetaLeadWebhookUpdates() {
   let sequelize;
-  const compCode = String(process.env.META_COMP_CODE ).trim();
+  const compCode = String(process.env.META_COMP_CODE).trim();
 
   try {
     sequelize = await dbname(
