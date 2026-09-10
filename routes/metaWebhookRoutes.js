@@ -1659,6 +1659,7 @@ exports.getMetaLeads = async function (req, res) {
         Source,
         status,
         ISNULL(Temperature, 'Warm') AS Temperature,
+        Demo_CC_Emails,
         Created_By,
         Created_At
       FROM Meta_Lead_Tbl
@@ -1964,7 +1965,7 @@ exports.getActivities = async function (req, res) {
         `SELECT TOP 1 
            UTD, Meta_Lead_Id, Page_Id, Form_Id, Ad_Id, Ad_Group_Id, Full_Name, Phone_Number,
            Email, City, Company_Name, Meta_Created_At, Webhook_Created_At, All_Fields,
-           Raw_Meta_Response, Raw_Webhook_Value, Source, status, ISNULL(Temperature, 'Warm') AS Temperature, Created_By, Created_At
+           Raw_Meta_Response, Raw_Webhook_Value, Source, status, ISNULL(Temperature, 'Warm') AS Temperature, Demo_CC_Emails, Created_By, Created_At
          FROM Meta_Lead_Tbl
          WHERE UTD = :leadUtd`,
         { replacements: { leadUtd }, type: QueryTypes.SELECT }
@@ -3610,6 +3611,24 @@ const checkCampaignColumns = async (sequelize) => {
         await sequelize.query(`ALTER TABLE dbo.Meta_Callmatic_Campaign_Tbl ADD Bon_voice_Prompt_Name NVARCHAR(255) NULL`);
       } catch (_) { }
     }
+    if (!names.has("demo_cc_emails")) {
+      try {
+        await sequelize.query(`ALTER TABLE dbo.Meta_Callmatic_Campaign_Tbl ADD Demo_CC_Emails NVARCHAR(1000) NULL`);
+      } catch (_) { }
+    }
+
+    // Also auto-ensure Demo_CC_Emails column exists on Meta_Lead_Tbl
+    try {
+      await sequelize.query(`
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.columns 
+          WHERE object_id = OBJECT_ID(N'Meta_Lead_Tbl') AND name = 'Demo_CC_Emails'
+        )
+        BEGIN
+          ALTER TABLE Meta_Lead_Tbl ADD Demo_CC_Emails NVARCHAR(1000) NULL;
+        END
+      `);
+    } catch (_) { }
   } catch (_) { }
 };
 
@@ -4062,6 +4081,7 @@ exports.getCampaigns = async function (req, res) {
         Document_URL,
         Video_URL,
         Message_Text,
+        Demo_CC_Emails,
         Is_Active,
         Remark,
         Created_By,
@@ -6583,20 +6603,36 @@ exports.scheduleTeamsDemo = async function (req, res) {
     }
 
     let campaignCcEmails = [];
-    try {
-      const campRows = await sequelize.query(
-        `SELECT TOP 1 Demo_CC_Emails FROM Meta_Callmatic_Campaign_Tbl WHERE Is_Active = 1 ORDER BY UTD DESC`,
-        { type: QueryTypes.SELECT }
-      );
-      if (campRows && campRows[0]?.Demo_CC_Emails) {
-        campaignCcEmails = String(campRows[0].Demo_CC_Emails)
-          .split(/[,;]/)
-          .map((e) => e.trim())
+    if (req.body?.demoCcEmails) {
+      if (Array.isArray(req.body.demoCcEmails)) {
+        campaignCcEmails = req.body.demoCcEmails
+          .map((e) => String(e).trim())
           .filter((e) => e && e.includes("@"));
-        console.log("[MS-TEAMS] Found Demo_CC_Emails from Meta_Callmatic_Campaign_Tbl:", campaignCcEmails);
+      } else if (typeof req.body.demoCcEmails === "string" && req.body.demoCcEmails.trim()) {
+        campaignCcEmails = req.body.demoCcEmails
+          .split(/[,;]/)
+          .map((e) => String(e).trim())
+          .filter((e) => e && e.includes("@"));
       }
-    } catch (campErr) {
-      console.warn("[MS-TEAMS] Demo_CC_Emails lookup warning:", campErr?.message);
+    }
+
+    // Fallback: If no CC emails sent from client, read from Meta_Callmatic_Campaign_Tbl
+    if (campaignCcEmails.length === 0) {
+      try {
+        const campRows = await sequelize.query(
+          `SELECT TOP 1 Demo_CC_Emails FROM Meta_Callmatic_Campaign_Tbl WHERE Is_Active = 1 ORDER BY UTD DESC`,
+          { type: QueryTypes.SELECT }
+        );
+        if (campRows && campRows[0]?.Demo_CC_Emails) {
+          campaignCcEmails = String(campRows[0].Demo_CC_Emails)
+            .split(/[,;]/)
+            .map((e) => e.trim())
+            .filter((e) => e && e.includes("@"));
+          console.log("[MS-TEAMS] Found Demo_CC_Emails from Meta_Callmatic_Campaign_Tbl:", campaignCcEmails);
+        }
+      } catch (campErr) {
+        console.warn("[MS-TEAMS] Demo_CC_Emails lookup warning:", campErr?.message);
+      }
     }
 
     // ── STEP 4: ACQUIRE MICROSOFT GRAPH OAUTH TOKEN ──
@@ -6742,13 +6778,43 @@ exports.scheduleTeamsDemo = async function (req, res) {
     console.log(`[MS-TEAMS] ✅ Teams Meeting Created successfully! Event ID: ${eventId} | Join URL: ${teamsJoinUrl}`);
 
     // ── STEP 7: DATABASE TRANSACTION & STAGE UPDATE ──
-    // 1. Update Lead Status to "Demo Scheduled" (Status Code 4)
+    // 1. Update Lead Status to "Demo Scheduled" (Status Code 4) & Store Demo_CC_Emails
+    const finalLeadCcStr = campaignCcEmails.join(", ");
     await sequelize.query(
       `UPDATE Meta_Lead_Tbl
-       SET status = 4, Updated_At = GETDATE()
+       SET status = 4, Demo_CC_Emails = :demoCcEmails, Updated_At = GETDATE()
        WHERE UTD = :leadUtd`,
-      { replacements: { leadUtd }, type: QueryTypes.UPDATE }
+      { replacements: { leadUtd, demoCcEmails: finalLeadCcStr }, type: QueryTypes.UPDATE }
     );
+
+    // 1b. Sync / Update Demo_CC_Emails in Meta_Callmatic_Campaign_Tbl so new CC emails are retained for future demos
+    if (campaignCcEmails.length > 0 && req.body?.saveToCampaign !== false) {
+      try {
+        const campRows = await sequelize.query(
+          `SELECT TOP 1 UTD, Demo_CC_Emails FROM Meta_Callmatic_Campaign_Tbl WHERE Is_Active = 1 ORDER BY UTD DESC`,
+          { type: QueryTypes.SELECT }
+        );
+        if (campRows && campRows.length > 0) {
+          const campUtd = campRows[0].UTD;
+          const oldCampEmails = String(campRows[0].Demo_CC_Emails || "")
+            .split(/[,;]/)
+            .map((e) => e.trim().toLowerCase())
+            .filter((e) => e && e.includes("@"));
+
+          const mergedCampaignEmails = Array.from(
+            new Set([...oldCampEmails, ...campaignCcEmails.map((e) => e.toLowerCase())])
+          ).join(", ");
+
+          await sequelize.query(
+            `UPDATE Meta_Callmatic_Campaign_Tbl SET Demo_CC_Emails = :mergedEmails WHERE UTD = :campUtd`,
+            { replacements: { mergedEmails: mergedCampaignEmails, campUtd }, type: QueryTypes.UPDATE }
+          );
+          console.log("[MS-TEAMS] ✅ Synced Demo_CC_Emails to Meta_Callmatic_Campaign_Tbl:", mergedCampaignEmails);
+        }
+      } catch (campSyncErr) {
+        console.warn("[MS-TEAMS] Warning syncing Demo_CC_Emails to campaign table:", campSyncErr?.message);
+      }
+    }
 
     // 2. Insert Record in Meta_Lead_Followup_Tbl
     const followupPurpose = `Product Demo (Microsoft Teams)`;
