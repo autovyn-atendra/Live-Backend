@@ -52,6 +52,20 @@ router.post("/createManualLead", MetaWebhookController.createManualLead);
 router.post("/addLead", MetaWebhookController.createManualLead);
 
 // ============================================================
+// WEBSITE LEADS CRM API
+// ============================================================
+router.get("/getWebsiteLeads", MetaWebhookController.getWebsiteLeads);
+router.post("/getWebsiteLeads", MetaWebhookController.getWebsiteLeads);
+router.get("/websiteLeads", MetaWebhookController.getWebsiteLeads);
+router.post("/websiteLeads", MetaWebhookController.getWebsiteLeads);
+router.get("/getWebsiteLead/:id", MetaWebhookController.getWebsiteLeadById);
+router.get("/getWebsiteLead", MetaWebhookController.getWebsiteLeadById);
+router.post("/getWebsiteLead", MetaWebhookController.getWebsiteLeadById);
+router.post("/getWebsiteLeadById", MetaWebhookController.getWebsiteLeadById);
+router.get("/getWebsiteDashboardStats", MetaWebhookController.getWebsiteDashboardStats);
+router.post("/getWebsiteDashboardStats", MetaWebhookController.getWebsiteDashboardStats);
+
+// ============================================================
 // META CRM ACTIVITIES API
 // ============================================================
 router.post("/addActivity", MetaWebhookController.addActivity);

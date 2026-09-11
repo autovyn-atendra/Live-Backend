@@ -1957,42 +1957,138 @@ exports.getActivities = async function (req, res) {
       type: QueryTypes.SELECT,
     });
 
-    // Also fetch Lead details including All_Fields from Meta_Lead_Tbl
+    // Also fetch Lead details including All_Fields from Meta_Lead_Tbl or WebsiteLeads
     let parsedAllFields = {};
     let leadData = null;
+    const isExplicitWebsite =
+      req.query?.source === "WEBSITE" ||
+      req.headers?.["x-lead-source"] === "WEBSITE" ||
+      req.body?.source === "WEBSITE" ||
+      req.body?.isWebsiteLead === true ||
+      req.body?.isWebsiteLead === "true";
+
     try {
-      const leadResult = await sequelize.query(
-        `SELECT TOP 1 
-           UTD, Meta_Lead_Id, Page_Id, Form_Id, Ad_Id, Ad_Group_Id, Full_Name, Phone_Number,
-           Email, City, Company_Name, Meta_Created_At, Webhook_Created_At, All_Fields,
-           Raw_Meta_Response, Raw_Webhook_Value, Source, status, ISNULL(Temperature, 'Warm') AS Temperature, Demo_CC_Emails, Created_By, Created_At
-         FROM Meta_Lead_Tbl
-         WHERE UTD = :leadUtd`,
-        { replacements: { leadUtd }, type: QueryTypes.SELECT }
-      );
+      if (isExplicitWebsite) {
+        const webLeadRes = await sequelize.query(
+          `SELECT TOP 1 
+             Id, Id AS UTD, CAST(Id AS VARCHAR) AS Meta_Lead_Id, 'WEBSITE' AS Page_Id,
+             ProductName AS Form_Id, NULL AS Ad_Id, NULL AS Ad_Group_Id, Name, Name AS Full_Name,
+             MobileNumber, MobileNumber AS Phone_Number, Email, NULL AS City, CompanyName,
+             CompanyName AS Company_Name, Message, ProductName, ProductName AS Product_Name,
+             OTPVerified, OTPVerified AS OTP_Verified, IPAddress, OTPCode, OTPExpiry,
+             OTPVerifiedAt, CreatedAt, CreatedAt AS Created_At, CreatedAt AS Meta_Created_At,
+             CreatedAt AS Webhook_Created_At, UpdatedAt, UpdatedAt AS Updated_At,
+             ISNULL(status, 0) AS status, ISNULL(Temperature, 'Warm') AS Temperature,
+             Demo_CC_Emails, All_Fields, ISNULL(Source, 'WEBSITE') AS Source, 'WEBSITE' AS Created_By
+           FROM WebsiteLeads
+           WHERE Id = :leadUtd`,
+          { replacements: { leadUtd }, type: QueryTypes.SELECT }
+        );
 
-      if (leadResult && leadResult.length > 0) {
-        const l = leadResult[0];
-        parsedAllFields = l.All_Fields;
-        let parsedRawMeta = l.Raw_Meta_Response;
-        let parsedRawWebhook = l.Raw_Webhook_Value;
+        if (webLeadRes && webLeadRes.length > 0) {
+          const wl = webLeadRes[0];
+          let constructedAllFields = {};
+          if (wl.All_Fields) {
+            try {
+              constructedAllFields = typeof wl.All_Fields === "string" ? JSON.parse(wl.All_Fields) : wl.All_Fields;
+            } catch (_) { }
+          }
+          if (!constructedAllFields || Object.keys(constructedAllFields).length === 0) {
+            constructedAllFields = {
+              "Product Requested": wl.ProductName || "N/A",
+              "Customer Message": wl.Message || "N/A",
+              "OTP Verified": wl.OTPVerified ? "Yes (Verified)" : "No (Unverified)",
+              "IP Address": wl.IPAddress || "N/A",
+              "OTP Code": wl.OTPCode || "N/A",
+              "OTP Expiry": wl.OTPExpiry || "N/A",
+              "OTP Verified At": wl.OTPVerifiedAt || "N/A",
+            };
+          }
+          parsedAllFields = constructedAllFields;
+          leadData = {
+            ...wl,
+            All_Fields: constructedAllFields,
+          };
+        }
+      }
 
-        try {
-          if (typeof l.All_Fields === "string") parsedAllFields = JSON.parse(l.All_Fields);
-        } catch (_) { }
-        try {
-          if (typeof l.Raw_Meta_Response === "string") parsedRawMeta = JSON.parse(l.Raw_Meta_Response);
-        } catch (_) { }
-        try {
-          if (typeof l.Raw_Webhook_Value === "string") parsedRawWebhook = JSON.parse(l.Raw_Webhook_Value);
-        } catch (_) { }
+      if (!leadData) {
+        const leadResult = await sequelize.query(
+          `SELECT TOP 1 
+             UTD, Meta_Lead_Id, Page_Id, Form_Id, Ad_Id, Ad_Group_Id, Full_Name, Phone_Number,
+             Email, City, Company_Name, Meta_Created_At, Webhook_Created_At, All_Fields,
+             Raw_Meta_Response, Raw_Webhook_Value, Source, status, ISNULL(Temperature, 'Warm') AS Temperature, Demo_CC_Emails, Created_By, Created_At
+           FROM Meta_Lead_Tbl
+           WHERE UTD = :leadUtd`,
+          { replacements: { leadUtd }, type: QueryTypes.SELECT }
+        );
 
-        leadData = {
-          ...l,
-          All_Fields: parsedAllFields,
-          Raw_Meta_Response: parsedRawMeta,
-          Raw_Webhook_Value: parsedRawWebhook,
-        };
+        if (leadResult && leadResult.length > 0) {
+          const l = leadResult[0];
+          parsedAllFields = l.All_Fields;
+          let parsedRawMeta = l.Raw_Meta_Response;
+          let parsedRawWebhook = l.Raw_Webhook_Value;
+
+          try {
+            if (typeof l.All_Fields === "string") parsedAllFields = JSON.parse(l.All_Fields);
+          } catch (_) { }
+          try {
+            if (typeof l.Raw_Meta_Response === "string") parsedRawMeta = JSON.parse(l.Raw_Meta_Response);
+          } catch (_) { }
+          try {
+            if (typeof l.Raw_Webhook_Value === "string") parsedRawWebhook = JSON.parse(l.Raw_Webhook_Value);
+          } catch (_) { }
+
+          leadData = {
+            ...l,
+            All_Fields: parsedAllFields,
+            Raw_Meta_Response: parsedRawMeta,
+            Raw_Webhook_Value: parsedRawWebhook,
+          };
+        } else if (!isExplicitWebsite) {
+          // Fallback: Check WebsiteLeads table
+          const webLeadRes = await sequelize.query(
+            `SELECT TOP 1 
+               Id, Id AS UTD, CAST(Id AS VARCHAR) AS Meta_Lead_Id, 'WEBSITE' AS Page_Id,
+               ProductName AS Form_Id, NULL AS Ad_Id, NULL AS Ad_Group_Id, Name, Name AS Full_Name,
+               MobileNumber, MobileNumber AS Phone_Number, Email, NULL AS City, CompanyName,
+               CompanyName AS Company_Name, Message, ProductName, ProductName AS Product_Name,
+               OTPVerified, OTPVerified AS OTP_Verified, IPAddress, OTPCode, OTPExpiry,
+               OTPVerifiedAt, CreatedAt, CreatedAt AS Created_At, CreatedAt AS Meta_Created_At,
+               CreatedAt AS Webhook_Created_At, UpdatedAt, UpdatedAt AS Updated_At,
+               ISNULL(status, 0) AS status, ISNULL(Temperature, 'Warm') AS Temperature,
+               Demo_CC_Emails, All_Fields, ISNULL(Source, 'WEBSITE') AS Source, 'WEBSITE' AS Created_By
+             FROM WebsiteLeads
+             WHERE Id = :leadUtd`,
+            { replacements: { leadUtd }, type: QueryTypes.SELECT }
+          );
+
+          if (webLeadRes && webLeadRes.length > 0) {
+            const wl = webLeadRes[0];
+            let constructedAllFields = {};
+            if (wl.All_Fields) {
+              try {
+                constructedAllFields = typeof wl.All_Fields === "string" ? JSON.parse(wl.All_Fields) : wl.All_Fields;
+              } catch (_) { }
+            }
+            if (!constructedAllFields || Object.keys(constructedAllFields).length === 0) {
+              constructedAllFields = {
+                "Product Requested": wl.ProductName || "N/A",
+                "Customer Message": wl.Message || "N/A",
+                "OTP Verified": wl.OTPVerified ? "Yes (Verified)" : "No (Unverified)",
+                "IP Address": wl.IPAddress || "N/A",
+                "OTP Code": wl.OTPCode || "N/A",
+                "OTP Expiry": wl.OTPExpiry || "N/A",
+                "OTP Verified At": wl.OTPVerifiedAt || "N/A",
+              };
+            }
+            parsedAllFields = constructedAllFields;
+            leadData = {
+              ...wl,
+              All_Fields: constructedAllFields,
+            };
+          }
+        }
       }
     } catch (lErr) {
       console.warn("Failed to fetch lead details in getActivities:", lErr?.message);
@@ -3148,18 +3244,48 @@ exports.updateLeadStatus = async function (req, res) {
 
     transaction = await sequelize.transaction();
 
-    // Fetch current status
-    const currentLeadRes = await sequelize.query(
-      `SELECT status FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
-      { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
-    );
+    const isExplicitWebsite =
+      req.body?.isWebsiteLead === true ||
+      req.body?.isWebsiteLead === "true" ||
+      req.body?.source === "WEBSITE" ||
+      req.query?.source === "WEBSITE" ||
+      req.headers?.["x-lead-source"] === "WEBSITE";
+
+    let currentLeadRes = null;
+    let isWebsiteLead = false;
+
+    if (isExplicitWebsite) {
+      currentLeadRes = await sequelize.query(
+        `SELECT status FROM WebsiteLeads WHERE Id = :metaLeadUtd`,
+        { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+      );
+      if (currentLeadRes && currentLeadRes.length > 0) {
+        isWebsiteLead = true;
+      }
+    }
+
+    if (!isWebsiteLead) {
+      currentLeadRes = await sequelize.query(
+        `SELECT status FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
+        { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+      );
+      if (!currentLeadRes || currentLeadRes.length === 0) {
+        currentLeadRes = await sequelize.query(
+          `SELECT status FROM WebsiteLeads WHERE Id = :metaLeadUtd`,
+          { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+        );
+        if (currentLeadRes && currentLeadRes.length > 0) {
+          isWebsiteLead = true;
+        }
+      }
+    }
 
     if (!currentLeadRes || currentLeadRes.length === 0) {
       await transaction.rollback();
       transaction = null;
       return res.status(404).json({
         success: false,
-        message: "Meta Lead record not found.",
+        message: "Lead record not found.",
       });
     }
 
@@ -3167,11 +3293,18 @@ exports.updateLeadStatus = async function (req, res) {
     const oldStatusLabel = getStatusLabel(oldStatusVal);
     const newStatusLabel = getStatusLabel(newStatus);
 
-    // Update status
-    await sequelize.query(
-      `UPDATE Meta_Lead_Tbl SET status = :newStatus WHERE UTD = :metaLeadUtd`,
-      { replacements: { metaLeadUtd, newStatus }, type: QueryTypes.UPDATE, transaction }
-    );
+    // Update status in respective table
+    if (isWebsiteLead) {
+      await sequelize.query(
+        `UPDATE WebsiteLeads SET status = :newStatus WHERE Id = :metaLeadUtd`,
+        { replacements: { metaLeadUtd, newStatus }, type: QueryTypes.UPDATE, transaction }
+      );
+    } else {
+      await sequelize.query(
+        `UPDATE Meta_Lead_Tbl SET status = :newStatus WHERE UTD = :metaLeadUtd`,
+        { replacements: { metaLeadUtd, newStatus }, type: QueryTypes.UPDATE, transaction }
+      );
+    }
 
     // Activity record
     await sequelize.query(
@@ -3275,27 +3408,65 @@ exports.updateLeadTemperature = async function (req, res) {
     transaction = await sequelize.transaction();
 
     // Fetch current temperature
-    const currentLeadRes = await sequelize.query(
-      `SELECT ISNULL(Temperature, 'Warm') AS oldTemp FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
-      { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
-    );
+    const isExplicitWebsite =
+      req.body?.isWebsiteLead === true ||
+      req.body?.isWebsiteLead === "true" ||
+      req.body?.source === "WEBSITE" ||
+      req.query?.source === "WEBSITE" ||
+      req.headers?.["x-lead-source"] === "WEBSITE";
+
+    let currentLeadRes = null;
+    let isWebsiteLead = false;
+
+    if (isExplicitWebsite) {
+      currentLeadRes = await sequelize.query(
+        `SELECT ISNULL(Temperature, 'Warm') AS oldTemp FROM WebsiteLeads WHERE Id = :metaLeadUtd`,
+        { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+      );
+      if (currentLeadRes && currentLeadRes.length > 0) {
+        isWebsiteLead = true;
+      }
+    }
+
+    if (!isWebsiteLead) {
+      currentLeadRes = await sequelize.query(
+        `SELECT ISNULL(Temperature, 'Warm') AS oldTemp FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
+        { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+      );
+      if (!currentLeadRes || currentLeadRes.length === 0) {
+        currentLeadRes = await sequelize.query(
+          `SELECT ISNULL(Temperature, 'Warm') AS oldTemp FROM WebsiteLeads WHERE Id = :metaLeadUtd`,
+          { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+        );
+        if (currentLeadRes && currentLeadRes.length > 0) {
+          isWebsiteLead = true;
+        }
+      }
+    }
 
     if (!currentLeadRes || currentLeadRes.length === 0) {
       await transaction.rollback();
       transaction = null;
       return res.status(404).json({
         success: false,
-        message: "Meta Lead record not found.",
+        message: "Lead record not found.",
       });
     }
 
     const oldTemp = currentLeadRes[0].oldTemp || "Warm";
 
-    // Update Temperature in Meta_Lead_Tbl
-    await sequelize.query(
-      `UPDATE Meta_Lead_Tbl SET Temperature = :temperature WHERE UTD = :metaLeadUtd`,
-      { replacements: { metaLeadUtd, temperature }, type: QueryTypes.UPDATE, transaction }
-    );
+    // Update Temperature in respective table
+    if (isWebsiteLead) {
+      await sequelize.query(
+        `UPDATE WebsiteLeads SET Temperature = :temperature WHERE Id = :metaLeadUtd`,
+        { replacements: { metaLeadUtd, temperature }, type: QueryTypes.UPDATE, transaction }
+      );
+    } else {
+      await sequelize.query(
+        `UPDATE Meta_Lead_Tbl SET Temperature = :temperature WHERE UTD = :metaLeadUtd`,
+        { replacements: { metaLeadUtd, temperature }, type: QueryTypes.UPDATE, transaction }
+      );
+    }
 
     // Record Activity in Meta_Lead_Activity_Tbl
     await sequelize.query(
@@ -3402,39 +3573,75 @@ exports.updateLeadDetails = async function (req, res) {
 
     transaction = await sequelize.transaction();
 
-    // Check if lead exists
-    const currentLeadRes = await sequelize.query(
-      `SELECT * FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
-      { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
-    );
+    // Check if lead exists in Meta_Lead_Tbl or WebsiteLeads
+    const isExplicitWebsite =
+      req.body?.isWebsiteLead === true ||
+      req.body?.isWebsiteLead === "true" ||
+      req.body?.source === "WEBSITE" ||
+      req.query?.source === "WEBSITE" ||
+      req.headers?.["x-lead-source"] === "WEBSITE";
+
+    let currentLeadRes = null;
+    let isWebsiteLead = false;
+
+    if (isExplicitWebsite) {
+      currentLeadRes = await sequelize.query(
+        `SELECT * FROM WebsiteLeads WHERE Id = :metaLeadUtd`,
+        { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+      );
+      if (currentLeadRes && currentLeadRes.length > 0) {
+        isWebsiteLead = true;
+      }
+    }
+
+    if (!isWebsiteLead) {
+      currentLeadRes = await sequelize.query(
+        `SELECT * FROM Meta_Lead_Tbl WHERE UTD = :metaLeadUtd`,
+        { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+      );
+      if (!currentLeadRes || currentLeadRes.length === 0) {
+        currentLeadRes = await sequelize.query(
+          `SELECT * FROM WebsiteLeads WHERE Id = :metaLeadUtd`,
+          { replacements: { metaLeadUtd }, type: QueryTypes.SELECT, transaction }
+        );
+        if (currentLeadRes && currentLeadRes.length > 0) {
+          isWebsiteLead = true;
+        }
+      }
+    }
 
     if (!currentLeadRes || currentLeadRes.length === 0) {
       await transaction.rollback();
       transaction = null;
       return res.status(404).json({
         success: false,
-        message: "Meta Lead record not found.",
+        message: "Lead record not found.",
       });
     }
 
     // Build update set
     const updateFields = [];
+    const webUpdateFields = [];
     const replacements = { metaLeadUtd, updatedBy };
 
     if (email !== undefined) {
       updateFields.push("Email = :email");
+      webUpdateFields.push("Email = :email");
       replacements.email = email;
     }
     if (allFields !== undefined) {
       updateFields.push("All_Fields = :allFields");
+      webUpdateFields.push("All_Fields = :allFields");
       replacements.allFields = allFields;
     }
     if (fullName !== undefined) {
       updateFields.push("Full_Name = :fullName");
+      webUpdateFields.push("Name = :fullName");
       replacements.fullName = fullName;
     }
     if (companyName !== undefined) {
       updateFields.push("Company_Name = :companyName");
+      webUpdateFields.push("CompanyName = :companyName");
       replacements.companyName = companyName;
     }
     if (city !== undefined) {
@@ -3443,14 +3650,24 @@ exports.updateLeadDetails = async function (req, res) {
     }
     if (phoneNumber !== undefined) {
       updateFields.push("Phone_Number = :phoneNumber");
+      webUpdateFields.push("MobileNumber = :phoneNumber");
       replacements.phoneNumber = phoneNumber;
     }
 
-    if (updateFields.length > 0) {
-      await sequelize.query(
-        `UPDATE Meta_Lead_Tbl SET ${updateFields.join(", ")} WHERE UTD = :metaLeadUtd`,
-        { replacements, type: QueryTypes.UPDATE, transaction }
-      );
+    if (isWebsiteLead) {
+      if (webUpdateFields.length > 0) {
+        await sequelize.query(
+          `UPDATE WebsiteLeads SET ${webUpdateFields.join(", ")} WHERE Id = :metaLeadUtd`,
+          { replacements, type: QueryTypes.UPDATE, transaction }
+        );
+      }
+    } else {
+      if (updateFields.length > 0) {
+        await sequelize.query(
+          `UPDATE Meta_Lead_Tbl SET ${updateFields.join(", ")} WHERE UTD = :metaLeadUtd`,
+          { replacements, type: QueryTypes.UPDATE, transaction }
+        );
+      }
     }
 
     // Insert Activity Log
@@ -5413,15 +5630,22 @@ const triggerLeadCall = async function (req, res) {
       FROM Meta_Lead_Tbl
       WHERE UTD = :metaLeadUtd
     `;
-    const leadResult = await sequelize.query(leadSql, {
+    let leadResult = await sequelize.query(leadSql, {
       replacements: { metaLeadUtd },
       type: QueryTypes.SELECT,
     });
 
     if (!leadResult || leadResult.length === 0) {
+      leadResult = await sequelize.query(
+        `SELECT TOP 1 Id AS UTD, CAST(Id AS VARCHAR) AS Meta_Lead_Id, Name AS Full_Name, MobileNumber AS Phone_Number, Email, ProductName AS Form_Id, 'WEBSITE' AS Page_Id, CompanyName AS Company_Name, ISNULL(status, 0) AS status FROM WebsiteLeads WHERE Id = :metaLeadUtd`,
+        { replacements: { metaLeadUtd }, type: QueryTypes.SELECT }
+      );
+    }
+
+    if (!leadResult || leadResult.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `Meta lead with UTD '${metaLeadUtd}' not found or inactive.`,
+        message: `Lead with UTD/ID '${metaLeadUtd}' not found.`,
       });
     }
 
@@ -6778,14 +7002,36 @@ exports.scheduleTeamsDemo = async function (req, res) {
     console.log(`[MS-TEAMS] ✅ Teams Meeting Created successfully! Event ID: ${eventId} | Join URL: ${teamsJoinUrl}`);
 
     // ── STEP 7: DATABASE TRANSACTION & STAGE UPDATE ──
-    // 1. Update Lead Status to "Demo Scheduled" (Status Code 4) & Store Demo_CC_Emails
+    // 1. Update Lead Status to "Demo Scheduled" (Status Code 4) & Store Demo_CC_Emails & Email
+    const isExplicitWebsite =
+      req.body?.isWebsiteLead === true ||
+      req.body?.isWebsiteLead === "true" ||
+      req.body?.source === "WEBSITE" ||
+      req.query?.source === "WEBSITE" ||
+      req.headers?.["x-lead-source"] === "WEBSITE";
+
     const finalLeadCcStr = campaignCcEmails.join(", ");
-    await sequelize.query(
-      `UPDATE Meta_Lead_Tbl
-       SET status = 4, Demo_CC_Emails = :demoCcEmails, Updated_At = GETDATE()
-       WHERE UTD = :leadUtd`,
-      { replacements: { leadUtd, demoCcEmails: finalLeadCcStr }, type: QueryTypes.UPDATE }
-    );
+
+    if (isExplicitWebsite) {
+      await sequelize.query(
+        `UPDATE WebsiteLeads
+         SET status = 4, 
+             Demo_CC_Emails = :demoCcEmails,
+             Email = CASE WHEN :customerEmail IS NOT NULL AND :customerEmail <> '' THEN :customerEmail ELSE Email END
+         WHERE Id = :leadUtd`,
+        { replacements: { leadUtd, demoCcEmails: finalLeadCcStr, customerEmail }, type: QueryTypes.UPDATE }
+      );
+    } else {
+      await sequelize.query(
+        `UPDATE Meta_Lead_Tbl
+         SET status = 4, 
+             Demo_CC_Emails = :demoCcEmails, 
+             Email = CASE WHEN :customerEmail IS NOT NULL AND :customerEmail <> '' THEN :customerEmail ELSE Email END,
+             Updated_At = GETDATE()
+         WHERE UTD = :leadUtd`,
+        { replacements: { leadUtd, demoCcEmails: finalLeadCcStr, customerEmail }, type: QueryTypes.UPDATE }
+      );
+    }
 
     // 1b. Sync / Update Demo_CC_Emails in Meta_Callmatic_Campaign_Tbl so new CC emails are retained for future demos
     if (campaignCcEmails.length > 0 && req.body?.saveToCampaign !== false) {
@@ -7058,3 +7304,529 @@ exports.sendWhatsAppTextTemplate = sendWhatsAppTextTemplate;
 exports.autoSyncLeadCalls = autoSyncLeadCalls;
 exports.fetchUnifiedCallStatus = fetchUnifiedCallStatus;
 exports.syncAiCallSummaryAndFollowup = syncAiCallSummaryAndFollowup;
+
+// ============================================================
+// GET WEBSITE LEADS (WITH PAGINATION, SEARCH, AND FILTERS)
+// GET /meta/getWebsiteLeads
+// POST /meta/getWebsiteLeads
+// ============================================================
+exports.getWebsiteLeads = async function (req, res) {
+  let sequelize = null;
+  try {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Company code (compcode) is required.",
+      });
+    }
+
+    sequelize = await dbname(req, compCode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
+
+    // Ensure essential CRM columns exist on WebsiteLeads table
+    try {
+      await sequelize.query(`
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'WebsiteLeads') AND name = 'status')
+        BEGIN
+          ALTER TABLE WebsiteLeads ADD status INT DEFAULT 0;
+        END
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'WebsiteLeads') AND name = 'Temperature')
+        BEGIN
+          ALTER TABLE WebsiteLeads ADD Temperature VARCHAR(20) DEFAULT 'Warm';
+        END
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'WebsiteLeads') AND name = 'Email')
+        BEGIN
+          ALTER TABLE WebsiteLeads ADD Email VARCHAR(255);
+        END
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'WebsiteLeads') AND name = 'Demo_CC_Emails')
+        BEGIN
+          ALTER TABLE WebsiteLeads ADD Demo_CC_Emails VARCHAR(MAX);
+        END
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'WebsiteLeads') AND name = 'All_Fields')
+        BEGIN
+          ALTER TABLE WebsiteLeads ADD All_Fields VARCHAR(MAX);
+        END
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'WebsiteLeads') AND name = 'Source')
+        BEGIN
+          ALTER TABLE WebsiteLeads ADD Source VARCHAR(50) DEFAULT 'WEBSITE';
+        END
+      `);
+    } catch (_) {}
+
+    const body = req.body || {};
+    const query = req.query || {};
+
+    const page = Math.max(1, parseInt(body.page || query.page || 1, 10));
+    const limit = Math.max(1, Math.min(500, parseInt(body.limit || body.pageSize || query.limit || query.pageSize || 10, 10)));
+    const offset = (page - 1) * limit;
+
+    const search = String(body.search || body.searchQuery || query.search || query.searchQuery || "").trim();
+    const status = body.status !== undefined && body.status !== null && body.status !== ""
+      ? body.status
+      : (query.status !== undefined && query.status !== null && query.status !== "" ? query.status : undefined);
+
+    const fromDate = String(body.fromDate || body.startDate || query.fromDate || query.startDate || "").trim();
+    const toDate = String(body.toDate || body.endDate || query.toDate || query.endDate || "").trim();
+    const productName = String(body.productName || body.product || query.productName || query.product || "").trim();
+    const otpVerified = body.otpVerified !== undefined && body.otpVerified !== null && body.otpVerified !== ""
+      ? String(body.otpVerified).toLowerCase()
+      : (query.otpVerified !== undefined && query.otpVerified !== null && query.otpVerified !== "" ? String(query.otpVerified).toLowerCase() : undefined);
+
+    const leadId = Number(body.leadId || body.id || body.leadUtd || body.utd || query.leadId || query.id || query.leadUtd || query.utd || 0);
+
+    const allowedSortFields = ["Id", "CreatedAt", "UpdatedAt", "Name", "MobileNumber", "CompanyName", "ProductName", "status", "OTPVerified"];
+    let sortBy = String(body.sortBy || query.sortBy || "Id").trim();
+    if (!allowedSortFields.includes(sortBy)) {
+      sortBy = "Id";
+    }
+
+    let sortOrder = String(body.sortOrder || query.sortOrder || "DESC").trim().toUpperCase();
+    if (sortOrder !== "ASC" && sortOrder !== "DESC") {
+      sortOrder = "DESC";
+    }
+
+    const whereConditions = ["1=1"];
+    const replacements = {
+      limit,
+      offset,
+    };
+
+    if (search) {
+      whereConditions.push(
+        `(
+          Name LIKE :search OR
+          MobileNumber LIKE :search OR
+          CompanyName LIKE :search OR
+          ProductName LIKE :search OR
+          Message LIKE :search OR
+          IPAddress LIKE :search
+        )`
+      );
+      replacements.search = `%${search}%`;
+    }
+
+    if (status !== undefined) {
+      whereConditions.push("ISNULL(status, 0) = :status");
+      replacements.status = Number(status);
+    }
+
+    if (productName) {
+      whereConditions.push("ProductName LIKE :productName");
+      replacements.productName = `%${productName}%`;
+    }
+
+    if (otpVerified !== undefined) {
+      if (otpVerified === "true" || otpVerified === "1" || otpVerified === "yes") {
+        whereConditions.push("(OTPVerified = 1 OR OTPVerified = 'TRUE' OR OTPVerified = 'true')");
+      } else if (otpVerified === "false" || otpVerified === "0" || otpVerified === "no") {
+        whereConditions.push("(OTPVerified = 0 OR OTPVerified = 'FALSE' OR OTPVerified = 'false' OR OTPVerified IS NULL)");
+      }
+    }
+
+    if (fromDate) {
+      whereConditions.push("CAST(CreatedAt AS DATE) >= :fromDate");
+      replacements.fromDate = fromDate;
+    }
+
+    if (toDate) {
+      whereConditions.push("CAST(CreatedAt AS DATE) <= :toDate");
+      replacements.toDate = toDate;
+    }
+
+    if (leadId && !isNaN(leadId) && leadId > 0) {
+      whereConditions.push("Id = :leadId");
+      replacements.leadId = leadId;
+    }
+
+    const whereClause = whereConditions.join(" AND ");
+
+    // Count Total
+    const countSql = `SELECT COUNT(*) AS totalRecords FROM WebsiteLeads WHERE ${whereClause}`;
+    const countRes = await sequelize.query(countSql, {
+      replacements,
+      type: QueryTypes.SELECT,
+    });
+    const totalRecords = countRes?.[0]?.totalRecords || 0;
+    const totalPages = Math.ceil(totalRecords / limit) || 1;
+
+    // Fetch Rows
+    const selectSql = `
+      SELECT 
+        Id,
+        Id AS UTD,
+        CAST(Id AS VARCHAR) AS Meta_Lead_Id,
+        'WEBSITE' AS Page_Id,
+        ProductName AS Form_Id,
+        NULL AS Ad_Id,
+        NULL AS Ad_Group_Id,
+        Name,
+        Name AS Full_Name,
+        MobileNumber,
+        MobileNumber AS Phone_Number,
+        Email,
+        NULL AS City,
+        CompanyName,
+        CompanyName AS Company_Name,
+        Message,
+        ProductName,
+        ProductName AS Product_Name,
+        OTPVerified,
+        OTPVerified AS OTP_Verified,
+        IPAddress,
+        OTPCode,
+        OTPExpiry,
+        OTPVerifiedAt,
+        CreatedAt,
+        CreatedAt AS Created_At,
+        CreatedAt AS Meta_Created_At,
+        CreatedAt AS Webhook_Created_At,
+        UpdatedAt,
+        UpdatedAt AS Updated_At,
+        ISNULL(status, 0) AS status,
+        ISNULL(Temperature, 'Warm') AS Temperature,
+        Demo_CC_Emails,
+        All_Fields,
+        ISNULL(Source, 'WEBSITE') AS Source,
+        'WEBSITE' AS Created_By
+      FROM WebsiteLeads
+      WHERE ${whereClause}
+      ORDER BY ${sortBy} ${sortOrder}
+      OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY
+    `;
+
+    const rawRows = await sequelize.query(selectSql, {
+      replacements,
+      type: QueryTypes.SELECT,
+    });
+
+    const rows = rawRows.map((r) => {
+      let allFieldsObj = null;
+      if (r.All_Fields) {
+        try {
+          allFieldsObj = typeof r.All_Fields === "string" ? JSON.parse(r.All_Fields) : r.All_Fields;
+        } catch (_) {}
+      }
+      return {
+        ...r,
+        All_Fields: allFieldsObj,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: rows,
+      pagination: {
+        currentPage: page,
+        pageSize: limit,
+        totalPages,
+        totalRecords,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("Get Website Leads Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch Website leads",
+      error: error.message,
+    });
+  } finally {
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (_) {}
+    }
+  }
+};
+
+// ============================================================
+// GET WEBSITE LEAD BY ID (SINGLE LEAD + ACTIVITIES)
+// GET /meta/getWebsiteLead/:id
+// POST /meta/getWebsiteLead
+// ============================================================
+exports.getWebsiteLeadById = async function (req, res) {
+  let sequelize = null;
+  try {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Company code (compcode) is required.",
+      });
+    }
+
+    sequelize = await dbname(req, compCode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
+
+    const leadId = Number(req.params.id || req.query.id || req.query.leadId || req.body?.id || req.body?.leadId || req.body?.leadUtd);
+    if (!leadId || isNaN(leadId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid Lead ID is required.",
+      });
+    }
+
+    const selectSql = `
+      SELECT TOP 1
+        Id,
+        Id AS UTD,
+        CAST(Id AS VARCHAR) AS Meta_Lead_Id,
+        'WEBSITE' AS Page_Id,
+        ProductName AS Form_Id,
+        NULL AS Ad_Id,
+        NULL AS Ad_Group_Id,
+        Name,
+        Name AS Full_Name,
+        MobileNumber,
+        MobileNumber AS Phone_Number,
+        Email,
+        NULL AS City,
+        CompanyName,
+        CompanyName AS Company_Name,
+        Message,
+        ProductName,
+        ProductName AS Product_Name,
+        OTPVerified,
+        OTPVerified AS OTP_Verified,
+        IPAddress,
+        OTPCode,
+        OTPExpiry,
+        OTPVerifiedAt,
+        CreatedAt,
+        CreatedAt AS Created_At,
+        CreatedAt AS Meta_Created_At,
+        CreatedAt AS Webhook_Created_At,
+        UpdatedAt,
+        UpdatedAt AS Updated_At,
+        ISNULL(status, 0) AS status,
+        ISNULL(Temperature, 'Warm') AS Temperature,
+        Demo_CC_Emails,
+        All_Fields,
+        ISNULL(Source, 'WEBSITE') AS Source,
+        'WEBSITE' AS Created_By
+      FROM WebsiteLeads
+      WHERE Id = :leadId
+    `;
+
+    const rawRows = await sequelize.query(selectSql, {
+      replacements: { leadId },
+      type: QueryTypes.SELECT,
+    });
+
+    if (!rawRows || rawRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `Website lead with ID ${leadId} not found.`,
+      });
+    }
+
+    const lead = rawRows[0];
+    let allFieldsObj = null;
+    if (lead.All_Fields) {
+      try {
+        allFieldsObj = typeof lead.All_Fields === "string" ? JSON.parse(lead.All_Fields) : lead.All_Fields;
+      } catch (_) {}
+    }
+    lead.All_Fields = allFieldsObj;
+
+    // Fetch activities
+    const activitiesSql = `
+      SELECT 
+        UTD,
+        Meta_Lead_UTD,
+        Activity_Type,
+        Activity_Status,
+        Old_Value,
+        New_Value,
+        Remark,
+        Call_Result,
+        Call_Duration_Seconds,
+        Message_Id,
+        Message_Status,
+        Activity_Date,
+        Created_By,
+        Created_Name,
+        Created_At
+      FROM Meta_Lead_Activity_Tbl
+      WHERE Meta_Lead_UTD = :leadId
+      ORDER BY Activity_Date DESC, UTD DESC
+    `;
+    const activities = await sequelize.query(activitiesSql, {
+      replacements: { leadId },
+      type: QueryTypes.SELECT,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: lead,
+      lead,
+      activities: activities || [],
+      All_Fields: allFieldsObj,
+    });
+  } catch (error) {
+    console.error("Get Website Lead By ID Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch Website lead details",
+      error: error.message,
+    });
+  } finally {
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (_) {}
+    }
+  }
+};
+
+// ============================================================
+// GET WEBSITE DASHBOARD STATS
+// GET /meta/getWebsiteDashboardStats
+// POST /meta/getWebsiteDashboardStats
+// ============================================================
+exports.getWebsiteDashboardStats = async function (req, res) {
+  let sequelize = null;
+  try {
+    const compCode = String(
+      req.headers.compcode ||
+      req.body?.compcode ||
+      req.query?.compcode ||
+      process.env.META_COMP_CODE ||
+      ""
+    ).trim();
+
+    if (!compCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Company code (compcode) is required.",
+      });
+    }
+
+    sequelize = await dbname(req, compCode);
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: "Database connection could not be established.",
+      });
+    }
+
+    // 1. Website Leads Summary
+    const leadsSql = `
+      SELECT 
+        COUNT(*) AS totalLeads,
+        SUM(CASE WHEN CreatedAt >= DATEADD(day, -7, GETDATE()) THEN 1 ELSE 0 END) AS leadsThisWeek,
+        SUM(CASE WHEN CAST(CreatedAt AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS leadsToday,
+        SUM(CASE WHEN OTPVerified = 1 OR OTPVerified = 'TRUE' OR OTPVerified = 'true' THEN 1 ELSE 0 END) AS totalOtpVerified,
+        SUM(CASE WHEN (OTPVerified = 1 OR OTPVerified = 'TRUE' OR OTPVerified = 'true') AND CAST(CreatedAt AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS otpVerifiedToday,
+        SUM(CASE WHEN ISNULL(status, 0) = 5 THEN 1 ELSE 0 END) AS wonLeads,
+        SUM(CASE WHEN ISNULL(status, 0) = 2 THEN 1 ELSE 0 END) AS contactedLeads
+      FROM dbo.WebsiteLeads
+    `;
+    const leadsRes = await sequelize.query(leadsSql, { type: QueryTypes.SELECT });
+    const leadStats = leadsRes?.[0] || {};
+
+    // 2. Follow-ups Summary for Website Leads
+    const followupsSql = `
+      SELECT 
+        SUM(CASE WHEN f.Followup_Status = 'PENDING' AND f.Followup_Date = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS todayFollowups,
+        SUM(CASE WHEN f.Followup_Status = 'PENDING' AND (
+          CAST(f.Followup_Date AS DATETIME) + ISNULL(CAST(f.Followup_Time AS DATETIME), 0) < GETDATE()
+        ) THEN 1 ELSE 0 END) AS overdueFollowups,
+        SUM(CASE WHEN f.Followup_Status = 'PENDING' AND f.Followup_Date > CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS upcomingFollowups,
+        SUM(CASE WHEN f.Followup_Status = 'COMPLETED' AND CAST(f.Updated_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS completedTodayFollowups,
+        SUM(CASE WHEN f.Followup_Type IN ('DEMO', 'ONLINE_DEMO', 'OFFLINE_DEMO') OR f.Purpose LIKE '%Demo%' OR f.Purpose LIKE '%demo%' THEN 1 ELSE 0 END) AS totalDemos,
+        SUM(CASE WHEN (f.Followup_Type IN ('DEMO', 'ONLINE_DEMO', 'OFFLINE_DEMO') OR f.Purpose LIKE '%Demo%' OR f.Purpose LIKE '%demo%') AND f.Followup_Date >= DATEADD(day, -7, GETDATE()) THEN 1 ELSE 0 END) AS demosThisWeek,
+        SUM(CASE WHEN (f.Followup_Type IN ('DEMO', 'ONLINE_DEMO', 'OFFLINE_DEMO') OR f.Purpose LIKE '%Demo%' OR f.Purpose LIKE '%demo%') AND f.Followup_Status = 'COMPLETED' AND f.Followup_Date >= DATEADD(day, -7, GETDATE()) THEN 1 ELSE 0 END) AS demosCompletedThisWeek
+      FROM dbo.Meta_Lead_Followup_Tbl f
+      INNER JOIN dbo.WebsiteLeads w ON f.Meta_Lead_UTD = w.Id
+    `;
+    let followupStats = {};
+    try {
+      const followupsRes = await sequelize.query(followupsSql, { type: QueryTypes.SELECT });
+      followupStats = followupsRes?.[0] || {};
+    } catch (_) {}
+
+    // 3. AI Calls Summary for Website Leads
+    const callsSql = `
+      SELECT 
+        COUNT(*) AS totalCalls,
+        SUM(CASE WHEN CAST(c.Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS callsToday,
+        COUNT(DISTINCT CASE WHEN CAST(c.Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN c.Meta_Lead_UTD ELSE NULL END) AS leadsCalledToday,
+        SUM(CASE WHEN c.Created_At >= DATEADD(day, -7, GETDATE()) THEN 1 ELSE 0 END) AS callsThisWeek
+      FROM dbo.Meta_Call_Log_Tbl c
+      INNER JOIN dbo.WebsiteLeads w ON c.Meta_Lead_UTD = w.Id
+    `;
+    let callStats = {};
+    try {
+      const callsRes = await sequelize.query(callsSql, { type: QueryTypes.SELECT });
+      callStats = callsRes?.[0] || {};
+    } catch (_) {}
+
+    const totalLeads = parseInt(leadStats.totalLeads || 0, 10);
+    const wonLeads = parseInt(leadStats.wonLeads || 0, 10);
+    const contactedLeads = parseInt(leadStats.contactedLeads || 0, 10);
+    const conversionRate = totalLeads > 0 ? (((wonLeads + Math.floor(contactedLeads * 0.15)) / totalLeads) * 100).toFixed(1) : "0.0";
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        totalLeads,
+        leadsThisWeek: parseInt(leadStats.leadsThisWeek || 0, 10),
+        leadsToday: parseInt(leadStats.leadsToday || 0, 10),
+        totalOtpVerified: parseInt(leadStats.totalOtpVerified || 0, 10),
+        otpVerifiedToday: parseInt(leadStats.otpVerifiedToday || 0, 10),
+        todayFollowups: parseInt(followupStats.todayFollowups || 0, 10),
+        overdueFollowups: parseInt(followupStats.overdueFollowups || 0, 10),
+        upcomingFollowups: parseInt(followupStats.upcomingFollowups || 0, 10),
+        completedTodayFollowups: parseInt(followupStats.completedTodayFollowups || 0, 10),
+        totalDemos: parseInt(followupStats.totalDemos || 0, 10),
+        demosThisWeek: parseInt(followupStats.demosThisWeek || 0, 10),
+        demosCompletedThisWeek: parseInt(followupStats.demosCompletedThisWeek || 0, 10),
+        conversionRate: `${conversionRate}%`,
+        totalCalls: parseInt(callStats.totalCalls || 0, 10),
+        callsToday: parseInt(callStats.callsToday || 0, 10),
+        leadsCalledToday: parseInt(callStats.leadsCalledToday || 0, 10),
+        callsThisWeek: parseInt(callStats.callsThisWeek || 0, 10),
+      },
+    });
+  } catch (error) {
+    console.error("Get Website Dashboard Stats Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch website dashboard stats",
+      error: error.message,
+    });
+  } finally {
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (_) {}
+    }
+  }
+};
