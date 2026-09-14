@@ -20,8 +20,8 @@ const faceData = require("./api/face_data")
 const metaWebhookapi = require("./api/metaWebhookapi");
 
 const { startServiceReminderCron } = require("./cronJobs/cronJobs");
-const { startMetaLeadCron } = require("./cronJobs/metaLeadCron");
 const aiRoutes = require("./api/aiRoutes");
+const aiImageApi = require("./api/AI_Image_API");
 
 
 
@@ -131,6 +131,7 @@ app.use("/excel",excelrouter);
 app.use("/employee",faceData);
 // app.use("/call",GetCallRecordings)
 app.use("/ai", aiRoutes);
+app.use("/ai/image", aiImageApi);
 
 
 

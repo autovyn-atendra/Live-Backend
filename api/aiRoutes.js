@@ -2,7 +2,10 @@ const express = require("express");
 const router = express.Router();
 const AI = require("../routes/aiservices");
 
-// ── Health ───────────────────────────────────────────────────────────────────
+// ============================================================
+// AI ENGINE HEALTH & STATUS API
+// GET /health, GET /status
+// ============================================================
 router.get(
   "/health",
   AI.asyncHandler(async (req, res) => {
@@ -16,7 +19,7 @@ router.get(
 
     return res.status(200).json({
       success: true,
-      message: "AI service is healthy",
+      message: "AutoVyn AI Query Intelligence Engine is healthy",
       data: {
         status: "UP",
         openaiConfigured: true,
@@ -26,8 +29,12 @@ router.get(
     });
   })
 );
+router.get("/status", (req, res) => res.json({ success: true, status: "UP", message: "AutoVyn AI is operational" }));
 
-// ── AI Query / Chat ─────────────────────────────────────────────────────────
+// ============================================================
+// PRIMARY AI QUERY & CHAT COPILOT API
+// POST /query, POST /ask, POST /chat
+// ============================================================
 router.post(
   "/query",
   AI.asyncHandler(async (req, res) => {
@@ -39,8 +46,19 @@ router.post(
     });
   })
 );
+router.post("/ask", AI.asyncHandler(async (req, res) => {
+  const result = await AI.askERPAssistant(req, req.body || {});
+  return res.status(200).json({ success: true, data: result });
+}));
+router.post("/chat", AI.asyncHandler(async (req, res) => {
+  const result = await AI.askERPAssistant(req, req.body || {});
+  return res.status(200).json({ success: true, data: result });
+}));
 
-// ── Conversations ────────────────────────────────────────────────────────────
+// ============================================================
+// CONVERSATIONS & SESSIONS API
+// GET /conversations, POST /conversations, DELETE /conversations/:id
+// ============================================================
 router.get(
   "/conversations",
   AI.asyncHandler(async (req, res) => {
@@ -52,6 +70,10 @@ router.get(
     });
   })
 );
+router.post("/conversations", AI.asyncHandler(async (req, res) => {
+  const data = await AI.listUserConversations({ req, limit: req.body?.limit });
+  return res.status(200).json({ success: true, data });
+}));
 
 router.get(
   "/conversations/:conversationId",
@@ -66,8 +88,56 @@ router.get(
     });
   })
 );
+router.delete("/conversations/:conversationId", AI.deleteConversation);
 
-// ── Knowledge Documents ──────────────────────────────────────────────────────
+// ============================================================
+// SCHEMA DISCOVERY & INTELLIGENCE SYNC API
+// POST /schema/sync, GET /schema/sync
+// ============================================================
+router.post("/schema/sync", AI.syncSchemaIntelligence);
+router.get("/schema/sync", AI.syncSchemaIntelligence);
+
+// ============================================================
+// SCHEMA CATALOG & RELATIONSHIPS API
+// GET /schema/tables, GET /schema/columns, GET /schema/relationships
+// ============================================================
+router.get("/schema/tables", AI.getSchemaTables);
+router.post("/schema/tables", AI.getSchemaTables);
+router.get("/schema/columns", AI.getSchemaColumns);
+router.post("/schema/columns", AI.getSchemaColumns);
+router.get("/schema/columns/:tableName", AI.getSchemaColumns);
+router.get("/schema/relationships", AI.getSchemaRelationships);
+router.post("/schema/relationships", AI.getSchemaRelationships);
+router.post("/schema/relationships/save", AI.saveSchemaRelationship);
+
+// ============================================================
+// BUSINESS SEMANTIC RULES & METRICS REGISTRY API
+// GET /business-rules, POST /business-rules, GET /metrics, POST /metrics
+// ============================================================
+router.get("/business-rules", AI.getBusinessRules);
+router.post("/business-rules", AI.getBusinessRules);
+router.post("/business-rules/save", AI.saveBusinessRule);
+
+router.get("/metrics", AI.getMetrics);
+router.post("/metrics", AI.getMetrics);
+router.post("/metrics/save", AI.saveMetric);
+
+router.get("/synonyms", AI.getSynonyms);
+router.post("/synonyms", AI.getSynonyms);
+router.post("/synonyms/save", AI.saveSynonym);
+
+// ============================================================
+// AI AUDIT TELEMETRY & FEEDBACK API
+// POST /feedback, GET /audit, POST /audit
+// ============================================================
+router.post("/feedback", AI.submitFeedback);
+router.get("/audit", AI.getAuditLogs);
+router.post("/audit", AI.getAuditLogs);
+
+// ============================================================
+// KNOWLEDGE DOCUMENTS MANAGEMENT API
+// POST /knowledge/documents/:id/process, GET /status, PATCH /deactivate
+// ============================================================
 router.post(
   "/knowledge/documents/:documentId/process",
   AI.asyncHandler(async (req, res) => {
@@ -115,7 +185,10 @@ router.patch(
   })
 );
 
-// ── Manual Knowledge Ingestion ───────────────────────────────────────────────
+// ============================================================
+// MANUAL KNOWLEDGE INGESTION API
+// POST /knowledge/manual
+// ============================================================
 router.post(
   "/knowledge/manual",
   AI.asyncHandler(async (req, res) => {

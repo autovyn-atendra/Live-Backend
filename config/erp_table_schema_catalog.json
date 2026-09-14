@@ -1,0 +1,2187 @@
+{
+  "catalog_version": "1.0.0",
+  "project": "AutoVyn ERP",
+  "database_type": "Microsoft SQL Server",
+  "description": "Comprehensive schema dictionary and business rules catalog for AutoVyn ERP core tables",
+  "tables": {
+    "Misc_Mst": {
+      "tableName": "Misc_Mst",
+      "displayName": "Universal Master Lookup Table",
+      "module": "MASTER",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Universal master lookup repository storing 70+ ERP master dropdown categories partitioned by Misc_Type.",
+      "typeColumn": "Misc_Type",
+      "codeColumn": "Misc_Code",
+      "nameColumn": "Misc_Name",
+      "misc_type_mapping": {
+        "11": "Department Master (Links with EMPLOYEEMASTER.DEPT, Expense.Dept)",
+        "17": "Enquiry Source Master (Walk-in, Digital, Referral, Social Media)",
+        "18": "Payment Mode Master (Cash, UPI, NEFT, Cheque, RTGS)",
+        "19": "Cancel Reason Master (Booking / order cancellation reasons)",
+        "31": "Product Group Master (Spares, accessories, lubes)",
+        "32": "Mechanic Master (Workshop technician allocation)",
+        "51": "Tyre Master",
+        "54": "Tyre Category Master",
+        "58": "Chapter Type Master (GST/HSN tariff codes)",
+        "59": "Bank Name Master",
+        "60": "Customer Segment Master",
+        "61": "Customer Category Master",
+        "71": "Godown Master (Spare parts & inventory stock warehouses)",
+        "72": "UOM Master (Units of Measurement)",
+        "73": "Tariff Class Master",
+        "85": "Branch Master (Links with EMPLOYEEMASTER.LOCATION, Godown_Mst.Branch_Code)",
+        "95": "Employee Designation (Links with EMPLOYEEMASTER.DESG)",
+        "404": "Cost Center Master (Accounting cost centres)",
+        "610": "Deduction Master",
+        "620": "Team Leader Master",
+        "627": "Channel Master (Arena, Nexa, Commercial, TrueValue)",
+        "637": "RTO Type",
+        "638": "Insurance Type",
+        "639": "Extended Warranty Type",
+        "641": "Vehicle Type",
+        "657": "Marital Status",
+        "660": "RTO Insurance Master",
+        "663": "Discount Master",
+        "666": "EMP Notice Period Master",
+        "676": "TaskManagement Module"
+      },
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique identity key"
+        },
+        "Misc_Type": {
+          "type": "int",
+          "nullable": false,
+          "description": "Master category identifier"
+        },
+        "Misc_Code": {
+          "type": "int",
+          "nullable": true,
+          "description": "Unique code used as foreign key in transaction tables"
+        },
+        "Misc_Name": {
+          "type": "nvarchar(75)",
+          "nullable": true,
+          "description": "Display name/title of the master entry"
+        },
+        "Misc_Abbr": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Short code or abbreviation"
+        },
+        "Loc_code": {
+          "type": "int",
+          "nullable": false,
+          "description": "Branch/Location code"
+        },
+        "Misc_Add1": {
+          "type": "nvarchar(70)",
+          "nullable": true,
+          "description": "Address line 1"
+        },
+        "Misc_Add2": {
+          "type": "nvarchar(70)",
+          "nullable": true,
+          "description": "Address line 2"
+        },
+        "Misc_Add3": {
+          "type": "nvarchar(70)",
+          "nullable": true,
+          "description": "Address line 3"
+        },
+        "Misc_Phon": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Landline phone"
+        },
+        "Misc_Mob": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Mobile contact"
+        },
+        "Misc_Desig": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Designation"
+        },
+        "Misc_HOD": {
+          "type": "int",
+          "nullable": true,
+          "description": "HOD Employee Code"
+        },
+        "Join_Date": {
+          "type": "smalldatetime",
+          "nullable": true,
+          "description": "Joining date"
+        },
+        "Birth_Date": {
+          "type": "smalldatetime",
+          "nullable": true,
+          "description": "Birth date"
+        },
+        "Exp_Date": {
+          "type": "smalldatetime",
+          "nullable": true,
+          "description": "Expiry date"
+        },
+        "Tally_Vch": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Tally voucher mapping"
+        },
+        "SPL_REM": {
+          "type": "nvarchar(300)",
+          "nullable": true,
+          "description": "Special remarks"
+        }
+      }
+    },
+    "Account_No_Api": {
+      "tableName": "Account_No_Api",
+      "displayName": "Bank Account Penny Drop Verification Log",
+      "module": "BANKING",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Real-time bank account and IFSC penny-drop verification logs for employee payroll, vendor payouts, and customer refunds.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique record ID"
+        },
+        "Ifsc": {
+          "type": "varchar(20)",
+          "nullable": false,
+          "description": "11-character bank IFSC code"
+        },
+        "account_number": {
+          "type": "varchar(30)",
+          "nullable": false,
+          "description": "Bank account number verified"
+        },
+        "code": {
+          "type": "int",
+          "nullable": false,
+          "description": "API status response code (200 = Success)"
+        },
+        "timestamp": {
+          "type": "bigint",
+          "nullable": false,
+          "description": "Epoch timestamp from banking API"
+        },
+        "message": {
+          "type": "varchar(255)",
+          "nullable": true,
+          "description": "Verification response message"
+        },
+        "account_exists": {
+          "type": "bit",
+          "nullable": true,
+          "description": "1 = Active & Verified, 0 = Invalid"
+        },
+        "name_at_bank": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Registered account holder name returned by bank"
+        },
+        "transaction_id": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Bank verification transaction ID"
+        },
+        "raw_response": {
+          "type": "nvarchar(MAX)",
+          "nullable": true,
+          "description": "Full raw JSON payload from bank gateway"
+        },
+        "Created_At": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Verification execution timestamp"
+        }
+      }
+    },
+    "Approval_Matrix": {
+      "tableName": "Approval_Matrix",
+      "displayName": "Multi-Level Workflow Approval Matrix",
+      "module": "HR_WORKFLOW",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Multi-tier approval hierarchy (Level 1, Level 2, Level 3) with primary and alternate approvers for attendance, leaves, and expenses.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "module_code": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Workflow module (attdence, leave, expense, purchase)"
+        },
+        "empcode": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Employee code being approved (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "approver1_A": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Level 1 Primary Approver Employee Code"
+        },
+        "approver1_B": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Level 1 Alternate Approver Employee Code"
+        },
+        "approver2_A": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Level 2 Primary Approver Employee Code"
+        },
+        "approver2_B": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Level 2 Alternate Approver Employee Code"
+        },
+        "approver3_A": {
+          "type": "varchar(25)",
+          "nullable": true,
+          "description": "Level 3 Primary Approver Employee Code"
+        },
+        "approver3_B": {
+          "type": "varchar(25)",
+          "nullable": true,
+          "description": "Level 3 Alternate Approver Employee Code"
+        },
+        "Branch": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Branch code linking to Misc_Mst (Misc_Type = 85)"
+        },
+        "ValidFrom": {
+          "type": "datetime2",
+          "nullable": false,
+          "description": "Effective start date"
+        },
+        "ValidTo": {
+          "type": "datetime2",
+          "nullable": false,
+          "description": "Expiry date (9999-12-31 for active)"
+        },
+        "Created_At": {
+          "type": "datetime",
+          "nullable": false,
+          "description": "Creation timestamp"
+        }
+      }
+    },
+    "Asset_Issue": {
+      "tableName": "Asset_Issue",
+      "displayName": "IT & Company Asset Allocation Register",
+      "module": "IT_ASSETS",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Manages IT and physical assets (Laptops, Desktops, Phones, Vehicles) assigned to employees with issue and return dates.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique record ID"
+        },
+        "Emp_Code": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Assigned employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "Aset_Code": {
+          "type": "nvarchar(250)",
+          "nullable": true,
+          "description": "Asset barcode/tag ID"
+        },
+        "Aset_Name": {
+          "type": "nvarchar(500)",
+          "nullable": true,
+          "description": "Device title/model name"
+        },
+        "Asset_category": {
+          "type": "varchar(200)",
+          "nullable": true,
+          "description": "Major category (IT, NONIT, ADMIN)"
+        },
+        "It_category": {
+          "type": "varchar(200)",
+          "nullable": true,
+          "description": "Subcategory (LAPTOP, DESKTOP, PHONE, MOUSE)"
+        },
+        "Asset_Serial_no": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Hardware physical serial number"
+        },
+        "Issue_Date": {
+          "type": "date",
+          "nullable": true,
+          "description": "Date asset was handed over to employee"
+        },
+        "Issue_Rem": {
+          "type": "nvarchar(150)",
+          "nullable": true,
+          "description": "Issue remarks"
+        },
+        "Revoke_Date": {
+          "type": "date",
+          "nullable": true,
+          "description": "Return date (NULL if currently held by employee)"
+        },
+        "Revoke_Cond": {
+          "type": "nvarchar(150)",
+          "nullable": true,
+          "description": "Condition upon return (OKAY, GOOD, DAMAGED)"
+        },
+        "Lost_Date": {
+          "type": "date",
+          "nullable": true,
+          "description": "Date reported lost/stolen"
+        },
+        "Emp_Loc": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Branch location name"
+        },
+        "Emp_Dept": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Department name"
+        }
+      }
+    },
+    "COMP_KEYDATA": {
+      "tableName": "COMP_KEYDATA",
+      "displayName": "Company Configuration & Feature Flags Matrix",
+      "module": "SYSTEM_CONFIG",
+      "primaryKey": [
+        "Comp_Code"
+      ],
+      "description": "Centralized company-level system configuration and module toggles (Sales, Service, HRMS, Accounts, WhatsApp, Approval limits).",
+      "columns": {
+        "Comp_Code": {
+          "type": "int",
+          "nullable": false,
+          "description": "Company code (links to Comp_Mst.Comp_Code)"
+        },
+        "M1": {
+          "type": "int",
+          "nullable": true,
+          "description": "Sales module toggle (1 = Enabled, 0 = Disabled)"
+        },
+        "M2": {
+          "type": "int",
+          "nullable": true,
+          "description": "Service module toggle"
+        },
+        "M3": {
+          "type": "int",
+          "nullable": true,
+          "description": "Spares module toggle"
+        },
+        "M4": {
+          "type": "int",
+          "nullable": true,
+          "description": "HRMS module toggle"
+        },
+        "M5": {
+          "type": "int",
+          "nullable": true,
+          "description": "Accounts module toggle"
+        },
+        "DUAL_APPRV": {
+          "type": "int",
+          "nullable": true,
+          "description": "Dual approval toggle"
+        },
+        "Attendance": {
+          "type": "varchar/int",
+          "nullable": true,
+          "description": "Attendance mobile punch toggle"
+        },
+        "Leave_App": {
+          "type": "varchar/int",
+          "nullable": true,
+          "description": "Leave application workflow toggle"
+        },
+        "Banking_Lim": {
+          "type": "int",
+          "nullable": true,
+          "description": "Maximum banking transaction approval limit"
+        },
+        "Discount": {
+          "type": "int",
+          "nullable": true,
+          "description": "Maximum vehicle discount limit cap"
+        },
+        "Whatsapp": {
+          "type": "int",
+          "nullable": true,
+          "description": "WhatsApp automated alerts toggle"
+        },
+        "PO_APRV": {
+          "type": "int",
+          "nullable": true,
+          "description": "Purchase order approval toggle"
+        }
+      }
+    },
+    "COMP_OFF_DTL": {
+      "tableName": "COMP_OFF_DTL",
+      "displayName": "Compensatory Off (Comp-Off) Earned & Availed Ledger",
+      "module": "HR_ATTENDANCE",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Tracks employee Compensatory Off credits earned by working on Weekly Offs/Holidays, approvals, and balance days.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "EMPCODE": {
+          "type": "nvarchar(20)",
+          "nullable": false,
+          "description": "Employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "DATE": {
+          "type": "datetime",
+          "nullable": false,
+          "description": "Extra duty worked date"
+        },
+        "CO_TYPE": {
+          "type": "nvarchar(20)",
+          "nullable": true,
+          "description": "1 = Full Day, 0.5 = Half Day"
+        },
+        "CO_VAL": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Total earned comp-off credit"
+        },
+        "CO_AVAIL": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Availed/used comp-off days"
+        },
+        "LAPS_VAL": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Expired/lapsed comp-off days"
+        },
+        "CO_BAL": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Remaining available balance (CO_VAL - CO_AVAIL - LAPS_VAL)"
+        },
+        "APPR_BY": {
+          "type": "nvarchar(20)",
+          "nullable": true,
+          "description": "Approver employee code"
+        },
+        "APPR_STAT": {
+          "type": "nvarchar(10)",
+          "nullable": true,
+          "description": "Approval status ('1' = Approved, '0' = Pending, 'R' = Rejected)"
+        },
+        "laps_date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Expiry date after which credit lapses"
+        }
+      }
+    },
+    "Comp_Mst": {
+      "tableName": "Comp_Mst",
+      "displayName": "Company Legal Profile & GSTIN Master",
+      "module": "COMPANY_MASTER",
+      "primaryKey": [
+        "Comp_Code"
+      ],
+      "description": "Legal company identity, registered office address, GSTIN, CIN, OEM Dealership code, and financial locking dates.",
+      "columns": {
+        "Comp_Code": {
+          "type": "tinyint",
+          "nullable": false,
+          "description": "Company code (1, 2)"
+        },
+        "Comp_Name": {
+          "type": "nvarchar(75)",
+          "nullable": true,
+          "description": "Registered company name"
+        },
+        "Comp_Add1": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Registered address"
+        },
+        "City": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Registered city"
+        },
+        "State": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Registered state"
+        },
+        "State_Code": {
+          "type": "int",
+          "nullable": true,
+          "description": "GST state code (08 for RJ, 07 for DL)"
+        },
+        "GSTIN": {
+          "type": "nvarchar(20)",
+          "nullable": true,
+          "description": "15-digit GST identification number"
+        },
+        "comp_cin": {
+          "type": "nvarchar(30)",
+          "nullable": true,
+          "description": "Corporate Identity Number (CIN)"
+        },
+        "Dlr_Code": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "OEM parent brand dealer code"
+        },
+        "Fin_SYear": {
+          "type": "smalldatetime",
+          "nullable": true,
+          "description": "Financial year start date"
+        },
+        "Fin_EYear": {
+          "type": "smalldatetime",
+          "nullable": true,
+          "description": "Financial year end date"
+        },
+        "Bank_Name": {
+          "type": "nvarchar(60)",
+          "nullable": true,
+          "description": "Company billing bank name"
+        },
+        "Bank_Ac": {
+          "type": "nvarchar(60)",
+          "nullable": true,
+          "description": "Company billing bank account"
+        },
+        "Bank_IFSC": {
+          "type": "nvarchar(25)",
+          "nullable": true,
+          "description": "Company bank IFSC code"
+        },
+        "Lock_Date": {
+          "type": "date",
+          "nullable": true,
+          "description": "Financial backdate entry lock cutoff date"
+        }
+      }
+    },
+    "EMPLOYEE_BALANCE": {
+      "tableName": "EMPLOYEE_BALANCE",
+      "displayName": "Employee Advance & Monthly Deductions Balance",
+      "module": "HR_PAYROLL",
+      "primaryKey": [
+        "EMPCODE",
+        "MNTH",
+        "YR",
+        "DEDUCTION_TYPE"
+      ],
+      "description": "Employee salary advances, company loan repayments, and scheduled monthly payroll deductions.",
+      "columns": {
+        "EMPCODE": {
+          "type": "nvarchar(50)",
+          "nullable": false,
+          "description": "Employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "LOCATION": {
+          "type": "int",
+          "nullable": true,
+          "description": "Branch code linking to Misc_Mst (Misc_Type = 85)"
+        },
+        "OPENING_BALANCE": {
+          "type": "int",
+          "nullable": true,
+          "description": "Total advance/loan opening balance"
+        },
+        "MNTH": {
+          "type": "int",
+          "nullable": true,
+          "description": "Salary month (1 to 12)"
+        },
+        "YR": {
+          "type": "int",
+          "nullable": true,
+          "description": "Salary year (e.g. 2026)"
+        },
+        "DEDUCTIONS": {
+          "type": "numeric(18,2)",
+          "nullable": true,
+          "description": "Monthly deduction installment amount"
+        },
+        "DEDUCTION_TYPE": {
+          "type": "int",
+          "nullable": true,
+          "description": "Deduction type (links to Misc_Mst Misc_Type = 610)"
+        }
+      }
+    },
+    "EMP_DOCS": {
+      "tableName": "EMP_DOCS",
+      "displayName": "Employee Documents & Misspunch Proofs",
+      "module": "HR_DOCUMENTS",
+      "primaryKey": [
+        "Utd"
+      ],
+      "description": "Stores employee KYC files, onboarding documents, and GPS camera photos submitted for Misspunch attendance regularization.",
+      "columns": {
+        "Utd": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique record ID"
+        },
+        "EMP_CODE": {
+          "type": "nvarchar(20)",
+          "nullable": true,
+          "description": "Employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "DOC_NAME": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "File name"
+        },
+        "DOC_PATH": {
+          "type": "nvarchar(300)",
+          "nullable": true,
+          "description": "Storage relative file path"
+        },
+        "columndoc_type": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Document category (Misspunch, Aadhar, PAN, Gatepass)"
+        },
+        "dateOffice": {
+          "type": "date",
+          "nullable": true,
+          "description": "Attendance date for misspunch"
+        },
+        "misspunch_inout": {
+          "type": "tinyint",
+          "nullable": true,
+          "description": "1 = IN Punch, 2 = OUT Punch"
+        },
+        "Created_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Upload timestamp"
+        }
+      }
+    },
+    "Emp_Ded": {
+      "tableName": "Emp_Ded",
+      "displayName": "Employee Monthly Deductions Register",
+      "module": "HR_PAYROLL",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Monthly itemized payroll deductions (TDS, Loan EMIs, Advance recovery, Fines) and salary component arrears.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "Emp_Id": {
+          "type": "nvarchar(15)",
+          "nullable": false,
+          "description": "Employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "Emp_Name": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Employee name"
+        },
+        "Mnth": {
+          "type": "int",
+          "nullable": true,
+          "description": "Payroll month (1 to 12)"
+        },
+        "Yr": {
+          "type": "int",
+          "nullable": true,
+          "description": "Payroll year (e.g. 2024)"
+        },
+        "Ded_Type": {
+          "type": "int",
+          "nullable": false,
+          "description": "Deduction type (links to Misc_Mst Misc_Type = 610)"
+        },
+        "Ded_Amt": {
+          "type": "money",
+          "nullable": true,
+          "description": "Deduction amount"
+        },
+        "Ded_Rem": {
+          "type": "nvarchar(200)",
+          "nullable": true,
+          "description": "Deduction remarks"
+        },
+        "Loc_Code": {
+          "type": "int",
+          "nullable": true,
+          "description": "Branch code linking to Misc_Mst (Misc_Type = 85)"
+        },
+        "Deleted_By": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Soft delete flag (Active if NULL)"
+        }
+      }
+    },
+    "Emp_Incentive": {
+      "tableName": "Emp_Incentive",
+      "displayName": "Sales & Service Incentive Register",
+      "module": "HR_PAYROLL",
+      "primaryKey": [
+        "Autoid"
+      ],
+      "description": "Vehicle sales commission, accessories incentives, service target bonuses, advance adjustments, and net disbursement.",
+      "columns": {
+        "Autoid": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "Emp_Code": {
+          "type": "nvarchar(25)",
+          "nullable": true,
+          "description": "Employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "Emp_Name": {
+          "type": "nvarchar(150)",
+          "nullable": false,
+          "description": "Employee name"
+        },
+        "Incentive_Mnth": {
+          "type": "int",
+          "nullable": true,
+          "description": "Target achievement month (1 to 12)"
+        },
+        "Paid_Mnth": {
+          "type": "int",
+          "nullable": true,
+          "description": "Payment disbursement month (1 to 12)"
+        },
+        "Incentive_Year": {
+          "type": "int",
+          "nullable": true,
+          "description": "Performance year"
+        },
+        "Incentive_Type": {
+          "type": "nvarchar(150)",
+          "nullable": true,
+          "description": "Incentive category (Car Sales, MGA, EW, Finance)"
+        },
+        "Gross_Incentive": {
+          "type": "nvarchar(150)",
+          "nullable": true,
+          "description": "Gross incentive earned"
+        },
+        "TDS": {
+          "type": "money",
+          "nullable": true,
+          "description": "TDS deducted"
+        },
+        "Net_Amt": {
+          "type": "nvarchar(150)",
+          "nullable": true,
+          "description": "Net payable amount"
+        },
+        "Paid_Unpaid": {
+          "type": "nvarchar(150)",
+          "nullable": true,
+          "description": "'Paid', 'Unpaid', 'Hold'"
+        },
+        "HR_Aprvl": {
+          "type": "int",
+          "nullable": true,
+          "description": "HR approval status (1 = Approved)"
+        },
+        "Acnt_Aprvl": {
+          "type": "int",
+          "nullable": true,
+          "description": "Accounts approval status (1 = Approved)"
+        },
+        "Loc_Code": {
+          "type": "int",
+          "nullable": true,
+          "description": "Branch code linking to Misc_Mst (Misc_Type = 85)"
+        }
+      }
+    },
+    "Emp_Slryrun": {
+      "tableName": "Emp_Slryrun",
+      "displayName": "Monthly Salary Run Batch Control",
+      "module": "HR_PAYROLL",
+      "primaryKey": [
+        "Utd"
+      ],
+      "description": "Logs monthly payroll computation execution batches, iteration cycles (Rerun), and HR admin audit timestamps.",
+      "columns": {
+        "Utd": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "Emp_Code": {
+          "type": "nvarchar(20)",
+          "nullable": true,
+          "description": "Employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "Rerun": {
+          "type": "int",
+          "nullable": true,
+          "description": "Payroll month / computation iteration index"
+        },
+        "Type": {
+          "type": "nvarchar(10)",
+          "nullable": true,
+          "description": "Run type (REGULAR, HOLD, FINAL)"
+        },
+        "Created_by": {
+          "type": "nvarchar(30)",
+          "nullable": false,
+          "description": "HR admin username"
+        },
+        "Created_At": {
+          "type": "datetime",
+          "nullable": false,
+          "description": "Calculation execution timestamp"
+        },
+        "Loc_Code": {
+          "type": "int",
+          "nullable": true,
+          "description": "Branch code"
+        }
+      }
+    },
+    "Employee_AtnStatus": {
+      "tableName": "Employee_AtnStatus",
+      "displayName": "Attendance Status Codes & Pay Weights Master",
+      "module": "HR_ATTENDANCE",
+      "primaryKey": [
+        "Utd"
+      ],
+      "description": "Master table defining attendance symbols (P, A, WO, HD, PL, WOP, H), day pay weights (1.0, 0.5, 0.0, 2.0), penalty days, and UI colors.",
+      "columns": {
+        "Utd": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "Status": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Attendance status code (P, A, WO, HD, PL, WOP, H, LWP)"
+        },
+        "Value": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Day pay weight multiplier (1.00, 0.50, 0.00, 2.00)"
+        },
+        "Present": {
+          "type": "int",
+          "nullable": true,
+          "description": "1 = Present, 0 = Otherwise"
+        },
+        "Absent": {
+          "type": "int",
+          "nullable": true,
+          "description": "1 = Absent / LWP"
+        },
+        "HalfDay": {
+          "type": "int",
+          "nullable": true,
+          "description": "1 = Half Day"
+        },
+        "WeekOff": {
+          "type": "int",
+          "nullable": true,
+          "description": "1 = Weekly Off"
+        },
+        "Holiday": {
+          "type": "int",
+          "nullable": true,
+          "description": "1 = Holiday"
+        },
+        "penalty_days": {
+          "type": "decimal(19,2)",
+          "nullable": true,
+          "description": "Penalty days deducted"
+        },
+        "colorCode": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "HEX color code for UI calendar badge"
+        }
+      }
+    },
+    "FullFinal_Adjustments": {
+      "tableName": "FullFinal_Adjustments",
+      "displayName": "Employee Full & Final (F&F) Settlement Register",
+      "module": "HR_EXIT_MANAGEMENT",
+      "primaryKey": [
+        "ID"
+      ],
+      "description": "Calculates exit settlements, gratuity payouts, leave encashment, notice period recoveries, and loan clearances for relieved staff.",
+      "columns": {
+        "ID": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "EmpCode": {
+          "type": "varchar(50)",
+          "nullable": false,
+          "description": "Resigned employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "SalMonth": {
+          "type": "int",
+          "nullable": false,
+          "description": "Settlement month"
+        },
+        "SalYear": {
+          "type": "int",
+          "nullable": false,
+          "description": "Settlement year"
+        },
+        "Gratuity_Amount": {
+          "type": "decimal(18,2)",
+          "nullable": true,
+          "description": "Gratuity settlement amount"
+        },
+        "Leave_Encashment_Days": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Unavailed leave days encashed"
+        },
+        "Leave_Encashment_Amount": {
+          "type": "decimal(18,2)",
+          "nullable": true,
+          "description": "Leave encashment payout"
+        },
+        "Bonus_Amount": {
+          "type": "decimal(18,2)",
+          "nullable": true,
+          "description": "Pro-rata bonus payout"
+        },
+        "Notice_Pay_Recovery": {
+          "type": "decimal(18,2)",
+          "nullable": true,
+          "description": "Notice pay deducted for short notice"
+        },
+        "Other_Outstanding": {
+          "type": "decimal(18,2)",
+          "nullable": true,
+          "description": "Pending loans/recoveries subtracted"
+        }
+      }
+    },
+    "Godown_Mst": {
+      "tableName": "Godown_Mst",
+      "displayName": "Branch Showrooms & Stock Godowns Master",
+      "module": "BRANCH_MASTER",
+      "primaryKey": [
+        "Comp_Code",
+        "Godw_Code"
+      ],
+      "description": "Complete dealership branch network, showroom addresses, workshop service centers, parts godowns, GSTINs, and bank details.",
+      "columns": {
+        "Comp_Code": {
+          "type": "tinyint",
+          "nullable": false,
+          "description": "Company code"
+        },
+        "Godw_Code": {
+          "type": "tinyint",
+          "nullable": false,
+          "description": "Branch code (matches EMPLOYEEMASTER.LOCATION & Misc_Type = 85)"
+        },
+        "Godw_Name": {
+          "type": "nvarchar(75)",
+          "nullable": true,
+          "description": "Branch/Showroom full name"
+        },
+        "Godw_Add1": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Street address line 1"
+        },
+        "City": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Branch city"
+        },
+        "State": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Branch state"
+        },
+        "Pin_Code": {
+          "type": "nvarchar(20)",
+          "nullable": true,
+          "description": "Postal pincode"
+        },
+        "Phone": {
+          "type": "nvarchar(30)",
+          "nullable": true,
+          "description": "Contact number"
+        },
+        "GST_No": {
+          "type": "nvarchar(20)",
+          "nullable": true,
+          "description": "Branch GSTIN"
+        },
+        "Bank_Name": {
+          "type": "nvarchar(60)",
+          "nullable": true,
+          "description": "Branch receiving bank"
+        },
+        "Bank_Ac": {
+          "type": "nvarchar(60)",
+          "nullable": true,
+          "description": "Branch receiving bank account"
+        },
+        "Bank_IFSC": {
+          "type": "nvarchar(25)",
+          "nullable": true,
+          "description": "Branch bank IFSC"
+        }
+      }
+    },
+    "IFSC_CODE_API": {
+      "tableName": "IFSC_CODE_API",
+      "displayName": "National Bank & IFSC Code Directory",
+      "module": "BANKING",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "National directory of all RBI registered bank branches with IFSC, MICR, address, city, and NEFT/RTGS/IMPS/UPI capabilities.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "IFSC": {
+          "type": "varchar(20)",
+          "nullable": false,
+          "description": "11-digit IFSC code"
+        },
+        "BANK": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Bank name (HDFC, SBI, ICICI, Axis)"
+        },
+        "BANKCODE": {
+          "type": "varchar(10)",
+          "nullable": false,
+          "description": "4-character bank code prefix"
+        },
+        "BRANCH": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Branch location name"
+        },
+        "ADDRESS": {
+          "type": "varchar(255)",
+          "nullable": false,
+          "description": "Street address"
+        },
+        "CITY": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "City"
+        },
+        "STATE": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "State"
+        },
+        "MICR": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "9-digit MICR code"
+        },
+        "NEFT": {
+          "type": "bit",
+          "nullable": true,
+          "description": "1 = NEFT Supported"
+        },
+        "RTGS": {
+          "type": "bit",
+          "nullable": true,
+          "description": "1 = RTGS Supported"
+        },
+        "IMPS": {
+          "type": "bit",
+          "nullable": true,
+          "description": "1 = IMPS Supported"
+        }
+      }
+    },
+    "NewCar_Sale_Register": {
+      "tableName": "NewCar_Sale_Register",
+      "displayName": "New Vehicle Sales & Invoicing Register",
+      "module": "VEHICLE_SALES",
+      "primaryKey": [
+        "Inv_No",
+        "Chassis"
+      ],
+      "description": "Core commercial and tax invoicing register for all new car deliveries, customer details, VIN/Chassis numbers, models, and GST tax.",
+      "columns": {
+        "Inv_No": {
+          "type": "nvarchar(50)",
+          "nullable": false,
+          "description": "GST Tax Invoice Number"
+        },
+        "Inv_dt": {
+          "type": "date",
+          "nullable": true,
+          "description": "Invoice date"
+        },
+        "Del_DT": {
+          "type": "date",
+          "nullable": true,
+          "description": "Actual physical vehicle delivery date"
+        },
+        "Status": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "'INVOICED', 'DELIVERED', 'CANCELLED'"
+        },
+        "CANCEL_DATE": {
+          "type": "date",
+          "nullable": true,
+          "description": "Cancellation date (NULL for active sales)"
+        },
+        "Model": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Car model (SWIFT, BALENO, BREZZA, ERTIGA)"
+        },
+        "Variant_DESC": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Variant (VXI, ZXI, LXI CNG, DELTA)"
+        },
+        "Fuel_Type": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "'PETROL', 'CNG', 'HYBRID', 'DIESEL'"
+        },
+        "Clr_DESC": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Vehicle color"
+        },
+        "Chassis": {
+          "type": "nvarchar(50)",
+          "nullable": false,
+          "description": "17-digit VIN / Chassis Number"
+        },
+        "Engine": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Engine serial number"
+        },
+        "Customer_Name": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Customer full name"
+        },
+        "Mobile1": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Primary mobile number"
+        },
+        "City": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Customer city"
+        },
+        "DSE": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Sales consultant employee name/code"
+        },
+        "Team_Lead": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Team leader name/code"
+        },
+        "Outlet1": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "Showroom outlet branch"
+        },
+        "Hypo": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Auto loan financier bank"
+        },
+        "Reg_No": {
+          "type": "nvarchar(50)",
+          "nullable": true,
+          "description": "RTO vehicle registration number"
+        },
+        "Inv_Amt": {
+          "type": "money",
+          "nullable": true,
+          "description": "Total On-Road Invoiced Value"
+        },
+        "Discount": {
+          "type": "money",
+          "nullable": true,
+          "description": "Dealer discount amount"
+        },
+        "MGA_Sold_Amt": {
+          "type": "nvarchar/money",
+          "nullable": true,
+          "description": "Maruti Genuine Accessories sold"
+        }
+      }
+    },
+    "REPORT_MST": {
+      "tableName": "REPORT_MST",
+      "displayName": "Dynamic Report Builder & Column Mapping Master",
+      "module": "DYNAMIC_REPORTS",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Configures dynamic report engine layouts, column display names, sorting sequences (field_seq), and report module blocks.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "block_id": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Report block ID ('1', '2', '3')"
+        },
+        "block_name": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Block category name ('EMPLOYEE', 'SALARY', 'ATTENDANCE')"
+        },
+        "table_name": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Physical SQL table name"
+        },
+        "column_name": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Physical SQL column name"
+        },
+        "display_name": {
+          "type": "varchar(200)",
+          "nullable": true,
+          "description": "User-friendly header title in reports"
+        },
+        "field_seq": {
+          "type": "int",
+          "nullable": true,
+          "description": "Column position sequence"
+        },
+        "header_color": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Excel header HEX color"
+        },
+        "data_color": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Excel cell HEX color"
+        }
+      }
+    },
+    "SalaryReportTemplate": {
+      "tableName": "SalaryReportTemplate",
+      "displayName": "Custom Salary Report Templates",
+      "module": "HR_PAYROLL",
+      "primaryKey": [
+        "id"
+      ],
+      "description": "Saves user-defined salary report configurations with selected field arrays (referencing REPORT_MST) and location filters.",
+      "columns": {
+        "id": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "user_code": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Created user / admin username"
+        },
+        "template_name": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Custom template name"
+        },
+        "selected_fields": {
+          "type": "varchar(MAX)",
+          "nullable": true,
+          "description": "JSON array of REPORT_MST.UTD field IDs"
+        },
+        "location_fields": {
+          "type": "varchar(MAX)",
+          "nullable": true,
+          "description": "JSON array of Branch Location codes"
+        },
+        "created_at": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Creation timestamp"
+        }
+      }
+    },
+    "machinerawpunch": {
+      "tableName": "machinerawpunch",
+      "displayName": "Biometric Machine Raw Punch Logs",
+      "module": "HR_ATTENDANCE",
+      "primaryKey": [
+        "cardno",
+        "officepunch"
+      ],
+      "description": "Raw biometric punch logs captured from physical fingerprint scanners, RFID smart card readers, and turnstiles.",
+      "columns": {
+        "cardno": {
+          "type": "char(30)",
+          "nullable": false,
+          "description": "Employee card number (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "officepunch": {
+          "type": "smalldatetime",
+          "nullable": false,
+          "description": "Exact biometric scan timestamp"
+        },
+        "inout": {
+          "type": "char(1)",
+          "nullable": true,
+          "description": "'I' = IN Punch, 'O' = OUT Punch"
+        },
+        "mc_no": {
+          "type": "char(5)",
+          "nullable": true,
+          "description": "Machine/Terminal device ID ('01', '02')"
+        },
+        "intype": {
+          "type": "char(1)",
+          "nullable": true,
+          "description": "'F' = Fingerprint, 'C' = Card, 'P' = PIN"
+        },
+        "IsImport": {
+          "type": "int",
+          "nullable": true,
+          "description": "1 = Processed into attendancetable, 0 = Raw"
+        }
+      }
+    },
+    "overtime_policy": {
+      "tableName": "overtime_policy",
+      "displayName": "Overtime Slabs & Pay Weight Policy",
+      "module": "HR_ATTENDANCE",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Configures Overtime calculation minute slabs and pro-rata payable day weight multipliers (PValue).",
+      "slabs": [
+        {
+          "min": 0,
+          "max": 60,
+          "pvalue": 0,
+          "label": "Up to 1 hour (Grace buffer)"
+        },
+        {
+          "min": 60,
+          "max": 150,
+          "pvalue": 0.25,
+          "label": "1.0 to 2.5 hours (Quarter day pay)"
+        },
+        {
+          "min": 151,
+          "max": 330,
+          "pvalue": 0.5,
+          "label": "2.5 to 5.5 hours (Half day pay)"
+        },
+        {
+          "min": 331,
+          "max": 9999,
+          "pvalue": 1,
+          "label": "Above 5.5 hours (Full day pay)"
+        }
+      ],
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique key"
+        },
+        "MinMinutes": {
+          "type": "int",
+          "nullable": true,
+          "description": "Starting extra minutes worked"
+        },
+        "MaxMinutes": {
+          "type": "int",
+          "nullable": true,
+          "description": "Ending extra minutes worked"
+        },
+        "PValue": {
+          "type": "decimal(5,2)",
+          "nullable": true,
+          "description": "Pay multiplier (0.00, 0.25, 0.50, 1.00)"
+        }
+      }
+    },
+    "SALARYSTRUCTURE": {
+      "tableName": "SALARYSTRUCTURE",
+      "displayName": "Employee CTC & Salary Structure Master",
+      "module": "HR_PAYROLL",
+      "primaryKey": [
+        "Emp_Code",
+        "Effective_date"
+      ],
+      "description": "Employee agreed monthly CTC Gross Salary and component breakdown (Basic, HRA, Conveyance, Medical, Washing, Other).",
+      "columns": {
+        "Emp_Code": {
+          "type": "nvarchar(50)",
+          "nullable": false,
+          "description": "Employee code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "Gross_Salary": {
+          "type": "money",
+          "nullable": true,
+          "description": "Total monthly Gross CTC"
+        },
+        "Basic": {
+          "type": "money",
+          "nullable": true,
+          "description": "Basic pay (base for PF/ESI/OT)"
+        },
+        "HRA": {
+          "type": "money",
+          "nullable": true,
+          "description": "House Rent Allowance"
+        },
+        "Conveyance": {
+          "type": "money",
+          "nullable": true,
+          "description": "Conveyance allowance"
+        },
+        "Medical": {
+          "type": "money",
+          "nullable": true,
+          "description": "Medical allowance"
+        },
+        "Washing": {
+          "type": "money",
+          "nullable": true,
+          "description": "Washing allowance"
+        },
+        "Other": {
+          "type": "money",
+          "nullable": true,
+          "description": "Special / Other allowance"
+        },
+        "Effective_date": {
+          "type": "date",
+          "nullable": false,
+          "description": "Salary revision effective date"
+        },
+        "Loc_Code": {
+          "type": "int",
+          "nullable": true,
+          "description": "Branch location code"
+        }
+      }
+    },
+    "SALARYFILE": {
+      "tableName": "SALARYFILE",
+      "displayName": "Monthly Processed Salary & Payroll Payslip Register",
+      "module": "PAYROLL",
+      "primaryKey": [
+        "Emp_Code",
+        "SalMnth",
+        "salyear"
+      ],
+      "description": "Monthly calculated and locked payroll register containing actual earned salary components (Gross_Earn, Basic_Earn, HRA_Earn, Total_Earn, Final_Payment) and payroll attendance (Present_days, Monthdays, Total_Days) for each employee.",
+      "queryRules": [
+        "CRITICAL: For actual monthly payout/earnings, ALWAYS query Gross_Earn, Basic_Earn, HRA_Earn, CONVEN_Earn, Medical_Earn, Other_Earn, Total_Earn, and Final_Payment.",
+        "CRITICAL: Do NOT use Gross or Basic as monthly earned salary — Gross and Basic are fixed master monthly CTC before attendance deduction.",
+        "For payroll attendance: Use Present_days for days worked, Monthdays for total days in month, and Total_Days for payable days.",
+        "To filter specific month and year: WHERE Emp_Code = @empCode AND SalMnth = @monthNum AND salyear = @yearStr."
+      ],
+      "columns": {
+        "Emp_Code": {
+          "type": "varchar(20)",
+          "nullable": false,
+          "description": "Employee Code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "SalMnth": {
+          "type": "smallint",
+          "nullable": false,
+          "description": "Salary Month (1=Jan, 2=Feb, 3=Mar, 4=Apr, 5=May, 6=Jun, 7=Jul, 8=Aug, 9=Sep, 10=Oct, 11=Nov, 12=Dec)"
+        },
+        "salyear": {
+          "type": "varchar(10)",
+          "nullable": false,
+          "description": "Salary Year (e.g. 2026)"
+        },
+        "Monthdays": {
+          "type": "smallint",
+          "nullable": true,
+          "description": "Total calendar days in the salary month (28, 29, 30, 31)"
+        },
+        "Present_days": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Actual present/working days worked by employee in this month"
+        },
+        "Off_days": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Weekly off days in this month"
+        },
+        "Holiday_Leaves": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Paid holidays and approved leaves"
+        },
+        "Total_Days": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Total payable days for salary calculation (Present_days + Off_days + Holiday_Leaves)"
+        },
+        "Gross_Earn": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "ACTUAL Gross salary EARNED for this month based on attendance (e.g. 5305.00)"
+        },
+        "Basic_Earn": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "ACTUAL Basic salary EARNED for this month"
+        },
+        "HRA_Earn": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "ACTUAL HRA EARNED for this month"
+        },
+        "CONVEN_Earn": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "ACTUAL Conveyance allowance EARNED for this month"
+        },
+        "Medical_Earn": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "ACTUAL Medical allowance EARNED for this month"
+        },
+        "Other_Earn": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "ACTUAL Other allowances EARNED for this month"
+        },
+        "Total_Earn": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "ACTUAL Total earnings for this month before deductions"
+        },
+        "Final_Payment": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "ACTUAL Net In-Hand Take-Home Salary transferred/payable to bank account"
+        },
+        "Gross": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Fixed Master Monthly Gross CTC rate (before attendance proration, e.g. 11750.00)"
+        },
+        "Basic": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Fixed Master Monthly Basic rate"
+        },
+        "HRA": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Fixed Master Monthly HRA rate"
+        },
+        "CONVEN": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Fixed Master Monthly Conveyance rate"
+        },
+        "Medical": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Fixed Master Monthly Medical rate"
+        },
+        "Other": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Fixed Master Monthly Other Allowance rate"
+        },
+        "Total": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Fixed Master Monthly Total rate"
+        },
+        "Arrear": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Arrear payment additions for previous months"
+        },
+        "Deducation": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Total monthly deductions (PF + ESI + TDS + Advance + Loan + Other)"
+        },
+        "Advance": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Salary advance recovered this month"
+        },
+        "pf_employee": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Employee EPF deduction (12%)"
+        },
+        "esic_employee": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Employee ESIC deduction (0.75%)"
+        },
+        "tds": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Income Tax TDS deduction"
+        },
+        "Bonus": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Monthly bonus or performance payout"
+        },
+        "PROF_TAX": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Professional Tax deduction"
+        },
+        "Account_No": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Employee Bank Account Number for salary credit"
+        },
+        "Bank_Name": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Salary Bank Name"
+        },
+        "Sal_Disbursh": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Salary disbursement status (Y/N)"
+        },
+        "Sal_OnHold": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Hold salary flag"
+        },
+        "Loc_Code": {
+          "type": "smallint",
+          "nullable": true,
+          "description": "Branch Location Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 85)"
+        },
+        "ABSENTVALUE": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Actual Absent Days in this salary month (e.g. 18.00)"
+        },
+        "LEAVEVALUE": {
+          "type": "decimal(19,4)",
+          "nullable": true,
+          "description": "Actual Leave Days in this salary month"
+        }
+      }
+    },
+    "EMPLOYEEMASTER": {
+      "tableName": "EMPLOYEEMASTER",
+      "displayName": "Master Employee Database",
+      "module": "HR_PAYROLL",
+      "primaryKey": [
+        "UTD"
+      ],
+      "businessKey": [
+        "EMPCODE"
+      ],
+      "description": "Master table for all employee personal, departmental, banking, statutory compliance (PF/ESIC/PAN/Aadhar), and employment lifecycle details.",
+      "queryRules": [
+        "Always filter by EXPORT_TYPE = compcode for multi-tenant isolation.",
+        "To get active employees only, add: WHERE STATUS = 1 OR STATUS IS NULL.",
+        "Join with Misc_Mst to get branch names: LEFT JOIN Misc_Mst branch ON branch.Misc_Code = EMPLOYEEMASTER.LOCATION AND branch.Misc_Type = 85",
+        "Join with Misc_Mst to get department names: LEFT JOIN Misc_Mst dept ON dept.Misc_Code = EMPLOYEEMASTER.DEPT AND dept.Misc_Type = 11",
+        "Join with Misc_Mst to get designation names: LEFT JOIN Misc_Mst desg ON desg.Misc_Code = EMPLOYEEMASTER.DESG AND desg.Misc_Type = 95"
+      ],
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique identity key"
+        },
+        "EMPCODE": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Unique Employee Code (e.g. EMP001, 10243). Primary identifier across all HR and payroll tables"
+        },
+        "EMPFIRSTNAME": {
+          "type": "varchar(150)",
+          "nullable": true,
+          "description": "First name of the employee"
+        },
+        "EMPLASTNAME": {
+          "type": "varchar(150)",
+          "nullable": false,
+          "description": "Last name / surname of the employee"
+        },
+        "EMP_FULL_NAME": {
+          "type": "computed",
+          "nullable": true,
+          "description": "Full name (CONCAT(EMPFIRSTNAME, ' ', EMPLASTNAME))"
+        },
+        "FATHERNAME": {
+          "type": "varchar(150)",
+          "nullable": true,
+          "description": "Father / Guardian name"
+        },
+        "GENDER": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Gender (MALE / FEMALE / OTHER)"
+        },
+        "DOB": {
+          "type": "date",
+          "nullable": true,
+          "description": "Date of Birth"
+        },
+        "DOJ": {
+          "type": "date",
+          "nullable": true,
+          "description": "Date of Joining the company"
+        },
+        "DATE_OF_LEAVING": {
+          "type": "date",
+          "nullable": true,
+          "description": "Date of leaving / resignation if inactive"
+        },
+        "STATUS": {
+          "type": "int",
+          "nullable": true,
+          "description": "Employment Status (1 = Active, 0 = Inactive / Resigned)"
+        },
+        "LOCATION": {
+          "type": "int",
+          "nullable": true,
+          "description": "Branch / Location Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 85)"
+        },
+        "DEPT": {
+          "type": "int",
+          "nullable": true,
+          "description": "Department Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 11)"
+        },
+        "DESG": {
+          "type": "int",
+          "nullable": true,
+          "description": "Designation Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 95)"
+        },
+        "GRADE": {
+          "type": "int",
+          "nullable": true,
+          "description": "Employee Grade Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 672)"
+        },
+        "PAN_NO": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Income Tax PAN Card Number"
+        },
+        "AADHAR_NO": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Government UIDAI Aadhar Number"
+        },
+        "MOBILE_NO": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Primary Mobile / Contact Number"
+        },
+        "OFFICIAL_EMAIL": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Official Work Email Address"
+        },
+        "PERSONAL_EMAIL": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Personal Email Address"
+        },
+        "SALARY_BRANCH": {
+          "type": "int",
+          "nullable": true,
+          "description": "Salary processing bank branch"
+        },
+        "BANK_NAME": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Salary Bank Name"
+        },
+        "ACCOUNT_NO": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Salary Bank Account Number"
+        },
+        "IFSC_CODE": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Bank IFSC Code"
+        },
+        "PF_NO": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Provident Fund (EPF) Member ID"
+        },
+        "UAN_NO": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Universal Account Number (UAN) for EPF"
+        },
+        "ESIC_NO": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "ESIC Insurance Number"
+        },
+        "REPORTING_TO": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Manager / Reporting Supervisor Employee Code"
+        },
+        "SHIFT": {
+          "type": "int",
+          "nullable": true,
+          "description": "Assigned Work Shift Code"
+        },
+        "EXPORT_TYPE": {
+          "type": "int",
+          "nullable": true,
+          "description": "Company Code / Tenant ID"
+        }
+      }
+    },
+    "attendancetable": {
+      "tableName": "attendancetable",
+      "displayName": "Monthly Employee Attendance Grid (Day 1 to 31)",
+      "module": "ATTENDANCE",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Monthly pivoted attendance register holding day-by-day status codes (P1 through P31), aggregated present, absent, week-off, and final payable days.",
+      "queryRules": [
+        "Filter by MONTH(dateoffice) = @month AND YEAR(dateoffice) = @year.",
+        "Join with EMPLOYEEMASTER on attendancetable.Empcode = EMPLOYEEMASTER.EMPCODE.",
+        "Always filter by Export_Type = compcode."
+      ],
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique record ID"
+        },
+        "Empcode": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Employee Code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "dateoffice": {
+          "type": "date",
+          "nullable": false,
+          "description": "Attendance Date / Month Reference (e.g. 2026-03-01)"
+        },
+        "monthdays": {
+          "type": "int",
+          "nullable": true,
+          "description": "Total number of calendar days in this month (28, 29, 30, 31)"
+        },
+        "P1": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Attendance status code for Day 1 (P=Present, A=Absent, W=WeekOff, CL=Casual Leave, etc.)"
+        },
+        "P2": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Attendance status code for Day 2"
+        },
+        "P3": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Attendance status code for Day 3"
+        },
+        "P4": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Attendance status code for Day 4"
+        },
+        "P5": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Attendance status code for Day 5"
+        },
+        "P31": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Attendance status code for Day 31"
+        },
+        "tot_prs": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Total Present Days in Month"
+        },
+        "tot_abs": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Total Absent Days in Month"
+        },
+        "tot_woff": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Total Week Off Days in Month"
+        },
+        "tot_hld": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Total Holiday Days in Month"
+        },
+        "tot_leave": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Total Approved Paid Leaves"
+        },
+        "payable_days": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Final calculated payable days for monthly salary processing"
+        },
+        "Export_Type": {
+          "type": "int",
+          "nullable": true,
+          "description": "Company code / Multi-tenant identifier"
+        }
+      }
+    },
+    "facemachinerawpunch": {
+      "tableName": "facemachinerawpunch",
+      "displayName": "AI Face Recognition Biometric Raw Punch Logs",
+      "module": "ATTENDANCE",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Real-time face recognition attendance logs captured from AI face biometric devices and mobile facial attendance terminals.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique record ID"
+        },
+        "Emp_Code": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Employee Code recognized (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "Punch_Time": {
+          "type": "datetime",
+          "nullable": false,
+          "description": "Exact timestamp when face was recognized"
+        },
+        "Device_Serial": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Face machine hardware serial number"
+        },
+        "Location_Code": {
+          "type": "int",
+          "nullable": true,
+          "description": "Branch / Location code where machine is deployed"
+        },
+        "Match_Score": {
+          "type": "decimal(5,2)",
+          "nullable": true,
+          "description": "Facial similarity confidence score percentage"
+        },
+        "Temperature": {
+          "type": "decimal(5,2)",
+          "nullable": true,
+          "description": "Body temperature reading if thermal scanner equipped"
+        },
+        "Mask_Detected": {
+          "type": "bit",
+          "nullable": true,
+          "description": "1 if face mask was detected, 0 if no mask"
+        },
+        "Export_Type": {
+          "type": "int",
+          "nullable": true,
+          "description": "Company code / Multi-tenant identifier"
+        }
+      }
+    },
+    "OT_EARN": {
+      "tableName": "OT_EARN",
+      "displayName": "Monthly Employee Overtime Earnings Register",
+      "module": "PAYROLL",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Calculated monthly overtime hours, OT wage rates, approved OT amounts, and adjustments linked with monthly payroll execution.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique record ID"
+        },
+        "EMPCODE": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Employee Code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "SAL_MONTH": {
+          "type": "int",
+          "nullable": false,
+          "description": "Salary Month (1-12)"
+        },
+        "SAL_YEAR": {
+          "type": "int",
+          "nullable": false,
+          "description": "Salary Year (e.g. 2026)"
+        },
+        "OT_HOURS": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Total approved overtime hours worked"
+        },
+        "OT_RATE": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Hourly overtime pay rate"
+        },
+        "OT_AMOUNT": {
+          "type": "decimal(18,2)",
+          "nullable": true,
+          "description": "Gross calculated overtime payout amount"
+        },
+        "APPROVED_BY": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Manager who approved the overtime"
+        },
+        "STATUS": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Approval status (APPROVED, PENDING, REJECTED)"
+        },
+        "EXPORT_TYPE": {
+          "type": "int",
+          "nullable": true,
+          "description": "Company code / Multi-tenant identifier"
+        }
+      }
+    },
+    "PERFORMANCE_TARGET_DATA": {
+      "tableName": "PERFORMANCE_TARGET_DATA",
+      "displayName": "Sales & Service Target Achievement Register",
+      "module": "PERFORMANCE",
+      "primaryKey": [
+        "UTD"
+      ],
+      "description": "Monthly and quarterly target goals versus actual achievements for vehicle sales consultants, service advisors, and branch managers.",
+      "columns": {
+        "UTD": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique record ID"
+        },
+        "EMPCODE": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Employee Code (links to EMPLOYEEMASTER.EMPCODE)"
+        },
+        "PERIOD_MONTH": {
+          "type": "int",
+          "nullable": false,
+          "description": "Target Month (1-12)"
+        },
+        "PERIOD_YEAR": {
+          "type": "int",
+          "nullable": false,
+          "description": "Target Year (e.g. 2026)"
+        },
+        "TARGET_TYPE": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Target metric (CAR_SALES_UNITS, WORKSHOP_LABOUR, INSURANCE_RENEWALS, ACCESSORIES_VALUE)"
+        },
+        "TARGET_VALUE": {
+          "type": "decimal(18,2)",
+          "nullable": false,
+          "description": "Assigned target numeric quota"
+        },
+        "ACTUAL_VALUE": {
+          "type": "decimal(18,2)",
+          "nullable": true,
+          "description": "Actual achieved numeric performance"
+        },
+        "ACHIEVEMENT_PCT": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Calculated achievement percentage ((Actual / Target) * 100)"
+        },
+        "INCENTIVE_SLAB_ELIGIBLE": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Target slab tier qualified for incentive payout"
+        },
+        "EXPORT_TYPE": {
+          "type": "int",
+          "nullable": true,
+          "description": "Company code / Multi-tenant identifier"
+        }
+      }
+    }
+  }
+}
