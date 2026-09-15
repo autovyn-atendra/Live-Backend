@@ -873,6 +873,24 @@ const detectLimit = (text) => {
 const deterministicRoute = (message) => {
   const text = normalize(message);
 
+  // Schema/structure question
+  if (PATTERNS.schema.test(text) && !PATTERNS.live.test(text)) {
+    return {
+      mode: "DOCUMENT_RAG",
+      intent: "TABLE_SCHEMA_KNOWLEDGE",
+      searchQuery: text,
+      moduleName: null,
+      reason: "Schema/structure question → indexed knowledge",
+      tables: detectTables(text),
+      needsSalary: false,
+      needsPolicy: false,
+      needsReminder: false,
+      isSelfQuery: false,
+      isCountQuery: false,
+      requestedLimit: 10,
+    };
+  }
+
   // Mobile number lookup
   if (PATTERNS.mobile.test(text) && PATTERNS.employee.test(text)) {
     return {
@@ -891,21 +909,54 @@ const deterministicRoute = (message) => {
     };
   }
 
-  // Schema/structure question
-  if (PATTERNS.schema.test(text) && !PATTERNS.live.test(text)) {
+  // Employee, Salary, Birthday, Designation, Attendance, or Pronoun follow-up queries (iska, iski, unka, etc.)
+  const isEmpQuery =
+    PATTERNS.employee.test(text) ||
+    /\b(salary|salari|pay|payroll|ctc|gross|net|basic|hra|earn|final_payment|vetan|तनख्वाह)\b/i.test(text) ||
+    /\b(birthday|birthdays|bithday|bithdays|brithday|bday|bdays|janmdin|janamdin|dob|date\s*of\s*birth|birth\s*date)\b/i.test(text) ||
+    /\b(designation|desig|post|position|department|dept|branch|location)\b/i.test(text) ||
+    /\b(pan|pan_no|panno|pf|pf_no|pfnumber|uan|esic|esi|aadhar|uid|bankacc|account_no)\b/i.test(text) ||
+    /\b(attendance|attendancetable|present|absent|leave|mispunch|punch|hazri|duty)\b/i.test(text) ||
+    (/\b(iska|iski|uska|uski|unka|unki|inhe|yahi|same)\b/i.test(text) && /\b(salary|birthday|birthdays|bithday|bithdays|brithday|bday|janmdin|dob|pan|pf|mobile|number|no|designation|desig|attendance|details?|record|profile|info)\b/i.test(text));
+
+  if (isEmpQuery && !PATTERNS.schema.test(text)) {
+    const isSalary = /\b(salary|salari|pay|payroll|ctc|gross|net|basic|hra|earn|vetan|तनख्वाह|structure|salarystructure)\b/i.test(text);
+    const tables = isSalary ? ["EMPLOYEEMASTER", "SALARYFILE", "SALARYSTRUCTURE"] : ["EMPLOYEEMASTER"];
     return {
-      mode: "DOCUMENT_RAG",
-      intent: "TABLE_SCHEMA_KNOWLEDGE",
+      mode: "DATABASE",
+      intent: "EMPLOYEE_RECORD_LOOKUP",
       searchQuery: text,
-      moduleName: null,
-      reason: "Schema/structure question → indexed knowledge",
-      tables: detectTables(text),
+      moduleName: "HR",
+      reason: "Employee attribute/record inquiry → live database query",
+      tables,
+      needsSalary: isSalary,
+      needsPolicy: false,
+      needsReminder: false,
+      isSelfQuery: PATTERNS.self.test(text),
+      isCountQuery: PATTERNS.count.test(text),
+      requestedLimit: detectLimit(text),
+    };
+  }
+
+  // Date attendance queries
+  const isDateAttendance =
+    /(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]20\d{2}|today|aaj|yesterday|kal)/i.test(text) &&
+    /\b(present|absent|attendance|hazri|duty|weekly|weakly|weekoff|wo|leave|holiday|kitne|log)\b/i.test(text);
+
+  if (isDateAttendance) {
+    return {
+      mode: "DATABASE",
+      intent: "ATTENDANCE_DATE_LOOKUP",
+      searchQuery: text,
+      moduleName: "HR",
+      reason: "Date attendance query → live database query",
+      tables: ["attendancetable", "EMPLOYEEMASTER"],
       needsSalary: false,
       needsPolicy: false,
       needsReminder: false,
       isSelfQuery: false,
-      isCountQuery: false,
-      requestedLimit: 10,
+      isCountQuery: PATTERNS.count.test(text),
+      requestedLimit: detectLimit(text),
     };
   }
 
@@ -933,32 +984,29 @@ const deterministicRoute = (message) => {
 // ─── GPT Router ───────────────────────────────────────────────────────────────
 
 const ROUTER_INSTRUCTIONS = `
-You are an ERP AI request classifier.
+You are an intelligent ERP AI request classifier.
+The user may speak in ANY tone, dialect, slang, typo-laden Hinglish, formal English, angry, casual, or ultra-short keywords.
 
 Classify the user message into one of these modes:
-- GENERAL: greetings, coding help, no ERP data needed
-- DOCUMENT_RAG: questions about indexed knowledge (schemas, policies, SOPs, table structure, column info)
-- DATABASE: questions needing live SQL data (records, counts, lists, reports, salary, reminders)
-- HYBRID: needs both indexed knowledge AND live data
+- GENERAL: pure greetings (hi/hello), generic casual pleasantries without any business/ERP entity.
+- DOCUMENT_RAG: questions about indexed knowledge (schemas, policies, SOPs, table structures, column definitions).
+- DATABASE: ANY query asking for live business data, records, counts, lists, employee biodata, birthday/DOB, address, salaries, attendance, absent/present count, vouchers, service reminders, vehicles, or pronouns ("iska", "uska", "unka", "inhe").
+- HYBRID: needs both indexed knowledge AND live database records.
+
+Tone & Conversational Rules:
+- Slang / Informal / Direct tones: ("are bhai iska bata", "chal nikal jaldi", "kya scene hai", "kitne absent the bhai", "salary bhej na yaar", "pata karke de", "dekh to") → Extract the actual core question and route to DATABASE.
+- Pronoun Follow-ups: ("iska bithday", "iska permanent address", "iski salary", "unka phone number", "inhe kitna mila", "iska designation") → DATABASE with previous entity from history.
+- Date Queries: ("21/10/2025 absent count", "kal kaun aaya tha", "today attendance") → DATABASE.
+- Typos & Abbreviations: ("bithday", "brithday", "salari", "atendenc", "desig", "panno") → DATABASE.
 
 Detect:
 - tables: any DB table names mentioned
-- needsSalary: salary/pay/payroll questions
+- needsSalary: salary/pay/payroll/vetan questions
 - needsPolicy: HR policy/leave/SOP questions  
 - needsReminder: service reminder questions
 - isSelfQuery: "my","meri","mere","mera" → user wants their own data
 - isCountQuery: count/total/kitne questions
 - requestedLimit: number of records requested (default 100)
-
-Rules:
-- "salary kitni hai" → DATABASE + isSelfQuery=true
-- "salary kyu kati" → HYBRID (needs policy + live data)
-- "reminder kitne hain" → DATABASE + isCountQuery=true
-- "leave policy" → DOCUMENT_RAG
-- "meri attendance" → DATABASE + isSelfQuery=true
-- "vehicle list do" → DATABASE
-- Table name + "ke columns" → DOCUMENT_RAG
-- Table name + "ke records" → DATABASE
 
 Return structured classification only.
 `.trim();
@@ -1283,20 +1331,39 @@ const filterBestMatches = (rows = [], maxRows = 25) => {
 // ─── SYSTEM INSTRUCTIONS ──────────────────────────────────────────────────────
 
 const SYSTEM_INSTRUCTIONS = `
-You are a helpful, secure AutoVyn ERP assistant. Always reply in the SAME language as the user's question (Hindi/Hinglish/English).
+You are an intelligent, helpful, and highly capable AutoVyn ERP assistant.
+
+═══ CRITICAL RULE: STRICT LANGUAGE & SCRIPT MIRRORING ═══
+- ALWAYS reply in the EXACT SAME LANGUAGE and SCRIPT as the user's question:
+  1. If the user writes in HINGLISH (Hindi written in Roman English alphabet, e.g. "19001162 ki salary nikal kar do", "iska birthday kab aata hai", "21/10/2025 ko kitne log absent the"):
+     -> YOU MUST REPLY IN HINGLISH (Roman English alphabet mix).
+  2. If the user writes in PURE ENGLISH (e.g. "What is the April 2026 salary for employee 19001162?", "How many employees were absent on 21/10/2025?"):
+     -> YOU MUST REPLY IN PURE ENGLISH.
+  3. If the user writes in DEVANAGARI HINDI (e.g. "१९००११६२ का जन्मदिन कब आता है?", "कर्मचारी की अप्रैल २०२६ की सैलरी बताओ"):
+     -> YOU MUST REPLY IN DEVANAGARI HINDI.
+  4. If the user writes in MARATHI / GUJARATI / OTHER REGIONAL LANGUAGES (e.g. "या कर्मचाऱ्याचा पगार किती आहे?"):
+     -> YOU MUST REPLY IN THAT EXACT REGIONAL LANGUAGE.
+- NEVER switch to English if the user asked in Hinglish or Hindi.
+- NEVER switch to Hindi if the user asked in English.
+
+═══ TONE INVARIANCE & CONVERSATIONAL ADAPTATION ═══
+- The user may ask questions in ANY tone or style:
+  * Casual / Informal / Slang: ("are bhai", "bata na yar", "chal jaldi nikal", "iska bhej", "kya scene hai", "dekh to", "pata karke de", "nikal ke de bhai")
+  * Short & Direct Keywords: ("19001162 salary", "21 oct absent", "dob", "address?", "designation", "pan number")
+  * Urgent / Direct: ("jaldi bata", "sahi se nikalna", "kitni baar bolu", "turant check kar")
+  * Typos / Phonetic Spellings: ("bithday", "brithday", "bday", "janmdin", "salari", "tankhwah", "vetan", "atendance", "prenset", "abscent")
+  * Pronouns / Contextual Follow-ups: ("iska", "iski", "unka", "inhe", "us bande ka", "wahi wala", "uska bhi bata")
+- Rule: NEVER get confused by slang, informal phrasing, or anger/urgency. Extract the core entity and intent calmly, query live databaseEvidence, and deliver the answer in the matching language and tone!
 
 ═══ DATA & EMPLOYEE SEARCH RULES ═══
 
-1. WHEN ATTENDANCE IS ASKED (e.g., "attendance detail", "August ki attendance", "present kitne din tha", "leave kitni hai"):
+1. WHEN ATTENDANCE IS ASKED (e.g., "attendance detail", "August ki attendance", "present kitne din tha", "leave kitni hai", "21/10/2025 ko kitne log absent the"):
 - Inspect databaseEvidence rows for Attendance columns (Salary_Present_Days / Present_days / Present, Salary_Month_Days / Monthdays, Absent, Leave, Att_Month, Att_Year, DateOffice).
 - Answer DIRECTLY with Employee Name, Employee Code, Attendance Month/Year, Total Month Days, Present Days, Absent Days, and Leave Days.
-- Example: "PRAMOD ARUN PALVE (Code: 19001162) ki April 2026 me attendance details:
-  - Total Month Days: 30
-  - Present Days: 11
-  - Off Days: 4"
+- For date-wise count queries (e.g. absent/present count on a date), state the total count clearly with descriptive breakdown.
 
-2. WHEN MONTHLY SALARY / EARNINGS ARE ASKED (e.g., "salary kitni thi", "gross earn", "basic earn", "total earn", "final payment", "net salary", "vetan kitna bana"):
-- ALWAYS use the actual monthly EARNED columns from databaseEvidence:
+2. WHEN MONTHLY SALARY / EARNINGS ARE ASKED (e.g., "salary kitni mili", "salary kitni thi", "gross earn", "basic earn", "total earn", "final payment", "net salary", "vetan kitna bana", "april 2026 salary", "payslip"):
+- Inspect databaseEvidence from SALARYFILE:
   * Gross Earned (Gross_Earn / Total_Earn): Actual earned gross salary for that specific month based on attendance (e.g. ₹5,305).
   * Basic Earned (Basic_Earn): Actual earned basic salary.
   * HRA Earned (HRA_Earn): Actual earned HRA.
@@ -1304,31 +1371,76 @@ You are a helpful, secure AutoVyn ERP assistant. Always reply in the SAME langua
   * Medical Earned (Medical_Earn): Actual earned medical.
   * Other Earned (Other_Earn): Actual earned other allowance.
   * Net In-Hand Salary / Final Payment (Final_Payment): Actual net take-home salary after deductions (e.g. ₹5,305).
-  * Fixed Master CTC (Fixed_Gross_Salary / Gross): Only mention as "Fixed CTC Rate: ₹11,750" if explicitly asked. Never report fixed master gross as the actual monthly earned salary!
+  * Attendance Snapshot: Present Days (Present_days), Total Month Days (Monthdays).
 - Example: "PRAMOD ARUN PALVE (Code: 19001162) ki April 2026 ki salary details:
   - Present Days: 11 (Total Month Days: 30)
   - Gross Earned (Gross_Earn): ₹5,305
-  - Net Payable / Final Payment: ₹5,305
-  - Fixed Master CTC Rate: ₹11,750"
+  - Net Payable / Final Payment: ₹5,305"
 
-3. WHEN SPECIFIC ATTRIBUTES ARE ASKED (e.g., "college kya hai", "kis college se pada hai", "blood group kya hai", "pan number kya hai"):
+3. WHEN SALARY STRUCTURE / CTC BREAKUP IS ASKED (e.g., "salary structure kya hai", "CTC breakup kya hai", "fixed package kya hai", "salary structure dikhao", "agreed CTC"):
+- Inspect databaseEvidence from SALARYSTRUCTURE:
+  * Fixed Master CTC / Gross (Gross_Salary / Gross): Total monthly agreed CTC (e.g. ₹11,750).
+  * Basic: Fixed Basic allowance.
+  * HRA: Fixed House Rent Allowance.
+  * Conveyance: Fixed Conveyance allowance.
+  * Medical: Fixed Medical allowance.
+  * Washing: Fixed Washing allowance.
+  * Uniform: Fixed Uniform allowance.
+  * Other: Fixed Other special allowances.
+  * Effective Date (Effective_date): Revision effective date.
+- Example: "PRAMOD ARUN PALVE (Code: 19001162) ka current Salary Structure:
+  - Fixed Monthly CTC (Gross): ₹11,750
+  - Basic: ₹5,875
+  - HRA: ₹2,938
+  - Conveyance: ₹1,600
+  - Medical: ₹1,250
+  - Other: ₹87
+  - Effective Date: 01/04/2025"
+
+4. WHEN BIRTHDAY / DOB IS ASKED (e.g., "birthday kab aata hai", "dob kya hai", "janmdin kab hai", "birth date kya hai", "iska bithday"):
+- Inspect databaseEvidence rows for DOB, _clean_DOB, BirthDate, BirthMonth, BirthDay.
+- Format the birthday date cleanly (e.g. "2 January 1989" or "2 January").
+- Example: "PRAMOD ARUN PALVE (Code: 19001162) ka birthday **2 January** (02/01/1989) ko aata hai."
+
+5. WHEN ADDRESS IS ASKED (e.g., "permanent address", "address nikalo", "current address", "pata kya hai", "ghar ka pata"):
+- Inspect databaseEvidence rows for PermanentAddress, _clean_PermanentAddress, PERMANENTADDRESS1, PERMANENTADDRESS2, CurrentAddress, _clean_CurrentAddress, CURRENTADDRESS1, CURRENTADDRESS2, Address, _clean_Address.
+- Answer directly with the asked address.
+
+6. WHEN STATUTORY / COMPLIANCE ATTRIBUTES ARE ASKED (e.g., "pf number", "pf no", "pf kitna hai", "esi number", "esi no", "pan number", "aadhar", "bank account", "uan number"):
+- Inspect databaseEvidence rows for _clean_PF_No, pfnumber, PFTRUST_NO, PFNO, _clean_ESI_No, esinumber, ESINO, _clean_UAN_No, UAN_No, PANNO, UID_NO, ADHARNO, etc.:
+  * PF NUMBER:
+    - In AutoVyn ERP, the actual Provident Fund account number is stored in _clean_PF_No, pfnumber (e.g. "44455"), or PFTRUST_NO.
+    - PFNO is merely the applicability status flag ('1' = Applicable/Yes, '0' = Not Applicable).
+    - If a valid PF Number exists in _clean_PF_No, pfnumber, or PFTRUST_NO (e.g. 44455 or RJ/12345/...), ALWAYS state that as the PF Number!
+    - If ONLY PFNO = '1' exists and both pfnumber & PFTRUST_NO are null/empty, state:
+      - PF Status: Applicable / Enrolled (Yes - Flag: 1)
+      - PF Account / Trust Number: Database me update nahi hai (Not Available / NULL).
+  * ESI NUMBER:
+    - Actual ESI number is stored in _clean_ESI_No or esinumber (e.g. "2222").
+    - ESINO is merely the applicability flag ('1' = Yes).
+    - Always display esinumber / _clean_ESI_No when present!
+  * UAN / AADHAAR / PAN:
+    - UAN: _clean_UAN_No or UAN_No (e.g. 22)
+    - Aadhaar: UID_NO / ADHARNO (e.g. 543482889196)
+    - PAN: PANNO (e.g. SBMPS1302E)
+
+7. WHEN SPECIFIC ATTRIBUTES ARE ASKED (e.g., "college kya hai", "blood group", "pan number", "designation kya hai", "mobile no"):
 - Inspect the provided databaseEvidence rows carefully and answer DIRECTLY with ONLY the asked attributes along with basic identifier info (Employee Name & Code).
 - DO NOT dump unrelated table columns when the user only asked for 1 or 2 specific attributes!
 
-4. WHEN COMPLETE STRUCTURE / FULL DETAILS ARE ASKED (e.g., "complete structure do", "saari details do", "full record do"):
+8. WHEN COMPLETE STRUCTURE / FULL DETAILS ARE ASKED (e.g., "complete structure do", "saari details do", "full record do"):
 - Present all relevant non-null fields clearly using clean bullet points. Filter out raw internal system noise (like ServerId, UTD, Export_Type).
 
-5. WHEN COUNT / LIST IS ASKED (e.g., "count batao", "kiske kiske pass hai", "how many", "total new joining"):
+9. WHEN COUNT / LIST IS ASKED (e.g., "count batao", "kiske kiske pass hai", "how many", "total absent"):
 - State the EXACT total count at the beginning (e.g., "Total matching records found: 10") matching the total rows in the database.
-- Present the matching list clearly row-wise.
+- Present the matching list clearly row-wise or in a clean markdown table.
 
-6. WHEN NO RECORDS ARE FOUND (rowCount = 0 or canAnswer = false):
-- For count/check queries: State total count 0 in a helpful, natural message.
-- For single-entity search: State politely that no matching record was found in database.
+10. WHEN NO RECORDS ARE FOUND (rowCount = 0 or canAnswer = false):
+- State politely and clearly in natural language that no matching record was found in the database.
 
 ═══ DATA FORMATTING RULES ═══
 - Clean, concise bullet points for requested fields.
-- Preserve exact codes and numbers as returned in database rows.
+- Preserve exact codes, amounts, and dates as returned in database rows.
 - Never expose raw SQL queries, technical schema definitions, or internal keys to the user.
 `.trim();
 
@@ -4398,7 +4510,7 @@ const detectWantedFields = exports.detectWantedFields = (question) => {
   if (/\b(esic|esi)\b/i.test(q))                                         wants.add("ESIC");
   if (/\b(mobile|moble|mob|mbl|phone|phon|phn|contact|cont|contactno)\b/i.test(q)) wants.add("MOBILE");
   if (/\b(salary|pay|ctc|gross|net|basic|vetan|वेतन|earn|structure|salarystructure)\b/i.test(q))  wants.add("SALARY");
-  if (/\b(designation|post|position)\b/i.test(q))                        wants.add("DESIGNATION");
+  if (/\b(designation|desig|post|position|role|pad)\b/i.test(q))                        wants.add("DESIGNATION");
   if (/\b(department|dept)\b/i.test(q))                                  wants.add("DEPARTMENT");
   if (/\b(attendance|present|absent|leave)\b/i.test(q))                  wants.add("ATTENDANCE");
   if (/\b(branch|location|loc|loc_code|loccode|branchcode|godown)\b/i.test(q)) wants.add("LOCATION");
@@ -4406,6 +4518,10 @@ const detectWantedFields = exports.detectWantedFields = (question) => {
   if (/\b(summary|report|total|count|breakup|breakdown)\b/i.test(q))      wants.add("SUMMARY");
   if (/\b(detail|details|sab|all|info|puri|poori)\b/i.test(q))          wants.add("ALL");
   if (/\b(name|naam)\b/i.test(q))                                        wants.add("NAME");
+  if (/\b(permanent\s*address|permanentaddress|perm\s*addr|mool\s*niwas|sthayi\s*pata)\b/i.test(q)) wants.add("PERMANENT_ADDRESS");
+  if (/\b(current\s*address|currentaddress|curr\s*addr|vartaman\s*pata)\b/i.test(q)) wants.add("CURRENT_ADDRESS");
+  if (/\b(address|pata|addr|sthan|niwas)\b/i.test(q))                   wants.add("ADDRESS");
+  if (/\b(dob|birth|birthday|birthdays|bithday|bithdays|brithday|bday|bdays|janmdin|janamdin|date\s*of\s*birth|birth\s*date)\b/i.test(q)) wants.add("DOB");
   if (/\b(code|empcode|employee\s*code)\b/i.test(q))                     wants.add("CODE");
 
   // Default
@@ -7495,37 +7611,66 @@ const resolveEmployeeFromHistory = (history = []) => {
     const item = history[i];
     if (!item) continue;
 
-    // Check metadata searchMeta
+    // 1. Check metadata searchMeta / employeeCode
     const metaCode =
       item.metadata?.databaseQuery?.searchMeta?.searchValue ||
       item.metadata?.searchMeta?.searchValue ||
-      item.metadata?.employeeCode;
+      item.metadata?.employeeCode ||
+      item.metadata?.empCode;
 
     if (metaCode && /^[A-Za-z0-9]{4,14}$/.test(String(metaCode)) && !/^[6-9]\d{9}$/.test(String(metaCode))) {
       return String(metaCode).trim();
     }
 
-    const content = String(item.content || "");
+    // 2. Check metadata evidence rows (e.g. from previous SQL queries)
+    const evidenceRows = item.metadata?.evidence?.evidence || item.metadata?.rows || item.metadata?.databaseQuery?.rows;
+    if (Array.isArray(evidenceRows) && evidenceRows.length > 0) {
+      for (const row of evidenceRows) {
+        const rCode = row?.EmployeeCode || row?.EMPCODE || row?.Emp_Code || row?.empcode || row?._clean_EmployeeCode;
+        if (rCode && /^[A-Za-z0-9]{4,14}$/.test(String(rCode)) && !/^[6-9]\d{9}$/.test(String(rCode))) {
+          return String(rCode).trim();
+        }
+      }
+    }
 
-    // 1. Explicit labeled employee code: Employee Code: 1600156
-    const labeledMatch = content.match(/\b(?:employee\s*code|emp\s*code|empcode)\s*[:=#-]?\s*([A-Za-z0-9]{4,14})\b/i);
+    const content = String(item.content || item.Message_Content || item.message || "");
+
+    // 3. Match explicit labeled formats like: (Code: 19001162) or Code: 19001162 or Employee Code: 19001162
+    const labeledMatch = content.match(/\b(?:employee\s*code|emp\s*code|empcode|code)\s*[:=#-]?\s*\(?([A-Za-z0-9]{4,14})\)?/i);
     if (labeledMatch?.[1] && !/^[6-9]\d{9}$/.test(labeledMatch[1])) {
       return String(labeledMatch[1]).trim().toUpperCase();
     }
 
-    // 2. Alphanumeric employee code (e.g. AU19796075, EMP1002)
+    // 4. Match alphanumeric employee code (e.g. AU19796075, EMP1002)
     const alphaMatch = content.match(/\b([A-Z]{1,4}\d{4,12})\b/i);
     if (alphaMatch?.[1]) {
       return String(alphaMatch[1]).trim().toUpperCase();
     }
 
-    // 3. Numeric code BUT NOT 10-digit mobile number starting with 6-9
+    // 5. Match numeric 7-12 digit code (excluding Indian 10-digit mobile starting with 6-9)
     const numMatches = content.matchAll(/\b(\d{7,12})\b/g);
     for (const m of numMatches) {
       const val = m[1];
       if (!/^[6-9]\d{9}$/.test(val)) {
         return val.trim();
       }
+    }
+  }
+
+  return null;
+};
+
+const resolveEmployeeNameFromHistory = (history = []) => {
+  if (!Array.isArray(history) || !history.length) return null;
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const item = history[i];
+    if (!item) continue;
+
+    const content = String(item.content || item.Message_Content || item.message || "");
+    const nameMatch = content.match(/(?:^|\n|\b)([A-Z]{2,}(?:\s+[A-Z]{2,}){1,3})\s*(?:\(Code:|\(Employee Code:|- Code:)/);
+    if (nameMatch?.[1]) {
+      return nameMatch[1].trim().toUpperCase();
     }
   }
 
@@ -7565,8 +7710,34 @@ const detectEmployeeSearchIntent = (question, history = []) => {
     return { searchType: "MOBILE", searchValue: mobMatch[1], wantedFields };
   }
 
-  // ── Birthday queries (e.g. "give me employee list of coming birthday", "upcoming birthdays", "janmdin")
-  const isBirthdayRequested = /\b(birthday|birthdays|bday|bdays|janmdin|janamdin)\b/i.test(q) ||
+  // 1. First priority: Check if specific employee code is in question OR resolvable from pronouns in history
+  let empCode = extractEmployeeCode(q);
+
+  const hasPronounOrFollowUp =
+    /\b(yahi|yhi|isi|isii|usi|usii|ussi|isay|usay|iska|iski|usuka|uski|unka|unki|iss|is|ise|inhe|same|this|above)\b/i.test(q) ||
+    (/\b(salary|attendance|monthdays|pan|birthday|bithday|bday|janmdin|dob|designation|mobile|detail|details)\b/i.test(q) && !extractName(q));
+
+  if (!empCode && hasPronounOrFollowUp && Array.isArray(history) && history.length > 0) {
+    const historicalCode = resolveEmployeeFromHistory(history);
+    if (historicalCode) {
+      empCode = historicalCode;
+    }
+  }
+
+  if (empCode) return { searchType: "EMP_CODE", searchValue: empCode, wantedFields };
+
+  // 2. Check if a single employee's name is explicitly mentioned or in history
+  const isMultiOrList = /\b(list|all|sab|sabhi|employees?|log|people|records|kiska|kiske|who|whose|coming|upcoming|today|aaj|this\s*month|is\s*mahine)\b/i.test(q);
+  let name = extractName(q);
+  if (!name && hasPronounOrFollowUp && Array.isArray(history) && history.length > 0) {
+    name = resolveEmployeeNameFromHistory(history);
+  }
+  if (name && !isMultiOrList) {
+    return { searchType: "NAME", searchValue: name, wantedFields };
+  }
+
+  // 3. Bulk list searches: Birthday queries for group/month (e.g. "give me employee list of coming birthday", "upcoming birthdays", "janmdin")
+  const isBirthdayRequested = /\b(birthday|birthdays|bithday|bithdays|brithday|bday|bdays|janmdin|janamdin)\b/i.test(q) ||
                               (/\b(coming|upcoming|next|this\s*month|hal\s*hi\s*me)\b/i.test(q) && /\b(dob|birth|bday|janm)\b/i.test(q));
 
   if (isBirthdayRequested) {
@@ -7579,7 +7750,7 @@ const detectEmployeeSearchIntent = (question, history = []) => {
     };
   }
 
-  // ── Mispunch / Manual Punch queries (e.g. "give me pending mispunch list", "approved mispunch list")
+  // 4. Mispunch / Manual Punch queries
   const isMispunchRequested = /\b(mispunch|mis_punch|mis-punch|manual_punch|manualpunch|mipunch)\b/i.test(q) ||
                               (/\b(pending|approved|rejected|manual)\b/i.test(q) && /\b(punch|punches|attendance|entry)\b/i.test(q));
 
@@ -7604,7 +7775,7 @@ const detectEmployeeSearchIntent = (question, history = []) => {
     };
   }
 
-  // ── Top / Highest / Lowest Salary queries (e.g. "Top 10 employee salary batao", "highest salary", "top salaries")
+  // 5. Top / Highest / Lowest Salary queries
   const isSalaryMentioned = /\b(salary|salaries|ve\s*tan|tankhah|ctc|gross|net|basic|pay|payroll)\b/i.test(q);
   const isTopOrRanking = /\b(top|highest|max|maximum|lowest|min|minimum|sabse\s*(?:jyada|adhik|kam)|best|rank|ranking)\b/i.test(q);
 
@@ -7622,29 +7793,7 @@ const detectEmployeeSearchIntent = (question, history = []) => {
     };
   }
 
-  // If question contains aggregate, count, sum, or ranking keywords NOT related to top salary, bypass single-employee name lookup
-  if (!isSalaryMentioned && /\b(sabse|highest|lowest|max|maximum|min|minimum|top|bottom|least|highest_salary|lowest_salary|kitne|kitna|kitni|total|sum|count|avg|average)\b/i.test(q)) {
-    return null;
-  }
-
-  let empCode = extractEmployeeCode(q);
-
-  // If no explicit empcode in current question, but prompt has pronouns (yahi, isi, usi, iska, iski, same, etc.)
-  // or is a follow-up asking for salary/attendance, resolve empCode from session history!
-  const hasPronounOrFollowUp =
-    /\b(yahi|yhi|isi|isii|usi|usii|ussi|isay|usay|iska|iski|usuka|uski|unka|unki|iss|is|ise|inhe|same|this|above)\b/i.test(q) ||
-    (/\b(salary|attendance|monthdays|pan|detail|details)\b/i.test(q) && !extractName(q));
-
-  if (!empCode && hasPronounOrFollowUp && Array.isArray(history) && history.length > 0) {
-    const historicalCode = resolveEmployeeFromHistory(history);
-    if (historicalCode) {
-      empCode = historicalCode;
-    }
-  }
-
-  if (empCode) return { searchType: "EMP_CODE", searchValue: empCode, wantedFields };
-
-  const name = extractName(q);
+  // 6. Name search fallback if name exists
   if (name) return { searchType: "NAME", searchValue: name, wantedFields };
 
   return null;
@@ -7677,22 +7826,20 @@ const findAllCols = (columns = [], patterns = []) => {
   const patList = Array.isArray(patterns) ? patterns : [patterns];
   const matches = [];
   const added = new Set();
-  for (const c of columns) {
-    const n = String(c?.name || c?.Column_Name || c || "").trim();
-    if (!n || added.has(n.toLowerCase())) continue;
-    for (const re of patList) {
-      if (!re) continue;
+  for (const re of patList) {
+    if (!re) continue;
+    for (const c of columns) {
+      const n = String(c?.name || c?.Column_Name || c || "").trim();
+      if (!n || added.has(n.toLowerCase())) continue;
       if (typeof re === "string") {
         if (n.toLowerCase() === re.toLowerCase()) {
           matches.push(n);
           added.add(n.toLowerCase());
-          break;
         }
       } else if (typeof re.test === "function") {
         if (re.test(n)) {
           matches.push(n);
           added.add(n.toLowerCase());
-          break;
         }
       }
     }
@@ -7705,8 +7852,14 @@ const buildColCoalesceExpr = (tableAlias, cols, fallbackLabel) => {
 
   const sanitizeExpr = (col) => {
     const c = `[${tableAlias}].${qIdent(col)}`;
-    if (/^(pfno|pf|location)$/i.test(col)) {
+    if (/^(pfno|pf|esino|esi|location)$/i.test(col)) {
       return `CASE WHEN LTRIM(RTRIM(CONVERT(varchar(1000), ${c}))) IN ('0','1','2','3','-','') THEN NULL ELSE LTRIM(RTRIM(CONVERT(varchar(1000), ${c}))) END`;
+    }
+    if (/^(desg|emp_desg)$/i.test(col)) {
+      return `COALESCE((SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 95 AND Misc_Code = ${c}), NULLIF(NULLIF(NULLIF(NULLIF(LTRIM(RTRIM(CONVERT(varchar(1000), ${c}))), '0'), '-'), 'N/A'), ''))`;
+    }
+    if (/^(division|dept_code)$/i.test(col)) {
+      return `COALESCE((SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 68 AND Misc_Code = ${c}), NULLIF(NULLIF(NULLIF(NULLIF(LTRIM(RTRIM(CONVERT(varchar(1000), ${c}))), '0'), '-'), 'N/A'), ''))`;
     }
     return `NULLIF(NULLIF(NULLIF(NULLIF(LTRIM(RTRIM(CONVERT(varchar(1000), ${c}))), '0'), '-'), 'N/A'), '')`;
   };
@@ -7737,19 +7890,39 @@ const EMP = {
   pf: [
     /^pfnumber$/i,
     /^pf_number$/i,
-    /^providentfundno$/i,
-    /^provident_fund_no$/i,
     /^pftrust_no$/i,
     /^pftrustno$/i,
+    /^providentfundno$/i,
+    /^provident_fund_no$/i,
+    /^uan_no$/i,
     /^uan$/i,
     /^pfno$/i,
     /^pf_no$/i,
     /^pf$/i,
     /^pfd$/i,
   ],
+  esi: [
+    /^esinumber$/i,
+    /^esi_number$/i,
+    /^esic_no$/i,
+    /^esino$/i,
+    /^esi_no$/i,
+    /^esi$/i,
+  ],
+  uan: [
+    /^uan_no$/i,
+    /^uanno$/i,
+    /^uan$/i,
+  ],
   mobile: [
     /^mobileno$/i, /^mobile_no$/i, /^mobile$/i, /^moble$/i, /^phone$/i, /^phoneno$/i, /^contactno$/i, /^contact$/i,
     /^father_mob$/i, /^fathercontactno$/i, /^mother_mob$/i, /^mothercontactno$/i, /^spouse_mob$/i, /^spousecontactno$/i
+  ],
+  permanentAddress: [
+    /^permanentaddress1$/i, /^permanentaddress2$/i, /^permanentaddress$/i, /^permanent_address$/i, /^perm_address$/i
+  ],
+  currentAddress: [
+    /^currentaddress1$/i, /^currentaddress2$/i, /^currentaddress$/i, /^current_address$/i, /^curr_address$/i
   ],
   address: [
     /^permanentaddress1$/i, /^permanentaddress2$/i, /^permanentaddress$/i, /^permanent_address$/i,
@@ -7757,8 +7930,8 @@ const EMP = {
     /^address1$/i, /^address2$/i, /^address$/i, /^addr$/i, /^emp_address$/i, /^empaddress$/i, /^location$/i
   ],
   email: [/^email$/i, /^email_id$/i, /^emailid$/i, /^mail$/i, /^mail_id$/i],
-  department: [/^department$/i, /^dept$/i, /^dept_name$/i, /^department_name$/i],
-  designation: [/^designation$/i, /^desig$/i, /^designation_name$/i, /^role$/i],
+  department: [/^employeedepartment$/i, /^department$/i, /^dept$/i, /^dept_desc$/i, /^dept_name$/i, /^department_name$/i, /^sec_desc$/i],
+  designation: [/^employeedesignation$/i, /^designation$/i, /^desig$/i, /^desig_desc$/i, /^designation_name$/i, /^role$/i, /^desg$/i, /^emp_desg$/i],
   bankAcc: [/^bankacc$/i, /^bank_acc$/i, /^bankaccountno$/i, /^accountno$/i, /^account_no$/i, /^acc_no$/i],
   aadhar: [/^aadhar$/i, /^aadharno$/i, /^aadhar_no$/i, /^aadhaar$/i, /^uid$/i],
   dob: [/^dob$/i, /^dateofbirth$/i, /^birthdate$/i, /^birth_date$/i],
@@ -7898,7 +8071,11 @@ const buildEmployeeAndSalarySQL = ({ question, schemaContext, searchType, search
   const cLast = findCol(empCols, EMP.last);
   const allPanCols = findAllCols(empCols, EMP.pan);
   const allPfCols = findAllCols(empCols, EMP.pf);
+  const allEsiCols = findAllCols(empCols, EMP.esi);
+  const allUanCols = findAllCols(empCols, EMP.uan);
   const allMobileCols = findAllCols(empCols, EMP.mobile);
+  const allPermAddrCols = findAllCols(empCols, EMP.permanentAddress);
+  const allCurrAddrCols = findAllCols(empCols, EMP.currentAddress);
   const allAddrCols = findAllCols(empCols, EMP.address);
   const allEmailCols = findAllCols(empCols, EMP.email);
   const allDeptCols = findAllCols(empCols, EMP.department);
@@ -7911,7 +8088,11 @@ const buildEmployeeAndSalarySQL = ({ question, schemaContext, searchType, search
 
   const panExpr = buildColCoalesceExpr("E", allPanCols, "_clean_PAN");
   const pfExpr = buildColCoalesceExpr("E", allPfCols, "_clean_PF_No");
+  const esiExpr = buildColCoalesceExpr("E", allEsiCols, "_clean_ESI_No");
+  const uanExpr = buildColCoalesceExpr("E", allUanCols, "_clean_UAN_No");
   const mobileExpr = buildColCoalesceExpr("E", allMobileCols, "_clean_MobileNo");
+  const permAddrExpr = buildColCoalesceExpr("E", allPermAddrCols, "_clean_PermanentAddress");
+  const currAddrExpr = buildColCoalesceExpr("E", allCurrAddrCols, "_clean_CurrentAddress");
   const addrExpr = buildColCoalesceExpr("E", allAddrCols, "_clean_Address");
   const emailExpr = buildColCoalesceExpr("E", allEmailCols, "_clean_Email");
   const deptExpr = buildColCoalesceExpr("E", allDeptCols, "_clean_Department");
@@ -8031,7 +8212,11 @@ const buildEmployeeAndSalarySQL = ({ question, schemaContext, searchType, search
     `[E].${qIdent(cEmpCode)} AS [_clean_EmployeeCode]`,
     ...(panExpr ? [panExpr] : []),
     ...(pfExpr ? [pfExpr] : []),
+    ...(esiExpr ? [esiExpr] : []),
+    ...(uanExpr ? [uanExpr] : []),
     ...(mobileExpr ? [mobileExpr] : []),
+    ...(permAddrExpr ? [permAddrExpr] : []),
+    ...(currAddrExpr ? [currAddrExpr] : []),
     ...(addrExpr ? [addrExpr] : []),
     ...(emailExpr ? [emailExpr] : []),
     ...(deptExpr ? [deptExpr] : []),
@@ -8373,13 +8558,15 @@ OUTER APPLY (
     ...(allPanCols.length ? ["BestEmp.[_clean_PAN] AS [PAN]"] : []),
     ...(allPfCols.length ? ["BestEmp.[_clean_PF_No] AS [PF_No]"] : []),
     ...(allMobileCols.length ? ["BestEmp.[_clean_MobileNo] AS [MobileNo]"] : []),
+    ...(allPermAddrCols.length ? ["BestEmp.[_clean_PermanentAddress] AS [PermanentAddress]"] : []),
+    ...(allCurrAddrCols.length ? ["BestEmp.[_clean_CurrentAddress] AS [CurrentAddress]"] : []),
     ...(allAddrCols.length ? ["BestEmp.[_clean_Address] AS [Address]"] : []),
     ...(allEmailCols.length ? ["BestEmp.[_clean_Email] AS [Email]"] : []),
     ...(allDeptCols.length ? ["BestEmp.[_clean_Department] AS [Department]"] : []),
     ...(allDesigCols.length ? ["BestEmp.[_clean_Designation] AS [Designation]"] : []),
     ...(allBankCols.length ? ["BestEmp.[_clean_BankAccountNo] AS [BankAccountNo]"] : []),
     ...(allAadharCols.length ? ["BestEmp.[_clean_AadharNo] AS [AadharNo]"] : []),
-    ...(allDobCols.length ? ["BestEmp.[_clean_DOB] AS [DOB]"] : []),
+    ...(allDobCols.length ? ["BestEmp.[_clean_DOB] AS [DOB]", "CONVERT(varchar(10), BestEmp.[_clean_DOB], 120) AS [BirthDate]", "DATENAME(month, BestEmp.[_clean_DOB]) AS [BirthMonth]", "DAY(BestEmp.[_clean_DOB]) AS [BirthDay]"] : []),
     ...(allDojCols.length ? ["BestEmp.[_clean_DateOfJoining] AS [DateOfJoining]"] : []),
     ...(allSkillsCols.length ? ["BestEmp.[_clean_Skills] AS [Skills]"] : []),
     ...finalSalaryCols,
@@ -8937,6 +9124,166 @@ ORDER BY [E].[EMPCODE] ASC`.trim();
   };
 };
 
+const buildDailyAttendanceDateQuerySQL = ({ question, schemaContext, history = [] }) => {
+  const q = normalizeQ(question);
+
+  // If query is specifically targeting a single employee's salary/profile/designation/pan/bank/mobile, bypass daily attendance!
+  const hasEmpCode = extractEmployeeCode(q);
+  const hasEmpName = extractName(q);
+  const isSalaryOrProfile = /\b(salary|sal|gross|net|basic|salarystructure|pay|designation|desg|role|department|dept|profile|details|pan|bank|mobile)\b/i.test(q);
+  if ((hasEmpCode || hasEmpName) && isSalaryOrProfile) {
+    return null; // Route to buildEmployeeAndSalarySQL
+  }
+
+  // 1. Must mention attendance / presence / absence / duty / weekly off / employee count on date
+  const isAttendanceQuery = /\b(attendance|attendancetable|present|absent|leave|holiday|hazri|haazri|aaye|aaya|gairhazir|chhutti|chutti|duty|punch|punches|weakly|weekly|weekoff|weakoff|week\s*off|weak\s*off|wo|sunday|itwar|ravivar|halfday|half\s*day)\b/i.test(q) ||
+    (/\b(employee|employees|emp|log|staff|kitne|kitni|count|total|sankhya|number\s*of|list|koun|kaun)\b/i.test(q) && /(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]20\d{2}|today|aaj|yesterday|kal|present|absent|attendance|hazri|duty)/i.test(q));
+
+  if (!isAttendanceQuery) return null;
+
+  // 2. Extract Date from Question or History
+  let targetDate = null;
+  let isDynamicDate = false;
+  let dynamicDateExpr = null;
+
+  const isoMatch = q.match(/(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])(?:T|\b)/);
+  if (isoMatch) {
+    targetDate = `${isoMatch[1]}-${String(isoMatch[2]).padStart(2, '0')}-${String(isoMatch[3]).padStart(2, '0')}`;
+  } else {
+    const dmyMatch = q.match(/(?:^|[^\d])(0?[1-9]|[12]\d|3[01])[-/](0?[1-9]|1[0-2])[-/](20\d{2})(?:[^\d]|$)/);
+    if (dmyMatch) {
+      targetDate = `${dmyMatch[3]}-${String(dmyMatch[2]).padStart(2, '0')}-${String(dmyMatch[1]).padStart(2, '0')}`;
+    } else if (/\b(today|aaj|current\s*date|current\s*day)\b/i.test(q)) {
+      isDynamicDate = true;
+      dynamicDateExpr = `CONVERT(date, GETDATE())`;
+    } else if (/\b(yesterday|kal|previous\s*day)\b/i.test(q)) {
+      isDynamicDate = true;
+      dynamicDateExpr = `DATEADD(day, -1, CONVERT(date, GETDATE()))`;
+    }
+  }
+
+  // If no date found in current question, check conversation history
+  if (!targetDate && !isDynamicDate && Array.isArray(history) && history.length > 0) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const histText = String(history[i]?.content || history[i]?.message || history[i]?.User_Query || history[i]?.userQuery || "");
+      const histIso = histText.match(/(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])(?:T|\b)/);
+      if (histIso) {
+        targetDate = `${histIso[1]}-${String(histIso[2]).padStart(2, '0')}-${String(histIso[3]).padStart(2, '0')}`;
+        break;
+      }
+      const histDmy = histText.match(/(?:^|[^\d])(0?[1-9]|[12]\d|3[01])[-/](0?[1-9]|1[0-2])[-/](20\d{2})(?:[^\d]|$)/);
+      if (histDmy) {
+        targetDate = `${histDmy[3]}-${String(histDmy[2]).padStart(2, '0')}-${String(histDmy[1]).padStart(2, '0')}`;
+        break;
+      }
+    }
+  }
+
+  // Fallback to today if asking general attendance without specific date
+  if (!targetDate && !isDynamicDate) {
+    isDynamicDate = true;
+    dynamicDateExpr = `CONVERT(date, GETDATE())`;
+  }
+
+  const params = [];
+  let dateCondition = "";
+  if (targetDate) {
+    params.push({ name: "targetDate", value: targetDate, type: "string" });
+    dateCondition = `CONVERT(date, [A].[dateoffice]) = :targetDate`;
+  } else {
+    dateCondition = `CONVERT(date, [A].[dateoffice]) = ${dynamicDateExpr}`;
+  }
+
+  // 3. Determine status filter (Handle Hinglish spellings like weakly/weekly off, gairhazir, etc.)
+  const isWeeklyOff = /\b(weekly\s*off|weakly\s*off|weak\s*off|week\s*off|weekoff|weakoff|weakly|weekly|wekly|wo|sunday|itwar|ravivar|hafta)\b/i.test(q);
+  const isHoliday = /\b(holiday|holidays|tyohar|festival|parv)\b/i.test(q);
+  const isLeave = /\b(leave|leaves|lwp|cl|sl|pl|el|ml|paid\s*leave|casual\s*leave|sick\s*leave)\b/i.test(q) && !/\b(present|absent|weakly|weekly)\b/i.test(q);
+  const isHalfDay = /\b(half\s*day|halfday|half-day|aadha\s*din|hd)\b/i.test(q);
+  const isAbsent = /\b(absent|gairhazir|gair\s*hazir|nahi\s*aaye|nahi\s*aaya|not\s*present)\b/i.test(q) && !/\b(present|hazri|aaye|weakly|weekly|weekoff)\b/i.test(q);
+
+  let statusFilter = "";
+  let statusLabel = "Present";
+
+  if (isWeeklyOff) {
+    statusFilter = `AND UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'WO'`;
+    statusLabel = "Weekly_Off";
+  } else if (isHoliday) {
+    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'H' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'H')`;
+    statusLabel = "Holiday";
+  } else if (isLeave) {
+    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML'))`;
+    statusLabel = "Leave";
+  } else if (isHalfDay) {
+    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'HD' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'HD')`;
+    statusLabel = "Half_Day";
+  } else if (isAbsent) {
+    statusFilter = `AND UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'A'`;
+    statusLabel = "Absent";
+  } else {
+    // Default: Present - Strict flag = 'P'
+    statusFilter = `AND UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'P'`;
+    statusLabel = "Present";
+  }
+
+  // 4. Count vs List query
+  const isCount = /\b(count|total|kitne|kitni|how\s*many|number\s*of|kul|sankhya)\b/i.test(q) && !/\b(list|name|naam|table|koun|kaun|details|bhejo|dikhao)\b/i.test(q);
+
+  if (isCount) {
+    const rawCondition = statusFilter.replace(/^AND\s+/i, '');
+    const sql = `SELECT 
+  COUNT(DISTINCT CASE WHEN ${rawCondition} THEN [A].[Emp_Code] END) AS [Total_${statusLabel.replace(/\s+/g, '_')}_Employees],
+  COUNT(DISTINCT CASE WHEN UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) IN ('A', 'WO') THEN [A].[Emp_Code] END) AS [Total_Absent_Plus_WeeklyOff_Employees],
+  COUNT(DISTINCT CASE WHEN UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'A' THEN [A].[Emp_Code] END) AS [Total_Pure_Absent_Employees],
+  COUNT(DISTINCT CASE WHEN UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'WO' THEN [A].[Emp_Code] END) AS [Total_Weekly_Off_Employees],
+  COUNT(DISTINCT CASE WHEN UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'P' THEN [A].[Emp_Code] END) AS [Total_Present_Employees],
+  COUNT(DISTINCT CASE WHEN (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'H' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'H') THEN [A].[Emp_Code] END) AS [Total_Holiday_Employees],
+  COUNT(DISTINCT CASE WHEN (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML')) THEN [A].[Emp_Code] END) AS [Total_Leave_Employees],
+  COUNT(DISTINCT [A].[Emp_Code]) AS [Total_Recorded_Employees],
+  ${targetDate ? ":targetDate" : dynamicDateExpr} AS [AttendanceDate]
+FROM [dbo].[attendancetable] AS [A] WITH (NOLOCK)
+WHERE ${dateCondition}`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "ATTENDANCE",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: params,
+      explanation: `Provide attendance count for date ${targetDate || 'selected date'} with complete breakdown: Total Absent (flag='A'), Weekly Off (flag='WO'), Total Combined Non-Working (Absent+WO), Leaves, and Present (flag='P') from dbo.attendancetable.`,
+      deterministic: true,
+    };
+  }
+
+  // List query - Always GROUP BY or DISTINCT to prevent duplicate employee rows
+  const sql = `SELECT TOP 200
+  [A].[Emp_Code] AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  MAX(CONVERT(varchar(10), [A].[dateoffice], 120)) AS [AttendanceDate],
+  MAX([A].[flag]) AS [Flag],
+  MAX([A].[status]) AS [Status],
+  MAX(CONVERT(varchar(8), [A].[in1], 108)) AS [InTime],
+  MAX(CONVERT(varchar(8), [A].[out1], 108)) AS [OutTime],
+  MAX([A].[hoursworked]) AS [HoursWorked],
+  MAX([E].[LOCATION]) AS [Location],
+  MAX([E].[EMPLOYEEDESIGNATION]) AS [Designation]
+FROM [dbo].[attendancetable] AS [A] WITH (NOLOCK)
+LEFT JOIN dbo.EMPLOYEEMASTER AS E WITH (NOLOCK) ON [A].[Emp_Code] = [E].[EMPCODE]
+WHERE ${dateCondition}
+  ${statusFilter}
+GROUP BY [A].[Emp_Code], [E].[EMPFIRSTNAME], [E].[EMPLASTNAME]
+ORDER BY [EmployeeName] ASC`.trim();
+
+  return {
+    canAnswer: true,
+    intent: "ATTENDANCE",
+    sensitivity: "NORMAL",
+    sql,
+    parameters: params,
+    explanation: `List distinct ${statusLabel.toLowerCase()} employees with in/out punch times for date ${targetDate || 'selected date'} from dbo.attendancetable`,
+    deterministic: true,
+  };
+};
+
 const buildBirthdayQuerySQL = ({ question, schemaContext }) => {
   const q = normalizeQ(question);
 
@@ -9014,8 +9361,12 @@ ORDER BY ${orderExpr}`.trim();
   };
 };
 
-const buildDeterministicPlan = ({ question, schemaContext, history = [] }) => {
+const buildDeterministicPlan = exports.buildDeterministicPlan = ({ question, schemaContext, history = [] }) => {
   const q = normalizeQ(question);
+
+  // Check daily attendance plan first (e.g. "2025-10-21 is date me kitne employee present the ?? total count do")
+  const dailyAttPlan = buildDailyAttendanceDateQuerySQL({ question: q, schemaContext, history });
+  if (dailyAttPlan) return dailyAttPlan;
 
   // Check birthday plan (e.g. "September mahine kiska birthday hai", "is mahine kiska birthday hai")
   const bdayPlan = buildBirthdayQuerySQL({ question: q, schemaContext });

@@ -1470,7 +1470,14 @@
         "Emp_Code",
         "Effective_date"
       ],
-      "description": "Employee agreed monthly CTC Gross Salary and component breakdown (Basic, HRA, Conveyance, Medical, Washing, Other).",
+      "description": "Employee fixed agreed master monthly CTC package and component structure breakup (Gross_Salary, Basic, HRA, Conveyance, Medical, Washing, Uniform, Other) with revision history. Use this table when user asks for 'salary structure', 'CTC package', 'fixed salary breakup', or 'agreed CTC'.",
+      "queryRules": [
+        "Use SALARYSTRUCTURE when the question is about: 'salary structure', 'CTC breakup', 'fixed CTC', 'agreed package', 'basic HRA structure', or 'current salary structure'.",
+        "Filter by employee code using Emp_Code = @empCode (e.g. Emp_Code = '19001162').",
+        "Always sort by Effective_date DESC to get the latest active salary structure revision (ORDER BY Effective_date DESC).",
+        "Fixed Gross CTC package is in Gross_Salary. Fixed Basic is in Basic. Fixed HRA is in HRA. Conveyance is in Conveyance. Medical is in Medical. Washing is in Washing. Uniform is in Uniform. Other allowances is in Other.",
+        "CRITICAL DISTINCTION: For actual monthly earned salary, payslips, or specific month payout (e.g. 'April 2026 me kitni salary mili', 'net payable', 'actual earned'), query SALARYFILE table, NOT SALARYSTRUCTURE."
+      ],
       "columns": {
         "Emp_Code": {
           "type": "nvarchar(50)",
@@ -1526,210 +1533,551 @@
     },
     "SALARYFILE": {
       "tableName": "SALARYFILE",
-      "displayName": "Monthly Processed Salary & Payroll Payslip Register",
-      "module": "PAYROLL",
+      "displayName": "Monthly Employee Payroll & Salary Register",
+      "module": "HR_PAYROLL",
       "primaryKey": [
         "Emp_Code",
         "SalMnth",
         "salyear"
       ],
-      "description": "Monthly calculated and locked payroll register containing actual earned salary components (Gross_Earn, Basic_Earn, HRA_Earn, Total_Earn, Final_Payment) and payroll attendance (Present_days, Monthdays, Total_Days) for each employee.",
+      "description": "Comprehensive monthly processed payroll register storing fixed structure pay, actual earned components (Gross_Earn, Basic_Earn, HRA_Earn, etc.), statutory & advance deductions (PF, ESIC, TDS, Loan, Advance, P1P2_DED), attendance day counts (Present_days, Monthdays, Absent, Leave), designation snapshot (Desig_Desc), and final net payable salary (Final_Payment).",
       "queryRules": [
-        "CRITICAL: For actual monthly payout/earnings, ALWAYS query Gross_Earn, Basic_Earn, HRA_Earn, CONVEN_Earn, Medical_Earn, Other_Earn, Total_Earn, and Final_Payment.",
-        "CRITICAL: Do NOT use Gross or Basic as monthly earned salary — Gross and Basic are fixed master monthly CTC before attendance deduction.",
-        "For payroll attendance: Use Present_days for days worked, Monthdays for total days in month, and Total_Days for payable days.",
-        "To filter specific month and year: WHERE Emp_Code = @empCode AND SalMnth = @monthNum AND salyear = @yearStr."
+        "Filter by specific month using SalMnth = @month (1-12) or SalMnth = @monthName (e.g. SalMnth = 4 for April).",
+        "Filter by specific year using salyear = @year (e.g. salyear = 2026).",
+        "Filter by employee using Emp_Code = @empCode (e.g. Emp_Code = '19001162').",
+        "Join with EMPLOYEEMASTER on SALARYFILE.Emp_Code = EMPLOYEEMASTER.EMPCODE.",
+        "Join with Misc_Mst for branch name on Misc_Mst.Misc_Code = SALARYFILE.Loc_Code AND Misc_Mst.Misc_Type = 85.",
+        "Net Payable Salary is in Final_Payment.",
+        "Actual Earned Gross Salary is in Gross_Earn (or Total_Earn).",
+        "Fixed Gross Package is in Gross (or Total).",
+        "Actual worked present days count is in Present_days. Total calendar days is in Monthdays. Absent days is in ABSENTVALUE / Off_days.",
+        "Employee designation snapshot in payroll is in Desig_Desc."
       ],
       "columns": {
         "Emp_Code": {
-          "type": "varchar(20)",
+          "type": "varchar(100)",
           "nullable": false,
-          "description": "Employee Code (links to EMPLOYEEMASTER.EMPCODE)"
-        },
-        "SalMnth": {
-          "type": "smallint",
-          "nullable": false,
-          "description": "Salary Month (1=Jan, 2=Feb, 3=Mar, 4=Apr, 5=May, 6=Jun, 7=Jul, 8=Aug, 9=Sep, 10=Oct, 11=Nov, 12=Dec)"
-        },
-        "salyear": {
-          "type": "varchar(10)",
-          "nullable": false,
-          "description": "Salary Year (e.g. 2026)"
+          "description": "Employee Code / ID (links to EMPLOYEEMASTER.EMPCODE)"
         },
         "Monthdays": {
-          "type": "smallint",
+          "type": "decimal(6,2)",
           "nullable": true,
-          "description": "Total calendar days in the salary month (28, 29, 30, 31)"
+          "description": "Total calendar days in this salary month (e.g. 30, 31, 28)"
         },
         "Present_days": {
-          "type": "decimal(19,4)",
+          "type": "decimal(6,2)",
           "nullable": true,
-          "description": "Actual present/working days worked by employee in this month"
+          "description": "Total actual days employee was present at duty"
         },
         "Off_days": {
-          "type": "decimal(19,4)",
+          "type": "decimal(6,2)",
           "nullable": true,
-          "description": "Weekly off days in this month"
+          "description": "Weekly off days credited in month"
         },
         "Holiday_Leaves": {
-          "type": "decimal(19,4)",
+          "type": "decimal(6,2)",
           "nullable": true,
-          "description": "Paid holidays and approved leaves"
+          "description": "Paid holiday and approved leave days credited"
         },
         "Total_Days": {
-          "type": "decimal(19,4)",
+          "type": "decimal(6,2)",
           "nullable": true,
-          "description": "Total payable days for salary calculation (Present_days + Off_days + Holiday_Leaves)"
-        },
-        "Gross_Earn": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "ACTUAL Gross salary EARNED for this month based on attendance (e.g. 5305.00)"
-        },
-        "Basic_Earn": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "ACTUAL Basic salary EARNED for this month"
-        },
-        "HRA_Earn": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "ACTUAL HRA EARNED for this month"
-        },
-        "CONVEN_Earn": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "ACTUAL Conveyance allowance EARNED for this month"
-        },
-        "Medical_Earn": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "ACTUAL Medical allowance EARNED for this month"
-        },
-        "Other_Earn": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "ACTUAL Other allowances EARNED for this month"
-        },
-        "Total_Earn": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "ACTUAL Total earnings for this month before deductions"
-        },
-        "Final_Payment": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "ACTUAL Net In-Hand Take-Home Salary transferred/payable to bank account"
+          "description": "Total payable working days (Present + Off + Holiday + Leave)"
         },
         "Gross": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Fixed Master Monthly Gross CTC rate (before attendance proration, e.g. 11750.00)"
+          "description": "Fixed monthly structure gross salary package"
         },
         "Basic": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Fixed Master Monthly Basic rate"
+          "description": "Fixed basic pay structure component"
         },
         "HRA": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Fixed Master Monthly HRA rate"
+          "description": "Fixed House Rent Allowance structure component"
         },
         "CONVEN": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Fixed Master Monthly Conveyance rate"
+          "description": "Fixed Conveyance Allowance component"
         },
         "Medical": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Fixed Master Monthly Medical rate"
+          "description": "Fixed Medical Allowance component"
         },
         "Other": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Fixed Master Monthly Other Allowance rate"
+          "description": "Fixed Other Allowances component"
         },
         "Total": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Fixed Master Monthly Total rate"
+          "description": "Total fixed monthly package"
+        },
+        "Gross_Earn": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Actual earned gross salary for days worked"
+        },
+        "Basic_Earn": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Actual earned Basic pay for days worked"
+        },
+        "HRA_Earn": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Actual earned House Rent Allowance"
+        },
+        "CONVEN_Earn": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Actual earned Conveyance Allowance"
+        },
+        "Medical_Earn": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Actual earned Medical Allowance"
+        },
+        "Other_Earn": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Actual earned Other Allowances"
+        },
+        "Total_Earn": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Total actual earned gross salary before deductions"
         },
         "Arrear": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Arrear payment additions for previous months"
+          "description": "Past salary arrears added to earnings"
         },
         "Deducation": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Total monthly deductions (PF + ESI + TDS + Advance + Loan + Other)"
+          "description": "Total statutory & non-statutory deductions amount"
         },
         "Advance": {
-          "type": "decimal(19,4)",
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Salary advance recovered this month"
+          "description": "Salary advance amount recovered"
         },
-        "pf_employee": {
-          "type": "decimal(19,4)",
+        "Final_Payment": {
+          "type": "decimal(12,2)",
           "nullable": true,
-          "description": "Employee EPF deduction (12%)"
-        },
-        "esic_employee": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "Employee ESIC deduction (0.75%)"
-        },
-        "tds": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "Income Tax TDS deduction"
-        },
-        "Bonus": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "Monthly bonus or performance payout"
-        },
-        "PROF_TAX": {
-          "type": "decimal(19,4)",
-          "nullable": true,
-          "description": "Professional Tax deduction"
-        },
-        "Account_No": {
-          "type": "varchar(50)",
-          "nullable": true,
-          "description": "Employee Bank Account Number for salary credit"
-        },
-        "Bank_Name": {
-          "type": "varchar(100)",
-          "nullable": true,
-          "description": "Salary Bank Name"
-        },
-        "Sal_Disbursh": {
-          "type": "varchar(20)",
-          "nullable": true,
-          "description": "Salary disbursement status (Y/N)"
-        },
-        "Sal_OnHold": {
-          "type": "varchar(10)",
-          "nullable": true,
-          "description": "Hold salary flag"
+          "description": "Final net payable salary credited to employee"
         },
         "Loc_Code": {
           "type": "smallint",
           "nullable": true,
-          "description": "Branch Location Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 85)"
+          "description": "Branch Location Code (links to Misc_Mst.Misc_Code WHERE Misc_Type = 85)"
+        },
+        "ServerId": {
+          "type": "int",
+          "nullable": true,
+          "description": "Server Instance ID"
+        },
+        "pf_chk": {
+          "type": "bit",
+          "nullable": true,
+          "description": "PF deduction applicable flag (1=Yes, 0=No)"
+        },
+        "esic_chk": {
+          "type": "bit",
+          "nullable": true,
+          "description": "ESIC deduction applicable flag (1=Yes, 0=No)"
+        },
+        "pf_employee": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Employee PF deduction (12%)"
+        },
+        "pf_employer": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Employer PF contribution"
+        },
+        "pf_emplpension": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Employer EPS pension contribution"
+        },
+        "pf_employer_admin": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "PF administrative charges"
+        },
+        "esic_employee": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Employee ESIC deduction (0.75%)"
+        },
+        "esic_employer": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Employer ESIC contribution (3.25%)"
+        },
+        "lwf_employee": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Labour Welfare Fund employee share"
+        },
+        "lwf_employer": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Labour Welfare Fund employer share"
+        },
+        "tds": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Tax Deducted at Source (TDS / Income Tax)"
+        },
+        "mob_ded": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Mobile phone bill recovery deduction"
+        },
+        "oth_ded": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Other miscellaneous deductions"
+        },
+        "EWF": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Employee Welfare Fund contribution"
+        },
+        "Bonus": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Performance / festival bonus payout"
+        },
+        "SalMnth": {
+          "type": "int",
+          "nullable": false,
+          "description": "Salary Month (1=Jan, 2=Feb, 3=Mar, 4=Apr, 5=May, 6=Jun, 7=Jul, 8=Aug, 9=Sep, 10=Oct, 11=Nov, 12=Dec)"
+        },
+        "MISC_DED": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Miscellaneous payroll deductions"
+        },
+        "MISC_EARN": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Miscellaneous earnings / allowances"
+        },
+        "P1P2_DED": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Late arrival / punch penalty deduction"
+        },
+        "PROF_TAX": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Professional Tax (PT) statutory deduction"
+        },
+        "Washing_Arr": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Washing allowance arrears"
+        },
+        "Medical_Arr": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Medical allowance arrears"
+        },
+        "Conv_Arr": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Conveyance arrears"
+        },
+        "Basic_Arr": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Basic pay arrears"
+        },
+        "HRA_Arr": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "HRA arrears"
+        },
+        "salyear": {
+          "type": "int",
+          "nullable": false,
+          "description": "Salary Year (e.g. 2026)"
         },
         "ABSENTVALUE": {
-          "type": "decimal(19,4)",
+          "type": "decimal(6,2)",
           "nullable": true,
-          "description": "Actual Absent Days in this salary month (e.g. 18.00)"
+          "description": "Total absent days count in month"
         },
         "LEAVEVALUE": {
-          "type": "decimal(19,4)",
+          "type": "decimal(6,2)",
           "nullable": true,
-          "description": "Actual Leave Days in this salary month"
+          "description": "Total leave days count in month"
+        },
+        "iPad_ded": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Company asset / iPad installment deduction"
+        },
+        "Mediclaim_ded": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Mediclaim insurance premium deduction"
+        },
+        "New_Uniform": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "New uniform cost recovery"
+        },
+        "Loan": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Company employee loan EMI recovery"
+        },
+        "Uni_Ded": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Uniform / union dues deduction"
+        },
+        "Suspend_Days": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Suspension period days count"
+        },
+        "PF_EDLI": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "PF EDLI insurance contribution"
+        },
+        "HR_Aprvl": {
+          "type": "bit",
+          "nullable": true,
+          "description": "HR Payroll Verification Approval Flag (1=Approved)"
+        },
+        "Acnt_Aprvl": {
+          "type": "bit",
+          "nullable": true,
+          "description": "Accounts Department Approval Flag (1=Approved)"
+        },
+        "Chq_Print": {
+          "type": "bit",
+          "nullable": true,
+          "description": "Bank cheque / payment file generated flag"
+        },
+        "Sal_Disbursh": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Salary disbursement status ('Y'/'N')"
+        },
+        "Chq_No": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Cheque / NEFT / RTGS payment reference number"
+        },
+        "Chq_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Payment disbursement / cheque date"
+        },
+        "Disb_Pay": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Disbursed net amount"
+        },
+        "Bank_Name": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Salary bank name"
+        },
+        "ChqPrint_Name": {
+          "type": "varchar(150)",
+          "nullable": true,
+          "description": "Employee name printed on payment instrument"
+        },
+        "Sal_Mode": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Payment Mode (BANK_TRANSFER, CHEQUE, CASH, NEFT)"
+        },
+        "Sal_OnHold": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Salary on hold flag ('Y'/'N')"
+        },
+        "Bank_Ledger": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Accounting bank ledger code"
+        },
+        "PymtVch_Print": {
+          "type": "bit",
+          "nullable": true,
+          "description": "Payment voucher printed flag"
+        },
+        "AdvEmp_Ledger": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Employee advance accounting ledger code"
+        },
+        "Adv_JV": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Advance recovery Journal Voucher number"
+        },
+        "HoldEmp_Ledger": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "On-hold employee ledger code"
+        },
+        "Hold_JV": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "On-hold salary Journal Voucher number"
+        },
+        "Washing": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Fixed washing allowance structure component"
+        },
+        "Washing_Earn": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Actual earned washing allowance"
+        },
+        "INC_BATCH": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Incentive calculation batch ID"
+        },
+        "ENTRY_BATCH": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Payroll posting batch identifier"
+        },
+        "Penulty": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Disciplinary / attendance penalty deduction"
+        },
+        "OutStanding": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Outstanding balance dues"
+        },
+        "OT_Day": {
+          "type": "decimal(6,2)",
+          "nullable": true,
+          "description": "Total overtime days worked"
+        },
+        "OT_Amt": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Earned overtime amount"
+        },
+        "ESIC_WAGES": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Wages base used for ESIC calculation"
+        },
+        "Sal_Unpaid": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Unpaid salary carryforward amount"
+        },
+        "Lock_By": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "User ID who finalized / locked salary"
+        },
+        "Lock_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Timestamp when salary was locked"
+        },
+        "Lock_Time": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Time when salary was locked"
+        },
+        "Account_No": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Employee bank account number"
+        },
+        "Emp_Type": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Employment category (ONROLL, CONTRACT, PROBATION)"
+        },
+        "Reg_Desc": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Region description / zone"
+        },
+        "Div_Desc": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Division / business unit description"
+        },
+        "Sec_Desc": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Department section description"
+        },
+        "Desig_Desc": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Designation title snapshot (e.g. Sales Executive, Technician, Manager)"
+        },
+        "PFSALARY_LIMIT": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Provident Fund statutory wage limit"
+        },
+        "WO_OT": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Weekly off overtime amount"
+        },
+        "EARN_BONUS": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Earned festival / annual bonus"
+        },
+        "IT_DED": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Income tax monthly deduction"
+        },
+        "DD_CLUB": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Club / recreational deduction"
+        },
+        "oth_earn5": {
+          "type": "decimal(10,2)",
+          "nullable": true,
+          "description": "Other earnings component 5"
+        },
+        "Dispute_Salary": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Disputed salary amount on hold"
+        },
+        "CTC": {
+          "type": "decimal(14,2)",
+          "nullable": true,
+          "description": "Total Cost to Company (CTC) package value"
         }
       }
     },
@@ -1746,10 +2094,11 @@
       "description": "Master table for all employee personal, departmental, banking, statutory compliance (PF/ESIC/PAN/Aadhar), and employment lifecycle details.",
       "queryRules": [
         "Always filter by EXPORT_TYPE = compcode for multi-tenant isolation.",
-        "To get active employees only, add: WHERE STATUS = 1 OR STATUS IS NULL.",
-        "Join with Misc_Mst to get branch names: LEFT JOIN Misc_Mst branch ON branch.Misc_Code = EMPLOYEEMASTER.LOCATION AND branch.Misc_Type = 85",
-        "Join with Misc_Mst to get department names: LEFT JOIN Misc_Mst dept ON dept.Misc_Code = EMPLOYEEMASTER.DEPT AND dept.Misc_Type = 11",
-        "Join with Misc_Mst to get designation names: LEFT JOIN Misc_Mst desg ON desg.Misc_Code = EMPLOYEEMASTER.DESG AND desg.Misc_Type = 95"
+        "Active employees filter: WHERE LASTWOR_DATE IS NULL (or STATUS = 1 OR STATUS IS NULL).",
+        "Designation Lookup: Employee designation is in EMPLOYEEDESIGNATION (varchar) OR join Misc_Mst: LEFT JOIN Misc_Mst desg ON desg.Misc_Code = EMPLOYEEMASTER.DESG AND desg.Misc_Type = 95. Use COALESCE(EMPLOYEEMASTER.EMPLOYEEDESIGNATION, desg.Misc_Name, 'N/A') AS Designation.",
+        "Branch / Location Lookup: Join Misc_Mst: LEFT JOIN Misc_Mst branch ON branch.Misc_Code = EMPLOYEEMASTER.LOCATION AND branch.Misc_Type = 85. Use COALESCE(branch.Misc_Name, CONVERT(varchar(50), EMPLOYEEMASTER.LOCATION)) AS Location.",
+        "Department Lookup: Join Misc_Mst: LEFT JOIN Misc_Mst dept ON dept.Misc_Code = EMPLOYEEMASTER.DEPT AND dept.Misc_Type = 11. Use COALESCE(dept.Misc_Name, CONVERT(varchar(50), EMPLOYEEMASTER.DEPT)) AS Department.",
+        "Statutory Compliance Rules: PFNO and ESINO columns in EMPLOYEEMASTER store boolean/status flags (1 = Applicable/Enrolled, 0 = Not Applicable). The actual PF Member ID/Trust Number is stored in PFTRUST_NO or UAN_NO. When PFNO is '1' and PFTRUST_NO is NULL, PF is applicable (Yes) but the specific PF account number is not recorded in the database."
       ],
       "columns": {
         "UTD": {
@@ -1820,7 +2169,7 @@
         "DESG": {
           "type": "int",
           "nullable": true,
-          "description": "Designation Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 95)"
+          "description": "Designation Code (foreign key linking to Misc_Mst.Misc_Code WHERE Misc_Type = 95)"
         },
         "GRADE": {
           "type": "int",
@@ -1901,107 +2250,719 @@
           "type": "int",
           "nullable": true,
           "description": "Company Code / Tenant ID"
+        },
+        "EMPLOYEEDESIGNATION": {
+          "type": "varchar(150)",
+          "nullable": true,
+          "description": "Employee Designation text name (e.g. 'Senior Sales Executive', 'Accountant', 'Technician')"
+        },
+        "LASTWOR_DATE": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Last working date / Resignation exit date (NULL means employee is currently ACTIVE)"
         }
       }
     },
     "attendancetable": {
       "tableName": "attendancetable",
-      "displayName": "Monthly Employee Attendance Grid (Day 1 to 31)",
+      "displayName": "Daily Employee Attendance & Shift Punch Register",
       "module": "ATTENDANCE",
       "primaryKey": [
         "UTD"
       ],
-      "description": "Monthly pivoted attendance register holding day-by-day status codes (P1 through P31), aggregated present, absent, week-off, and final payable days.",
+      "description": "Core daily attendance and shift punch transaction table recording day-by-day employee attendance status (Present, Absent, Weekly Off, Holiday, Leave Without Pay, Paid Leaves), biometric/manual in-out punches, shift timings, overtime, and approval workflows.",
       "queryRules": [
-        "Filter by MONTH(dateoffice) = @month AND YEAR(dateoffice) = @year.",
-        "Join with EMPLOYEEMASTER on attendancetable.Empcode = EMPLOYEEMASTER.EMPCODE.",
-        "Always filter by Export_Type = compcode."
+        "CRITICAL: ALWAYS use COUNT(DISTINCT Emp_Code) when calculating total present, absent, weekly off, or working employees count. NEVER use COUNT(*) because single employees can have multiple punch logs/records for the same date.",
+        "CRITICAL: ALWAYS use SELECT DISTINCT A.Emp_Code, E.EMPNAME ... or GROUP BY A.Emp_Code, E.EMPFIRSTNAME, E.EMPLASTNAME when listing employees to prevent duplicate employee rows.",
+        "Presence Filter: For Present employees ('present', 'aaye the', 'duty', 'hazir'), filter by UPPER(flag) = 'P'.",
+        "Absence & Non-Working Filter: Pure Absent is UPPER(flag) = 'A'. Combined Non-Working (Absent + Weekly Off) is (UPPER(flag) = 'A' OR UPPER(flag) = 'WO'). When answering absent questions, always report both Pure Absent (flag='A') and Total Not Working (flag='A' OR flag='WO') with exact breakdown.",
+        "Weekly Off Filter: For Weekly Off / Weakly Off ('weekly off', 'weakly off', 'week off', 'weak off', 'weekoff', 'sunday', 'itwar'), filter by UPPER(flag) = 'WO'.",
+        "Holiday Filter: For Holidays ('holiday', 'tyohar', 'festival'), filter by (UPPER(flag) = 'H' OR UPPER(status) = 'H').",
+        "Half Day Filter: For Half Day ('half day', 'halfday', 'aadha din', 'HD'), filter by (UPPER(flag) = 'HD' OR UPPER(status) = 'HD').",
+        "Leave Filter: For Leaves ('leave', 'CL', 'SL', 'PL', 'LWP', 'EL', 'ML'), filter by (UPPER(flag) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR UPPER(status) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML')).",
+        "Filter by specific date using CONVERT(date, dateoffice) = 'YYYY-MM-DD' or CAST(dateoffice AS DATE) = 'YYYY-MM-DD' (e.g. CONVERT(date, dateoffice) = '2025-10-21').",
+        "Filter by date range using dateoffice BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' or MONTH(dateoffice) = @month AND YEAR(dateoffice) = @year.",
+        "Join with EMPLOYEEMASTER using attendancetable.Emp_Code = EMPLOYEEMASTER.EMPCODE (or attendancetable.empcode = EMPLOYEEMASTER.EMPCODE).",
+        "Always filter by Export_Type = @compcode (Company ID / Multi-tenant isolation).",
+        "Punch In/Out Columns: in1 (First In Time), out1 (First Out Time), in2 (Second In Time), out2 (Second Out Time), in1mannual/out1mannual (Manual punches).",
+        "Working & Overtime Hours: hoursworked (Total Worked Hours), exclunchhours (Worked Hours Excl. Lunch), otduration (Overtime Duration), otamount (Overtime Pay Amount), totallosshrs (Total Lost Hours).",
+        "Punctuality Tracking: latearrival (Late Arrival Duration), earlydeparture (Early Departure Duration), earlyarrival (Early Arrival), lunchearlydeparture, lunchlatearrival."
       ],
       "columns": {
         "UTD": {
           "type": "int",
           "nullable": false,
-          "description": "Primary unique record ID"
+          "description": "Primary Unique Identity Key"
         },
-        "Empcode": {
+        "Emp_Code": {
           "type": "varchar(100)",
           "nullable": false,
-          "description": "Employee Code (links to EMPLOYEEMASTER.EMPCODE)"
+          "description": "Employee Code / ID (Foreign Key linking to EMPLOYEEMASTER.EMPCODE)"
         },
         "dateoffice": {
-          "type": "date",
+          "type": "datetime",
           "nullable": false,
-          "description": "Attendance Date / Month Reference (e.g. 2026-03-01)"
+          "description": "Attendance Date (e.g. '2025-10-21 00:00:00.000')"
         },
-        "monthdays": {
+        "flag": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Daily Attendance Flag: 'P'=Present, 'A'=Pure Absent, 'WO'=Weekly Off / Weakly Off, 'A'+'WO'=Total Not Working, 'H'=Holiday, 'HD'=Half Day, 'CL'/'SL'/'PL'/'LWP'=Leaves"
+        },
+        "status": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Detailed Attendance Status Code: 'P'=Present, 'A'=Absent, 'WO'=Weekly Off, 'H'=Holiday, 'LWP'=Leave Without Pay, 'CL'=Casual Leave, 'SL'=Sick Leave, 'PL'=Privilege Leave, 'OD'=On Duty, 'CO'=Comp Off, 'HD'=Half Day"
+        },
+        "presentvalue": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "Present Day Value (1.0 = Full Day Present, 0.5 = Half Day Present, 0 = Absent)"
+        },
+        "absentvalue": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "Absent Day Value (1.0 = Full Day Absent, 0.5 = Half Day Absent, 0 = Present)"
+        },
+        "holiday_value": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "Holiday Value (1.0 = Holiday, 0 = Non-Holiday)"
+        },
+        "wo_value": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "Weekly Off Value (1.0 = Weekly Off, 0 = Working Day)"
+        },
+        "leavevalue": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "Approved Leave Value (1.0 = Full Day Leave, 0.5 = Half Day Leave)"
+        },
+        "in1": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "First In-Punch Timestamp (Shift Start Check-In)"
+        },
+        "out1": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "First Out-Punch Timestamp (Lunch/Break or Check-Out 1)"
+        },
+        "in2": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Second In-Punch Timestamp (Post-Lunch Check-In 2)"
+        },
+        "out2": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Second Out-Punch Timestamp (Shift End Check-Out)"
+        },
+        "in1mannual": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Manual In-Punch 1 adjusted by HR/Manager"
+        },
+        "out1mannual": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Manual Out-Punch 1 adjusted by HR/Manager"
+        },
+        "in2mannual": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Manual In-Punch 2 adjusted by HR/Manager"
+        },
+        "out2mannual": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Manual Out-Punch 2 adjusted by HR/Manager"
+        },
+        "shiftstarttime": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Scheduled Shift Start Time (e.g. '09:30:00')"
+        },
+        "shiftendtime": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Scheduled Shift End Time (e.g. '18:30:00')"
+        },
+        "lunchstarttime": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Scheduled Lunch Start Time (e.g. '13:00:00')"
+        },
+        "lunchendtime": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Scheduled Lunch End Time (e.g. '13:30:00')"
+        },
+        "shift": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Assigned Shift Name or Code (e.g. 'General', 'Morning', 'Night')"
+        },
+        "shiftattended": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Shift Actually Attended by Employee"
+        },
+        "hoursworked": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Total Working Hours Spent in Office / Duty"
+        },
+        "exclunchhours": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Net Working Hours excluding lunch break"
+        },
+        "otduration": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Approved Overtime Duration in Hours"
+        },
+        "osduration": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Out Station / Special Assignment Duration in Hours"
+        },
+        "otamount": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Calculated Overtime Payout Amount"
+        },
+        "earlyarrival": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Early Arrival Duration in Minutes/Hours"
+        },
+        "earlydeparture": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Early Departure Duration in Minutes/Hours"
+        },
+        "latearrival": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Late Arrival Duration in Minutes/Hours"
+        },
+        "lunchearlydeparture": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Early Departure for Lunch Duration"
+        },
+        "lunchlatearrival": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Late Arrival from Lunch Duration"
+        },
+        "totallosshrs": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Total Loss of Hours (Late + Early Departure)"
+        },
+        "leavetype": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Applied Leave Type (CL, SL, PL, LWP, CO, etc.)"
+        },
+        "leavecode": {
           "type": "int",
           "nullable": true,
-          "description": "Total number of calendar days in this month (28, 29, 30, 31)"
+          "description": "Leave Type Master Code Identifier"
         },
-        "P1": {
-          "type": "varchar(10)",
-          "nullable": true,
-          "description": "Attendance status code for Day 1 (P=Present, A=Absent, W=WeekOff, CL=Casual Leave, etc.)"
-        },
-        "P2": {
-          "type": "varchar(10)",
-          "nullable": true,
-          "description": "Attendance status code for Day 2"
-        },
-        "P3": {
-          "type": "varchar(10)",
-          "nullable": true,
-          "description": "Attendance status code for Day 3"
-        },
-        "P4": {
-          "type": "varchar(10)",
-          "nullable": true,
-          "description": "Attendance status code for Day 4"
-        },
-        "P5": {
-          "type": "varchar(10)",
-          "nullable": true,
-          "description": "Attendance status code for Day 5"
-        },
-        "P31": {
-          "type": "varchar(10)",
-          "nullable": true,
-          "description": "Attendance status code for Day 31"
-        },
-        "tot_prs": {
+        "leaveamount": {
           "type": "decimal(6,2)",
           "nullable": true,
-          "description": "Total Present Days in Month"
+          "description": "Approved Leave Unit / Days Count"
         },
-        "tot_abs": {
-          "type": "decimal(6,2)",
+        "leaveaprdate": {
+          "type": "datetime",
           "nullable": true,
-          "description": "Total Absent Days in Month"
+          "description": "Leave Approval Date"
         },
-        "tot_woff": {
-          "type": "decimal(6,2)",
+        "voucher_no": {
+          "type": "varchar(50)",
           "nullable": true,
-          "description": "Total Week Off Days in Month"
+          "description": "Leave / Gatepass Voucher Reference Number"
         },
-        "tot_hld": {
-          "type": "decimal(6,2)",
+        "firsthalfleavecode": {
+          "type": "int",
           "nullable": true,
-          "description": "Total Holiday Days in Month"
+          "description": "First Half Leave Master Code"
         },
-        "tot_leave": {
-          "type": "decimal(6,2)",
+        "secondhalfleavecode": {
+          "type": "int",
           "nullable": true,
-          "description": "Total Approved Paid Leaves"
+          "description": "Second Half Leave Master Code"
         },
-        "payable_days": {
-          "type": "decimal(6,2)",
+        "leavetype1": {
+          "type": "varchar(50)",
           "nullable": true,
-          "description": "Final calculated payable days for monthly salary processing"
+          "description": "First Half Leave Type Name"
+        },
+        "leavetype2": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Second Half Leave Type Name"
+        },
+        "leaveamount1": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "First Half Leave Amount / Value (e.g. 0.5)"
+        },
+        "leaveamount2": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "Second Half Leave Amount / Value (e.g. 0.5)"
+        },
+        "tlflag": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Team Leader / Supervisor Attendance Approval Flag"
+        },
+        "rescd": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Reason Code / Rest Code"
+        },
+        "media": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Punch Source Media (BIOMETRIC, MOBILE_APP, MANUAL, WEB)"
+        },
+        "reason": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Employee Provided Reason for Late / Early / Missed Punch"
+        },
+        "outworkduration": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "On-Duty / Outwork Duration in Hours"
+        },
+        "vearlydeparture": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Verified Early Departure Hours"
+        },
+        "vlatearrival": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Verified Late Arrival Hours"
+        },
+        "vlunchearlydeparture": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Verified Lunch Early Departure Hours"
+        },
+        "vlunchlatearrival": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Verified Lunch Late Arrival Hours"
+        },
+        "vtotallosshrs": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Verified Total Loss of Hours"
+        },
+        "activityflag": {
+          "type": "varchar(20)",
+          "nullable": true,
+          "description": "Daily Activity Status Flag"
+        },
+        "votiduration": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Verified Overtime Duration"
+        },
+        "votamount": {
+          "type": "decimal(12,2)",
+          "nullable": true,
+          "description": "Verified Overtime Amount"
+        },
+        "approvalid": {
+          "type": "int",
+          "nullable": true,
+          "description": "Approval Workflow Unique ID"
+        },
+        "approved": {
+          "type": "int",
+          "nullable": true,
+          "description": "Approval Status (1=Approved, 0=Pending, 2=Rejected)"
+        },
+        "approvedtime": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Approval Timestamp"
+        },
+        "isapproved": {
+          "type": "bit",
+          "nullable": true,
+          "description": "Is Approved Boolean Flag (1/0)"
+        },
+        "isrejected": {
+          "type": "bit",
+          "nullable": true,
+          "description": "Is Rejected Boolean Flag (1/0)"
+        },
+        "approve": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Approval Status Description"
+        },
+        "intype": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "In-Punch Type (QR, BIO, FACE, MANUAL)"
+        },
+        "gatepass": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Gate Pass Reference Number"
+        },
+        "Monthly_code": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Monthly Attendance Payroll Batch Code"
+        },
+        "IsManual": {
+          "type": "bit",
+          "nullable": true,
+          "description": "Manual Attendance Entry Flag (1=Manual, 0=Machine Biometric)"
+        },
+        "MAN_APPR": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Manual Attendance Approval Status"
+        },
+        "repmunch_reason": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Missed Punch / Repunch Explanation"
+        },
+        "Mn_intimeby": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "User ID who manually punched In Time"
+        },
+        "Mn_outby": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "User ID who manually punched Out Time"
+        },
+        "Shift_Overstay": {
+          "type": "decimal(8,2)",
+          "nullable": true,
+          "description": "Shift Overstay Duration in Hours"
+        },
+        "ND_Remark": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Night Duty / Shift Remarks"
+        },
+        "Unseasonal": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Unseasonal Shift / Off Flag"
+        },
+        "SystemInout": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "System Computed In/Out Status"
+        },
+        "Reject_By": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "User ID who rejected attendance / mispunch"
+        },
+        "Computer_name": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Client Computer Name where entry was posted"
+        },
+        "Man_Entry_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Manual Entry Date & Time"
+        },
+        "CO_Value": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "Compensatory Off (Comp-Off) Earned / Credited"
+        },
+        "In_Latitude": {
+          "type": "decimal(12,8)",
+          "nullable": true,
+          "description": "GPS Latitude for Mobile In-Punch"
+        },
+        "Out_Latitude": {
+          "type": "decimal(12,8)",
+          "nullable": true,
+          "description": "GPS Latitude for Mobile Out-Punch"
+        },
+        "In_Longitude": {
+          "type": "decimal(12,8)",
+          "nullable": true,
+          "description": "GPS Longitude for Mobile In-Punch"
+        },
+        "Out_Longitude": {
+          "type": "decimal(12,8)",
+          "nullable": true,
+          "description": "GPS Longitude for Mobile Out-Punch"
+        },
+        "MAN_REJ": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Manual Attendance Rejection Code"
+        },
+        "Man_Reasoncd": {
+          "type": "int",
+          "nullable": true,
+          "description": "Manual Entry Reason Code"
+        },
+        "App_In1": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Mobile App In-Punch Timestamp"
+        },
+        "App_Out1": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Mobile App Out-Punch Timestamp"
+        },
+        "NightShift": {
+          "type": "bit",
+          "nullable": true,
+          "description": "Night Shift Flag (1=Yes, 0=Day Shift)"
+        },
+        "SPL_REMARK": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Special Attendance Remarks"
+        },
+        "Short_Leave": {
+          "type": "decimal(4,2)",
+          "nullable": true,
+          "description": "Short Leave Duration in Hours"
+        },
+        "In_Add": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Geo-Address for Mobile In-Punch"
+        },
+        "Out_Add": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Geo-Address for Mobile Out-Punch"
+        },
+        "In_Photo": {
+          "type": "nvarchar(500)",
+          "nullable": true,
+          "description": "Selfie Image URL/Path for Mobile In-Punch"
+        },
+        "Out_Photo": {
+          "type": "nvarchar(500)",
+          "nullable": true,
+          "description": "Selfie Image URL/Path for Mobile Out-Punch"
+        },
+        "Device_In1": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Biometric Device Serial Number for In-Punch"
+        },
+        "Device_Out1": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Biometric Device Serial Number for Out-Punch"
+        },
+        "Appr_1_Code": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Level 1 Approver Employee Code"
+        },
+        "Appr_1_Stat": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Level 1 Approval Status (A=Approved, R=Rejected, P=Pending)"
+        },
+        "Appr_1_Rem": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Level 1 Approver Remarks"
+        },
+        "Appr_1_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Level 1 Approval Timestamp"
+        },
+        "Appr_2_Code": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Level 2 Approver Employee Code"
+        },
+        "Appr_2_Stat": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Level 2 Approval Status"
+        },
+        "Appr_2_Rem": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Level 2 Approver Remarks"
+        },
+        "Appr_2_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Level 2 Approval Timestamp"
+        },
+        "Appr_3_Code": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Level 3 Approver Employee Code"
+        },
+        "Appr_3_Stat": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Level 3 Approval Status"
+        },
+        "Appr_3_Rem": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Level 3 Approver Remarks"
+        },
+        "Appr_3_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Level 3 Approval Timestamp"
+        },
+        "MI_Type": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Missed Punch Type Identifier"
+        },
+        "RM_IN1": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Raw Machine In Punch Time"
+        },
+        "RM_OUT1": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Raw Machine Out Punch Time"
+        },
+        "rsp_in1": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Raw Sensor In Punch Time"
+        },
+        "rsp_out1": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Raw Sensor Out Punch Time"
+        },
+        "leave_applied_on": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Timestamp when leave was requested"
+        },
+        "Canc_Fin": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Leave Cancellation Final Status"
+        },
+        "Canc_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Leave Cancellation Request Date"
+        },
+        "Canc_Rem": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Leave Cancellation Remarks"
+        },
+        "Canc_By": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "User ID who requested leave cancellation"
+        },
+        "Canc_1_Code": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Level 1 Cancellation Approver Code"
+        },
+        "Canc_1_Stat": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Level 1 Cancellation Approval Status"
+        },
+        "Canc_1_Rem": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Level 1 Cancellation Remarks"
+        },
+        "Canc_1_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Level 1 Cancellation Approval Date"
+        },
+        "Canc_2_Code": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Level 2 Cancellation Approver Code"
+        },
+        "Canc_2_Stat": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Level 2 Cancellation Approval Status"
+        },
+        "Canc_2_Rem": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Level 2 Cancellation Remarks"
+        },
+        "Canc_2_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Level 2 Cancellation Approval Date"
+        },
+        "Canc_3_Code": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Level 3 Cancellation Approver Code"
+        },
+        "Canc_3_Stat": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "description": "Level 3 Cancellation Approval Status"
+        },
+        "Canc_3_Rem": {
+          "type": "nvarchar(255)",
+          "nullable": true,
+          "description": "Level 3 Cancellation Remarks"
+        },
+        "Canc_3_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Level 3 Cancellation Approval Date"
+        },
+        "Mispunch_applied_on": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Missed punch regularization request date"
+        },
+        "Mispunch_out_applied_on": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Missed punch-out regularization request date"
         },
         "Export_Type": {
           "type": "int",
           "nullable": true,
-          "description": "Company code / Multi-tenant identifier"
+          "description": "Company Code / Multi-tenant Identifier (Comp_Code)"
         }
       }
     },
