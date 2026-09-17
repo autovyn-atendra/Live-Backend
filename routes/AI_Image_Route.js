@@ -11,12 +11,12 @@ let OpenAIClass = null;
 try {
   const mod = require("openai");
   OpenAIClass = mod.OpenAI || mod.default || mod;
-} catch (_) {}
+} catch (_) { }
 
 let sharp = null;
 try {
   sharp = require("sharp");
-} catch (_) {}
+} catch (_) { }
 
 // =============================================================================
 // CENTRALIZED CONFIGURATION & CONSTANTS
@@ -50,9 +50,9 @@ exports.AI_IMAGE_CONFIG = AI_IMAGE_CONFIG;
 let openAIClient = null;
 
 const getOpenAIClient = () => {
-  const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
+  const apiKey = String(process.env.FUEL_OPENAI_API_KEY || "").trim();
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not configured in server environment");
+    throw new Error("FUEL_OPENAI_API_KEY is not configured in server environment");
   }
 
   if (!openAIClient) {
@@ -207,7 +207,20 @@ Extract the vehicle's MAIN CUMULATIVE ODOMETER reading in compact JSON with 100%
 
 ANALOG / MECHANICAL METER RULES (2 TYPES ONLY - 0% GUESSING):
 
-TYPE 1: CONTRASTING TENTHS WHEEL (Rightmost 1st drum has a WHITE / LIGHT / YELLOW / RED / ORANGE background, or 2-Wheeler / Motorcycle / Scooter dial):
+1. COUNT PHYSICAL DRUM SLOTS STRICTLY (5 OR 6 DRUMS ONLY):
+- Mechanical odometers strictly have either exactly 5 rotating drum wheels or 6 rotating drum wheels.
+- Look at the rectangular window and count ONLY actual rotating drum cylinders.
+- DO NOT count outer bezel edges, frame borders, needle hub shadows, screws, dial notches, or gauge symbols ('a', 'km/h', marks) as digits.
+- Example 5-Drum Meter: [0][8][2][0][9] (5 black drums) -> digits: ["0", "8", "2", "0", "9"], val: 8209, contrast: false, lastColor: "BLACK". DO NOT add a 6th digit from the right frame edge or reflection!
+- Example 6-Drum Meter: [1][6][0][6][4][8] (6 black drums) -> digits: ["1", "6", "0", "6", "4", "8"], val: 160648.
+
+2. LEADING ZEROES IN WHOLE INTEGERS:
+- Leading zeroes in 5-drum or 6-drum meters do NOT multiply or add zeroes:
+  * ["0", "8", "2", "0", "9"] -> val: 8209 (NOT 82009 or 82092!)
+  * ["0", "3", "4", "8", "0"] -> val: 3480
+  * ["0", "0", "1", "2", "5"] -> val: 125
+
+3. TYPE 1: CONTRASTING TENTHS WHEEL (Rightmost 1st drum has a WHITE / LIGHT / YELLOW / RED / ORANGE background, or 2-Wheeler / Motorcycle / Scooter dial):
 - Look closely at each drum wheel from left to right:
   * Left drums (5 black drums) represent WHOLE KILOMETERS.
   * Far-right 1st drum has a DIFFERENT / WHITE / LIGHT / YELLOW / RED / ORANGE background (dark digit) representing TENTHS OF A KM (.0 to .9 KM).
@@ -224,16 +237,17 @@ TYPE 1: CONTRASTING TENTHS WHEEL (Rightmost 1st drum has a WHITE / LIGHT / YELLO
   * [0][0][0][0][1] (5 black) + [0] (1 white) -> val: 1, unit: "KM", contrast: true, lastColor: "WHITE"
   * [0][0][0][2] (4 black) + [7] (1 white) -> val: 2.7, unit: "KM", contrast: true, lastColor: "WHITE"
 
-TYPE 2: ALL-BLACK DRUMS (NO tenths wheel, EVERY drum has uniform BLACK background):
+4. TYPE 2: ALL-BLACK DRUMS (NO tenths wheel, EVERY drum has uniform BLACK background):
 - On cars/trucks where every single drum from left to right has the exact same uniform BLACK background with white text.
 - There is NO white, lighter, or different colored drum.
 - All digits represent WHOLE INTEGER KILOMETERS (NO decimal point):
+  * [0][8][2][0][9] (all 5 black) -> val: 8209, unit: "KM", contrast: false, lastColor: "BLACK"
   * [1][6][0][6][4][8] (all 6 black) -> val: 160648, unit: "KM", contrast: false, lastColor: "BLACK"
   * [1][2][2][8][7][1] (all 6 black) -> val: 122871, unit: "KM", contrast: false, lastColor: "BLACK"
   * [1][4][7][7][3][1] (all 6 black) -> val: 147731, unit: "KM", contrast: false, lastColor: "BLACK"
   * [1][8][8][5][3] (all 5 black) -> val: 18853, unit: "KM", contrast: false, lastColor: "BLACK"
 
-HALF-ROLLED / SPLIT DRUMS (UPPER DIGIT RULE):
+5. HALF-ROLLED / SPLIT DRUMS (UPPER DIGIT RULE):
 - When any drum wheel is rolling / split between two numbers (top vs bottom):
 - ALWAYS SELECT THE UPPER COMPLETED DIGIT!
   * Split 8 (top) & 9 (bottom) -> MUST SELECT '8' (NEVER pick bottom 9).
@@ -267,7 +281,7 @@ Output JSON format:
 }
 `.trim();
 
-const USER_VISION_INSTRUCTION = `Read the vehicle odometer accurately according to the drum color rules (White/Light rightmost drum or 2-Wheeler = Decimal tenths, All-Black drums = Whole integer, Split drum = Upper digit). Output JSON.`.trim();
+const USER_VISION_INSTRUCTION = `Read the vehicle odometer accurately. Count exact physical drum slots (5 or 6 drums). Do not count bezel borders or edge reflections as extra digits. 08209 = 8209 KM. White/light rightmost drum = Decimal tenths, All-black drums = Whole integer. Output JSON.`.trim();
 
 // =============================================================================
 // CENTRALIZED VERIFICATION FUNCTION (BACKEND AUTHORITY)
@@ -504,7 +518,7 @@ const extractOdometerReading = exports.extractOdometerReading = async ({
   const rawType = String(parsed.type || parsed.displayType || "").toUpperCase();
   const displayType = rawType.includes("MECH") ? "MECHANICAL_ROLLER" : (rawType.includes("DIGI") ? "DIGITAL_LCD" : (parsed.displayType || "UNKNOWN"));
   const odometerDetected = parsed.detected !== undefined ? Boolean(parsed.detected) : Boolean(parsed.odometerDetected);
-  
+
   const blurRaw = String(parsed.blur || parsed.quality?.blur || "LOW").toUpperCase();
   const blur = blurRaw.includes("HIGH") ? "HIGH" : (blurRaw.includes("MED") ? "MEDIUM" : "LOW");
   const isDustyOrUnclear = Boolean(parsed.isDustyOrUnclear || (blur === "HIGH" && !odometerDetected));
@@ -515,7 +529,7 @@ const extractOdometerReading = exports.extractOdometerReading = async ({
 
   const lastColor = String(parsed.lastColor || parsed.lastDrumBgColor || "").toUpperCase().trim();
   const drumColors = Array.isArray(parsed.drumColors) ? parsed.drumColors.map(c => String(c).toUpperCase().trim()) : [];
-  
+
   let hasContrastingLastDrum = false;
   if (drumColors.length >= 2) {
     const lastD = drumColors[drumColors.length - 1];
@@ -535,7 +549,8 @@ const extractOdometerReading = exports.extractOdometerReading = async ({
   );
 
   const drumDigits = Array.isArray(parsed.digits) ? parsed.digits : (Array.isArray(parsed.drumDigits) ? parsed.drumDigits : null);
-  let rawNumericValue = safelyParseNullableNumber(parsed.val ?? parsed.value ?? parsed.odometer?.value);
+  const aiReportedValue = safelyParseNullableNumber(parsed.val ?? parsed.value ?? parsed.odometer?.value);
+  let rawNumericValue = aiReportedValue;
   const rawModelUnit = String(parsed.unit || parsed.odometer?.unit || "KM").toUpperCase().trim();
   let rawTextValue = parsed.rawText !== undefined && parsed.rawText !== null
     ? String(parsed.rawText)
@@ -776,6 +791,38 @@ const extractOdometerReading = exports.extractOdometerReading = async ({
     normalizedValue = rawNumericValue;
   }
 
+  // 5.5 NEW: Odometer Digits vs AI Value Consistency Validation
+  let consistencyValidation = null;
+  let isConsistencyMismatch = false;
+
+  if (
+    aiReportedValue !== null &&
+    Number.isFinite(aiReportedValue) &&
+    normalizedValue !== null &&
+    Number.isFinite(normalizedValue)
+  ) {
+    const valuesMatch = Math.abs(Number(aiReportedValue) - Number(normalizedValue)) < 0.001;
+    consistencyValidation = {
+      checked: true,
+      passed: valuesMatch,
+      aiReportedValue: aiReportedValue,
+      reconstructedValue: normalizedValue,
+    };
+
+    if (!valuesMatch) {
+      isConsistencyMismatch = true;
+      console.warn(
+        `\n[AI-ODOMETER-CONSISTENCY] ⚠️ Value mismatch detected\n` +
+        `• AI Reported Value : ${aiReportedValue}\n` +
+        `• Reconstructed Val : ${normalizedValue}\n` +
+        `• Digits Array      : ${JSON.stringify(drumDigits || [])}\n` +
+        `• Joined Digits     : ${fullDigits || "N/A"}\n`
+      );
+      requiresManualReview = true;
+      reviewReason = "AI reported value does not match the value reconstructed from odometer digits.";
+    }
+  }
+
   const sourceObject = {
     value: rawNumericValue,
     unit: confirmedOdometerUnit,
@@ -791,7 +838,7 @@ const extractOdometerReading = exports.extractOdometerReading = async ({
   };
 
   // 6. Determine Backend Final Status
-  const finalStatus = determineOdometerStatus({
+  let finalStatus = determineOdometerStatus({
     odometerDetected,
     numericValue: rawNumericValue,
     detectedUnit: confirmedOdometerUnit,
@@ -803,6 +850,15 @@ const extractOdometerReading = exports.extractOdometerReading = async ({
     quality,
   });
 
+  // Apply Consistency Mismatch override (Never downgrade a consistency mismatch to VERIFIED)
+  if (isConsistencyMismatch) {
+    if (finalStatus === "VERIFIED" || finalStatus === "MANUAL_REVIEW_REQUIRED") {
+      finalStatus = "REVIEW_RECOMMENDED";
+    }
+    requiresManualReview = true;
+    reviewReason = "AI reported value does not match the value reconstructed from odometer digits.";
+  }
+
   if (finalStatus !== "VERIFIED") {
     requiresManualReview = true;
     if (!reviewReason || finalStatus === "INVALID_UNIT_MILES") {
@@ -810,6 +866,8 @@ const extractOdometerReading = exports.extractOdometerReading = async ({
         reviewReason = "Odometer reading is in Miles. AutoVyn ERP accepts only KM (Kilometers). Please upload a valid vehicle dashboard image with a KM reading.";
       } else if (finalStatus === "UNIT_NOT_CONFIRMED") {
         reviewReason = "Main cumulative odometer reading detected, but its field-specific unit could not be confirmed. Unit was not inferred from other gauges.";
+      } else if (isConsistencyMismatch) {
+        reviewReason = "AI reported value does not match the value reconstructed from odometer digits.";
       } else {
         reviewReason = "Photo was taken from too far away or is unclear. Please take a clear closeup photo near the odometer screen and re-upload.";
       }
@@ -879,6 +937,7 @@ const extractOdometerReading = exports.extractOdometerReading = async ({
     confidence,
     requiresManualReview,
     reviewReason,
+    consistencyValidation: consistencyValidation || null,
     message: isVerified
       ? "Odometer reading successfully verified."
       : (reviewReason || "The cumulative odometer reading is not clearly readable. Please upload a clean, clear photo."),
@@ -903,7 +962,7 @@ exports.imageVisionHealth = async () => {
   try {
     getOpenAIClient();
     openaiConfigured = true;
-  } catch (_) {}
+  } catch (_) { }
 
   return {
     status: openaiConfigured ? "UP" : "DEGRADED",
@@ -929,7 +988,7 @@ const extractUserContext = exports.extractUserContext = (req) => {
       } catch (_) {
         try {
           user = jwt.decode(token);
-        } catch (_) {}
+        } catch (_) { }
       }
     }
   }
