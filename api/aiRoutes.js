@@ -19,17 +19,19 @@ router.get(
 
     return res.status(200).json({
       success: true,
-      message: "AutoVyn AI Query Intelligence Engine is healthy",
+      message: "AutoVyn Enterprise AI Copilot Engine is healthy",
       data: {
         status: "UP",
+        version: "V6-Enterprise",
         openaiConfigured: true,
         qdrant,
+        cacheStats: AI.getCacheAnalytics ? AI.getCacheAnalytics() : null,
         timestamp: new Date().toISOString(),
       },
     });
   })
 );
-router.get("/status", (req, res) => res.json({ success: true, status: "UP", message: "AutoVyn AI is operational" }));
+router.get("/status", (req, res) => res.json({ success: true, status: "UP", message: "AutoVyn AI V6 is operational" }));
 
 // ============================================================
 // PRIMARY AI QUERY & CHAT COPILOT API
@@ -54,6 +56,20 @@ router.post("/chat", AI.asyncHandler(async (req, res) => {
   const result = await AI.askERPAssistant(req, req.body || {});
   return res.status(200).json({ success: true, data: result });
 }));
+
+// ============================================================
+// V6 CACHE & TELEMETRY API
+// GET /cache/stats, POST /cache/clear
+// ============================================================
+router.get("/cache/stats", (req, res) => {
+  const stats = AI.getCacheAnalytics ? AI.getCacheAnalytics() : { status: "Cache module active" };
+  return res.status(200).json({ success: true, data: stats });
+});
+
+router.post("/cache/clear", (req, res) => {
+  if (AI.clearCache) AI.clearCache();
+  return res.status(200).json({ success: true, message: "AI cache purged successfully" });
+});
 
 // ============================================================
 // CONVERSATIONS & SESSIONS API

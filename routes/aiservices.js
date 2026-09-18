@@ -14,6 +14,14 @@ try { ({ z } = require("zod")); } catch (_) {}
 const { dbname } = require("../utils/dbconfig");
 const { randomUUID } = require("crypto");
 
+// ── V6 Enterprise AI Copilot Engine Integration ──
+let AI_V6 = null;
+try {
+  AI_V6 = require("./aiservices2");
+} catch (err) {
+  console.warn("[aiservices] aiservices2 load notice:", err?.message);
+}
+
 const misc_type_list = exports.misc_type_list = [
   { id: 31, name: "Product Group Master" },
   { id: 85, name: "Branch Master" },
@@ -610,11 +618,23 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
   const trace = createTrace(req.headers?.["x-request-id"] || payload.conversationId || "");
 
   // ── Validate input ────────────────────────────────────────────────────────
-  const message = normalizeValue(payload.message);
+  const message = normalizeValue(payload.message || payload.query || payload.question);
   if (!message) throw new ApiError(400, "message is required");
 
   console.log("\n======================================================");
   console.log("❓ [AI-QUESTION]:", message);
+
+  // ── Execute V6 Enterprise AI Copilot Engine (with automatic V1 fallback) ────
+  if (AI_V6?.askEnterpriseCopilotV6) {
+    try {
+      const v6Result = await AI_V6.askEnterpriseCopilotV6(req, payload);
+      if (v6Result && v6Result.answer) {
+        return v6Result;
+      }
+    } catch (v6Error) {
+      console.warn("[aiservices] V6 Copilot pipeline yielded notice, continuing with V1 engine:", v6Error?.message);
+    }
+  }
 
   // ── User context ──────────────────────────────────────────────────────────
   const userContext = buildUserContext(req);
@@ -12473,3 +12493,18 @@ exports.deleteConversation = async function (req, res) {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
+
+exports.getCacheAnalytics = () => (AI_V6?.getCacheAnalytics ? AI_V6.getCacheAnalytics() : { status: "Active" });
+exports.clearCache = () => (AI_V6?.clearCache ? AI_V6.clearCache() : true);
+exports.submitFeedback = async (req, res) => {
+  try {
+    if (AI_V6?.submitFeedback) {
+      const result = await AI_V6.submitFeedback(req, req.body || {});
+      return res.status(200).json(result);
+    }
+    return res.status(200).json({ success: true, message: "Feedback recorded" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+

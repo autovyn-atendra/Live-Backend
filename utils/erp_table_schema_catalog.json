@@ -2481,7 +2481,7 @@
     },
     "EMPLOYEEMASTER": {
       "tableName": "EMPLOYEEMASTER",
-      "displayName": "Master Employee Database",
+      "displayName": "Master Employee Database (257 Enterprise Columns)",
       "module": "HR_PAYROLL",
       "primaryKey": [
         "UTD"
@@ -2489,177 +2489,1069 @@
       "businessKey": [
         "EMPCODE"
       ],
-      "description": "Master table for all employee personal, departmental, banking, statutory compliance (PF/ESIC/PAN/Aadhar), and employment lifecycle details.",
-      "queryRules": [
-        "Always filter by EXPORT_TYPE = compcode for multi-tenant isolation.",
-        "Active employees filter: WHERE LASTWOR_DATE IS NULL (or STATUS = 1 OR STATUS IS NULL).",
-        "Designation Lookup: Employee designation is in EMPLOYEEDESIGNATION (varchar) OR join Misc_Mst: LEFT JOIN Misc_Mst desg ON desg.Misc_Code = EMPLOYEEMASTER.DESG AND desg.Misc_Type = 95. Use COALESCE(EMPLOYEEMASTER.EMPLOYEEDESIGNATION, desg.Misc_Name, 'N/A') AS Designation.",
-        "Branch / Location Lookup: Join Misc_Mst: LEFT JOIN Misc_Mst branch ON branch.Misc_Code = EMPLOYEEMASTER.LOCATION AND branch.Misc_Type = 85. Use COALESCE(branch.Misc_Name, CONVERT(varchar(50), EMPLOYEEMASTER.LOCATION)) AS Location.",
-        "Department Lookup: Join Misc_Mst: LEFT JOIN Misc_Mst dept ON dept.Misc_Code = EMPLOYEEMASTER.DEPT AND dept.Misc_Type = 11. Use COALESCE(dept.Misc_Name, CONVERT(varchar(50), EMPLOYEEMASTER.DEPT)) AS Department.",
-        "Statutory Compliance Rules: PFNO and ESINO columns in EMPLOYEEMASTER store boolean/status flags (1 = Applicable/Enrolled, 0 = Not Applicable). The actual PF Member ID/Trust Number is stored in PFTRUST_NO or UAN_NO. When PFNO is '1' and PFTRUST_NO is NULL, PF is applicable (Yes) but the specific PF account number is not recorded in the database."
-      ],
+      "description": "Complete master repository of all 257 columns for active and separated employees including personal data, statutory KYC (Aadhaar, PAN, Passport, Driving License, PF, ESI, UAN), banking details, addresses, family details (Father, Mother, Spouse, Siblings), emergency contacts, career history, joining/probation/confirmation/exit dates, management hierarchy (Reporting 1/2/3, Supervisors), compensation (CTC, Gross, Allowances), mobile app permissions, and biometric IDs.",
       "columns": {
-        "UTD": {
-          "type": "int",
-          "nullable": false,
-          "description": "Primary unique identity key"
+        "SRNO": {
+          "type": "smallint",
+          "description": "Serial number identity"
         },
         "EMPCODE": {
-          "type": "varchar(100)",
-          "nullable": false,
-          "description": "Unique Employee Code (e.g. EMP001, 10243). Primary identifier across all HR and payroll tables"
+          "type": "varchar(50)",
+          "description": "Primary Employee Code identifier"
+        },
+        "MSPIN": {
+          "type": "nvarchar(50)",
+          "description": "Maruti Suzuki PIN / Unique Auto PIN"
+        },
+        "TITLE": {
+          "type": "nvarchar(20)",
+          "description": "Salutation title (Mr./Ms./Dr.)"
         },
         "EMPFIRSTNAME": {
-          "type": "varchar(150)",
-          "nullable": true,
-          "description": "First name of the employee"
+          "type": "nvarchar(100)",
+          "description": "Employee First Name"
         },
         "EMPLASTNAME": {
-          "type": "varchar(150)",
-          "nullable": false,
-          "description": "Last name / surname of the employee"
+          "type": "nvarchar(100)",
+          "description": "Employee Last Name"
         },
-        "EMP_FULL_NAME": {
-          "type": "computed",
-          "nullable": true,
-          "description": "Full name (CONCAT(EMPFIRSTNAME, ' ', EMPLASTNAME))"
+        "PERMANENTADDRESS1": {
+          "type": "nvarchar(255)",
+          "description": "Permanent Address Line 1"
         },
-        "FATHERNAME": {
-          "type": "varchar(150)",
-          "nullable": true,
-          "description": "Father / Guardian name"
+        "PERMANENTADDRESS2": {
+          "type": "nvarchar(255)",
+          "description": "Permanent Address Line 2"
         },
-        "GENDER": {
-          "type": "varchar(10)",
-          "nullable": true,
-          "description": "Gender (MALE / FEMALE / OTHER)"
+        "PCITY": {
+          "type": "smallint",
+          "description": "Permanent City code (Misc_Mst link)"
+        },
+        "PPINCODE": {
+          "type": "nvarchar(20)",
+          "description": "Permanent Pincode"
+        },
+        "PSTATE": {
+          "type": "smallint",
+          "description": "Permanent State code"
+        },
+        "CURRENTADDRESS1": {
+          "type": "nvarchar(255)",
+          "description": "Current Address Line 1"
+        },
+        "CURRENTADDRESS2": {
+          "type": "nvarchar(255)",
+          "description": "Current Address Line 2"
+        },
+        "CCITY": {
+          "type": "smallint",
+          "description": "Current City code"
+        },
+        "CPINCODE": {
+          "type": "nvarchar(20)",
+          "description": "Current Pincode"
+        },
+        "CSTATE": {
+          "type": "smallint",
+          "description": "Current State code"
+        },
+        "LANDLINENO": {
+          "type": "nvarchar(50)",
+          "description": "Landline Phone Number"
+        },
+        "MOBILENO": {
+          "type": "nvarchar(50)",
+          "description": "Primary Mobile Number"
+        },
+        "EMERGENCYNAME": {
+          "type": "nvarchar(100)",
+          "description": "Emergency Contact Person Name"
+        },
+        "EMERGENCYNO": {
+          "type": "nvarchar(50)",
+          "description": "Emergency Contact Phone Number"
+        },
+        "PANNO": {
+          "type": "nvarchar(50)",
+          "description": "Permanent Account Number (PAN)"
+        },
+        "PFNO": {
+          "type": "nvarchar(50)",
+          "description": "Provident Fund (PF) Account Number"
+        },
+        "ESINO": {
+          "type": "nvarchar(50)",
+          "description": "Employee State Insurance (ESI) Number"
+        },
+        "PASSPORTNO": {
+          "type": "nvarchar(50)",
+          "description": "Passport Number"
+        },
+        "PASSEXPIRYDATE": {
+          "type": "smalldatetime",
+          "description": "Passport Expiry Date"
+        },
+        "BLOODGROUP": {
+          "type": "nvarchar(20)",
+          "description": "Blood Group (A+, B+, O+, AB+, etc.)"
         },
         "DOB": {
-          "type": "date",
-          "nullable": true,
+          "type": "smalldatetime",
           "description": "Date of Birth"
         },
-        "DOJ": {
-          "type": "date",
-          "nullable": true,
-          "description": "Date of Joining the company"
+        "GENDER": {
+          "type": "nvarchar(20)",
+          "description": "Gender (Male/Female/Other)"
         },
-        "DATE_OF_LEAVING": {
-          "type": "date",
-          "nullable": true,
-          "description": "Date of leaving / resignation if inactive"
+        "MARITALSTATUS": {
+          "type": "nvarchar(50)",
+          "description": "Marital Status (Single/Married/Divorced)"
         },
-        "STATUS": {
-          "type": "int",
-          "nullable": true,
-          "description": "Employment Status (1 = Active, 0 = Inactive / Resigned)"
+        "DOM": {
+          "type": "smalldatetime",
+          "description": "Date of Marriage / Wedding Anniversary"
+        },
+        "SKILLS": {
+          "type": "nvarchar(255)",
+          "description": "Technical & professional skills"
+        },
+        "BASICQUALIFICATION": {
+          "type": "nvarchar(100)",
+          "description": "Basic Educational Qualification (10th, 12th, Graduate)"
+        },
+        "PROFESSIONALQUALIFICATION": {
+          "type": "nvarchar(100)",
+          "description": "Professional Qualification (B.Tech, MBA, CA, Diploma)"
+        },
+        "FATHERNAME": {
+          "type": "nvarchar(100)",
+          "description": "Father Full Name"
+        },
+        "FATHEROCCUPATION": {
+          "type": "smallint",
+          "description": "Father Occupation code"
+        },
+        "FATHERCONTACTNO": {
+          "type": "nvarchar(50)",
+          "description": "Father Mobile/Contact Number"
+        },
+        "MOTHERNAME": {
+          "type": "nvarchar(100)",
+          "description": "Mother Full Name"
+        },
+        "MOTHERCONTACTNO": {
+          "type": "nvarchar(50)",
+          "description": "Mother Mobile/Contact Number"
+        },
+        "SPOUSENAME": {
+          "type": "nvarchar(100)",
+          "description": "Spouse (Wife/Husband) Full Name"
+        },
+        "SPOUSECONTACTNO": {
+          "type": "nvarchar(50)",
+          "description": "Spouse Mobile/Contact Number"
+        },
+        "SPOUSEGENDER": {
+          "type": "nvarchar(20)",
+          "description": "Spouse Gender"
+        },
+        "SIBLINGNAME": {
+          "type": "nvarchar(100)",
+          "description": "Brother/Sister Name"
+        },
+        "SIBLINGCONTACTNO": {
+          "type": "nvarchar(50)",
+          "description": "Sibling Contact Number"
+        },
+        "PREVIOUSCOMPANYNAME": {
+          "type": "nvarchar(150)",
+          "description": "Previous Employer / Company Name"
+        },
+        "PRECOMPCITY": {
+          "type": "smallint",
+          "description": "Previous Company City"
+        },
+        "PRECOMPCONTACTNO": {
+          "type": "nvarchar(50)",
+          "description": "Previous Company Contact Number"
+        },
+        "PREJOININGDATE": {
+          "type": "smalldatetime",
+          "description": "Previous Company Joining Date"
+        },
+        "PREENDDATE": {
+          "type": "smalldatetime",
+          "description": "Previous Company Relieving Date"
+        },
+        "PREDESIGNATION": {
+          "type": "nvarchar(100)",
+          "description": "Previous Designation"
+        },
+        "EMPREFERENCENAME": {
+          "type": "nvarchar(100)",
+          "description": "Reference Person Name"
+        },
+        "REFERENCEDESIGNATION": {
+          "type": "nvarchar(100)",
+          "description": "Reference Person Designation"
+        },
+        "ISMEDICALATTENTION": {
+          "type": "nvarchar(50)",
+          "description": "Medical Attention Required Flag"
+        },
+        "ISSERIOUSILLNESS": {
+          "type": "nvarchar(50)",
+          "description": "Serious Illness Flag"
+        },
+        "ISALLERGIES": {
+          "type": "nvarchar(50)",
+          "description": "Allergies Info"
+        },
+        "CORPORATEMAILID": {
+          "type": "nvarchar(100)",
+          "description": "Official Company Email Address"
+        },
+        "CURRENTJOINDATE": {
+          "type": "smalldatetime",
+          "description": "Official Current Date of Joining (DOJ)"
+        },
+        "PAYMENTMODE": {
+          "type": "nvarchar(50)",
+          "description": "Salary Payment Mode (Bank Transfer, Cheque, Cash)"
+        },
+        "BANKNAME": {
+          "type": "nvarchar(100)",
+          "description": "Bank Name for Salary Credit"
+        },
+        "BANKACCOUNTNO": {
+          "type": "varchar(100)",
+          "description": "Bank Account Number"
+        },
+        "EMPLOYEETYPE": {
+          "type": "nvarchar(50)",
+          "description": "Employee Type (Permanent, Contract, Probation, Trainee)"
+        },
+        "ORGANISATIONNAME": {
+          "type": "nvarchar(100)",
+          "description": "Organisation / Company Entity Name"
+        },
+        "SBU_FUNCTION": {
+          "type": "nvarchar(100)",
+          "description": "Strategic Business Unit Function"
+        },
+        "DIVISION": {
+          "type": "nvarchar(100)",
+          "description": "Company Division"
+        },
+        "REGION": {
+          "type": "smallint",
+          "description": "Region Code / Zone"
+        },
+        "UNIT": {
+          "type": "nvarchar(100)",
+          "description": "Operating Unit"
+        },
+        "SECTION": {
+          "type": "nvarchar(100)",
+          "description": "Working Section"
+        },
+        "LEVEL": {
+          "type": "nvarchar(50)",
+          "description": "Employee Management Level / Band"
         },
         "LOCATION": {
-          "type": "int",
-          "nullable": true,
-          "description": "Branch / Location Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 85)"
+          "type": "nvarchar(100)",
+          "description": "Branch / Work Location Name"
         },
-        "DEPT": {
-          "type": "int",
-          "nullable": true,
-          "description": "Department Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 11)"
-        },
-        "DESG": {
-          "type": "int",
-          "nullable": true,
-          "description": "Designation Code (foreign key linking to Misc_Mst.Misc_Code WHERE Misc_Type = 95)"
-        },
-        "GRADE": {
-          "type": "int",
-          "nullable": true,
-          "description": "Employee Grade Code (Links to Misc_Mst.Misc_Code WHERE Misc_Type = 672)"
-        },
-        "PAN_NO": {
-          "type": "varchar(20)",
-          "nullable": true,
-          "description": "Income Tax PAN Card Number"
-        },
-        "AADHAR_NO": {
-          "type": "varchar(20)",
-          "nullable": true,
-          "description": "Government UIDAI Aadhar Number"
-        },
-        "MOBILE_NO": {
-          "type": "varchar(20)",
-          "nullable": true,
-          "description": "Primary Mobile / Contact Number"
-        },
-        "OFFICIAL_EMAIL": {
-          "type": "varchar(100)",
-          "nullable": true,
-          "description": "Official Work Email Address"
-        },
-        "PERSONAL_EMAIL": {
-          "type": "varchar(100)",
-          "nullable": true,
-          "description": "Personal Email Address"
-        },
-        "SALARY_BRANCH": {
-          "type": "int",
-          "nullable": true,
-          "description": "Salary processing bank branch"
-        },
-        "BANK_NAME": {
-          "type": "varchar(100)",
-          "nullable": true,
-          "description": "Salary Bank Name"
-        },
-        "ACCOUNT_NO": {
-          "type": "varchar(50)",
-          "nullable": true,
-          "description": "Salary Bank Account Number"
-        },
-        "IFSC_CODE": {
-          "type": "varchar(20)",
-          "nullable": true,
-          "description": "Bank IFSC Code"
-        },
-        "PF_NO": {
-          "type": "varchar(50)",
-          "nullable": true,
-          "description": "Provident Fund (EPF) Member ID"
-        },
-        "UAN_NO": {
-          "type": "varchar(50)",
-          "nullable": true,
-          "description": "Universal Account Number (UAN) for EPF"
-        },
-        "ESIC_NO": {
-          "type": "varchar(50)",
-          "nullable": true,
-          "description": "ESIC Insurance Number"
-        },
-        "REPORTING_TO": {
-          "type": "varchar(100)",
-          "nullable": true,
-          "description": "Manager / Reporting Supervisor Employee Code"
-        },
-        "SHIFT": {
-          "type": "int",
-          "nullable": true,
-          "description": "Assigned Work Shift Code"
-        },
-        "EXPORT_TYPE": {
-          "type": "int",
-          "nullable": true,
-          "description": "Company Code / Tenant ID"
+        "ROLE": {
+          "type": "nvarchar(100)",
+          "description": "Job Role / Functional Role"
         },
         "EMPLOYEEDESIGNATION": {
-          "type": "varchar(150)",
-          "nullable": true,
-          "description": "Employee Designation text name (e.g. 'Senior Sales Executive', 'Accountant', 'Technician')"
+          "type": "nvarchar(100)",
+          "description": "Official Employee Designation"
+        },
+        "GRADE": {
+          "type": "nvarchar(50)",
+          "description": "Employee Grade (L1, L2, M1, etc.)"
+        },
+        "SUPERVISORID": {
+          "type": "smallint",
+          "description": "Reporting Manager / Supervisor ID"
+        },
+        "SUPERVISOR": {
+          "type": "nvarchar(100)",
+          "description": "Reporting Manager / Supervisor Name"
+        },
+        "ISTIMEVALIDATION": {
+          "type": "nvarchar(20)",
+          "description": "Time Validation Flag"
+        },
+        "ISPAYROLL": {
+          "type": "nvarchar(20)",
+          "description": "Include in Payroll Process Flag"
+        },
+        "PAYCYCLEDURATION": {
+          "type": "nvarchar(50)",
+          "description": "Pay Cycle Duration (Monthly)"
+        },
+        "PROBATIONPERIOD": {
+          "type": "nvarchar(50)",
+          "description": "Probation Period in Months/Days"
+        },
+        "PROBATIONLEAVES": {
+          "type": "nvarchar(50)",
+          "description": "Allowed Leaves during Probation"
+        },
+        "NOTICEPERIOD": {
+          "type": "nvarchar(50)",
+          "description": "Notice Period Duration (30 days, 60 days)"
+        },
+        "RELCODE": {
+          "type": "smallint",
+          "description": "Religion / Relation Code"
+        },
+        "Exp_Date": {
+          "type": "smalldatetime",
+          "description": "Contract / Work Expiry Date"
+        },
+        "Export_Type": {
+          "type": "tinyint",
+          "description": "Export Type Sync Flag"
+        },
+        "Loc_Code": {
+          "type": "smallint",
+          "description": "Branch / Location Numeric Code"
+        },
+        "ServerId": {
+          "type": "int",
+          "description": "Server Synchronization ID"
+        },
+        "DRIVINGLIC_ISSUEDATE": {
+          "type": "smalldatetime",
+          "description": "Driving License Issue Date"
+        },
+        "DRIVINGLIC_ISSUEPALACE": {
+          "type": "nvarchar(100)",
+          "description": "Driving License Issue Place"
+        },
+        "ACCOUNT_TYPE": {
+          "type": "nvarchar(50)",
+          "description": "Bank Account Type (Savings, Current, Salary)"
+        },
+        "PFTRUST_NO": {
+          "type": "nvarchar(50)",
+          "description": "PF Trust Registration Number"
+        },
+        "EMPHEIGHT": {
+          "type": "money",
+          "description": "Employee Height in cm"
+        },
+        "EMPWEIGHT": {
+          "type": "money",
+          "description": "Employee Weight in kg"
+        },
+        "P_NATIONALITY": {
+          "type": "nvarchar(50)",
+          "description": "Permanent Nationality (Indian)"
+        },
+        "UID_NO": {
+          "type": "nvarchar(50)",
+          "description": "Aadhaar / UID Card Number"
+        },
+        "ALTERNET_MAIL": {
+          "type": "nvarchar(100)",
+          "description": "Personal Alternate Email ID"
+        },
+        "EMPDEPENDENT": {
+          "type": "smallint",
+          "description": "Number of Dependents"
+        },
+        "CHILDREN_DETAIL": {
+          "type": "nvarchar(255)",
+          "description": "Details of Children"
+        },
+        "LANGUAGE_DETAIL": {
+          "type": "nvarchar(255)",
+          "description": "Languages Known (Hindi, English, etc.)"
+        },
+        "NOMINEE_DETAIL": {
+          "type": "smallint",
+          "description": "Nominee Detail Code"
+        },
+        "EMP_SHIFT": {
+          "type": "nvarchar(50)",
+          "description": "Assigned Work Shift Timing"
+        },
+        "PF": {
+          "type": "money",
+          "description": "PF Rate / Amount"
+        },
+        "PFSALARY_LIMIT": {
+          "type": "money",
+          "description": "PF Salary Ceiling Limit (e.g. 15000)"
+        },
+        "LWF": {
+          "type": "money",
+          "description": "Labour Welfare Fund (LWF) Amount"
+        },
+        "ESI_AMOUNT": {
+          "type": "money",
+          "description": "ESI Monthly Amount"
+        },
+        "BONUS_AMOUNT": {
+          "type": "money",
+          "description": "Annual / Festive Bonus Amount"
+        },
+        "MONTHLY_CTC": {
+          "type": "money",
+          "description": "Monthly Cost to Company (CTC)"
+        },
+        "ANNUAL_CTC": {
+          "type": "money",
+          "description": "Annual Cost to Company (CTC)"
+        },
+        "COMP_NAME": {
+          "type": "nvarchar(100)",
+          "description": "Company Legal Name"
+        },
+        "JOINING_TYPE": {
+          "type": "nvarchar(50)",
+          "description": "Joining Type (New, Rehire, Transfer)"
+        },
+        "BRANCH": {
+          "type": "varchar(100)",
+          "description": "Branch Code / Short Name"
+        },
+        "EMP_STATUS": {
+          "type": "nvarchar(50)",
+          "description": "Employee Master Status (Active, Resigned, Inactive)"
+        },
+        "USR_NAME": {
+          "type": "nvarchar(50)",
+          "description": "ERP User Login Name"
+        },
+        "APPLICATION_ID": {
+          "type": "nvarchar(50)",
+          "description": "Recruitment Application ID"
+        },
+        "APPROVED_AUTHO": {
+          "type": "nvarchar(100)",
+          "description": "Approved Authority Name"
+        },
+        "CREATED_BY": {
+          "type": "nvarchar(50)",
+          "description": "User who created this record"
+        },
+        "CREATED_ON": {
+          "type": "smalldatetime",
+          "description": "Record creation timestamp"
+        },
+        "LASTMODI_BY": {
+          "type": "nvarchar(50)",
+          "description": "User who last modified this record"
+        },
+        "LASTMODI_ON": {
+          "type": "smalldatetime",
+          "description": "Last modification timestamp"
+        },
+        "BIOMETRIC_ID": {
+          "type": "nvarchar(50)",
+          "description": "Biometric Machine Punch ID / Device User ID"
+        },
+        "PROPOSEDRETIRE_DATE": {
+          "type": "smalldatetime",
+          "description": "Proposed Retirement Date"
         },
         "LASTWOR_DATE": {
-          "type": "datetime",
-          "nullable": true,
-          "description": "Last working date / Resignation exit date (NULL means employee is currently ACTIVE)"
+          "type": "smalldatetime",
+          "description": "Last Working Date / Relieving Date"
+        },
+        "RELEVE_STATUS": {
+          "type": "nvarchar(50)",
+          "description": "Relieving Status (Relieved, Serving Notice, Hold)"
+        },
+        "ADUSER_NAME": {
+          "type": "nvarchar(50)",
+          "description": "Active Directory User Name"
+        },
+        "EXT_NO": {
+          "type": "nvarchar(20)",
+          "description": "Office Intercom / Extension Number"
+        },
+        "AUTOMAILER": {
+          "type": "nvarchar(50)",
+          "description": "Automated Emailer Subscription Flag"
+        },
+        "WEEKLYOFF": {
+          "type": "nvarchar(50)",
+          "description": "Weekly Off Day (Sunday, Monday, Rotational)"
+        },
+        "RESIGN_APPR": {
+          "type": "nvarchar(50)",
+          "description": "Resignation Approval Status"
+        },
+        "AX_EMP_CODE": {
+          "type": "nvarchar(50)",
+          "description": "Dynamics AX / ERP Integrated Employee Code"
+        },
+        "AX_BAL": {
+          "type": "real",
+          "description": "AX Advance / Ledger Balance"
+        },
+        "Prob_period": {
+          "type": "smalldatetime",
+          "description": "Probation End Date"
+        },
+        "empcode2": {
+          "type": "nvarchar(50)",
+          "description": "Secondary Employee Code"
+        },
+        "empcode3": {
+          "type": "nvarchar(50)",
+          "description": "Tertiary Employee Code"
+        },
+        "empcode4": {
+          "type": "nvarchar(50)",
+          "description": "Legacy Employee Code"
+        },
+        "ADHARNO": {
+          "type": "nvarchar(50)",
+          "description": "12-Digit Government Aadhaar Card Number"
+        },
+        "pfnumber": {
+          "type": "nvarchar(50)",
+          "description": "Provident Fund (PF) Member ID"
+        },
+        "esinumber": {
+          "type": "nvarchar(50)",
+          "description": "ESI Member IP Number"
+        },
+        "ein": {
+          "type": "nvarchar(50)",
+          "description": "Employer Identification Number (EIN)"
+        },
+        "mobile_limit": {
+          "type": "nvarchar(50)",
+          "description": "Corporate Mobile Bill Reimbursement Limit"
+        },
+        "Rec_Date": {
+          "type": "date",
+          "description": "Recruitment Date"
+        },
+        "ifsc_code": {
+          "type": "nvarchar(50)",
+          "description": "Bank IFSC Code"
+        },
+        "MOBILE_NO": {
+          "type": "nvarchar(50)",
+          "description": "Secondary / Alternate Mobile Number"
+        },
+        "pre_Exp": {
+          "type": "nvarchar(50)",
+          "description": "Prior Work Experience (Years/Months)"
+        },
+        "landline_no": {
+          "type": "nvarchar(50)",
+          "description": "Alternate Landline Phone"
+        },
+        "uidno": {
+          "type": "varchar(50)",
+          "description": "UID / Aadhaar string representation"
+        },
+        "CNATIONALITY": {
+          "type": "nvarchar(50)",
+          "description": "Current Nationality"
+        },
+        "Father_Mob": {
+          "type": "nvarchar(50)",
+          "description": "Father Direct Mobile Number"
+        },
+        "Mother_Mob": {
+          "type": "nvarchar(50)",
+          "description": "Mother Direct Mobile Number"
+        },
+        "Spouse_Mob": {
+          "type": "nvarchar(50)",
+          "description": "Spouse Direct Mobile Number"
+        },
+        "pfper": {
+          "type": "real",
+          "description": "PF Contribution Percentage (12%)"
+        },
+        "esiper": {
+          "type": "money",
+          "description": "ESI Contribution Percentage"
+        },
+        "IEMI": {
+          "type": "varchar(50)",
+          "description": "Registered Mobile Device IMEI Number"
+        },
+        "IsRW": {
+          "type": "int",
+          "description": "Read/Write Permission Flag"
+        },
+        "Reporting_1": {
+          "type": "nvarchar(100)",
+          "description": "First Level Reporting Manager Name/Code"
+        },
+        "Reporting_2": {
+          "type": "nvarchar(100)",
+          "description": "Second Level Reporting Manager Name/Code"
+        },
+        "Reporting_3": {
+          "type": "nvarchar(100)",
+          "description": "Third Level Reporting HOD Name/Code"
+        },
+        "App_Mispunch": {
+          "type": "nvarchar(50)",
+          "description": "Mispunch Approval Authority"
+        },
+        "App_Leave": {
+          "type": "nvarchar(50)",
+          "description": "Leave Approval Authority"
+        },
+        "App_Attendance": {
+          "type": "nvarchar(50)",
+          "description": "Attendance Approval Authority"
+        },
+        "InBudget": {
+          "type": "bit",
+          "description": "Hired in Annual Headcount Budget (1=Yes, 0=No)"
+        },
+        "Induction_Done": {
+          "type": "bit",
+          "description": "HR Induction Completed (1=Yes, 0=No)"
+        },
+        "ExitInterview_Done": {
+          "type": "nvarchar(50)",
+          "description": "Exit Interview Completed Status"
+        },
+        "Sal_Region": {
+          "type": "smallint",
+          "description": "Salary Region Code"
+        },
+        "Tocken_Id": {
+          "type": "nvarchar(255)",
+          "description": "Mobile App Device Push Token"
+        },
+        "Interview_Date": {
+          "type": "date",
+          "description": "Job Interview Date"
+        },
+        "LWFNO": {
+          "type": "int",
+          "description": "LWF Registration Number"
+        },
+        "Emp_Ac_Name": {
+          "type": "nvarchar(100)",
+          "description": "Account Holder Name as per Bank Records"
+        },
+        "PF_Date": {
+          "type": "date",
+          "description": "PF Enrollment Date"
+        },
+        "ESI_Date": {
+          "type": "date",
+          "description": "ESI Enrollment Date"
+        },
+        "PASSPORT_EXPDATE": {
+          "type": "date",
+          "description": "Passport Expiration Date"
+        },
+        "Punch_Type": {
+          "type": "int",
+          "description": "Punch Mode (1=Biometric Machine, 2=Mobile App, 3=Both)"
+        },
+        "PAY_CODE": {
+          "type": "nvarchar(50)",
+          "description": "Payroll Grade / Pay Code"
+        },
+        "Sal_Hold": {
+          "type": "int",
+          "description": "Salary Hold Flag (1=Hold, 0=Release)"
+        },
+        "Relaxation_Type": {
+          "type": "int",
+          "description": "Shift Grace Time Relaxation Type"
+        },
+        "ShiftIn_Relaxation": {
+          "type": "money",
+          "description": "Morning In-Time Grace Relaxation (minutes)"
+        },
+        "ShiftOut_Relaxation": {
+          "type": "money",
+          "description": "Evening Out-Time Grace Relaxation (minutes)"
+        },
+        "Cumulative_Relaxation": {
+          "type": "money",
+          "description": "Monthly Cumulative Relaxation Allowed (minutes)"
+        },
+        "Spl_Rem": {
+          "type": "nvarchar(255)",
+          "description": "Special Management Remarks"
+        },
+        "Acnt_Loc": {
+          "type": "int",
+          "description": "Accounting Location Code"
+        },
+        "UAN_No": {
+          "type": "nvarchar(50)",
+          "description": "Universal Account Number (UAN) for EPFO"
+        },
+        "EmpType": {
+          "type": "int",
+          "description": "Numeric Employee Classification"
+        },
+        "FCM_TockenId": {
+          "type": "varchar(255)",
+          "description": "Firebase Cloud Messaging Push Token"
+        },
+        "TCS_Rate": {
+          "type": "int",
+          "description": "Tax Collected at Source Rate"
+        },
+        "MSPN_Id": {
+          "type": "nvarchar(50)",
+          "description": "MSPIN Auto ID"
+        },
+        "Android_ID": {
+          "type": "nvarchar(100)",
+          "description": "Registered Android Hardware ID"
+        },
+        "multi_loc": {
+          "type": "nvarchar(50)",
+          "description": "Multi-Location Access Allowed Flag"
+        },
+        "Ledger_Code": {
+          "type": "int",
+          "description": "Financial Ledger Account Code"
+        },
+        "IsMSPN": {
+          "type": "int",
+          "description": "Is MSPIN Certified (1=Yes, 0=No)"
+        },
+        "MSPN_DTL": {
+          "type": "nvarchar(255)",
+          "description": "MSPIN Certification Details"
+        },
+        "ESI_DEDUCTION": {
+          "type": "int",
+          "description": "Deduct ESI Flag (1=Yes, 0=No)"
+        },
+        "PF_DEDUCTION": {
+          "type": "int",
+          "description": "Deduct PF Flag (1=Yes, 0=No)"
+        },
+        "pro_tax": {
+          "type": "int",
+          "description": "Professional Tax Applicable Flag"
+        },
+        "Token": {
+          "type": "nvarchar(255)",
+          "description": "API Auth Token"
+        },
+        "Is_Profile_Filled": {
+          "type": "int",
+          "description": "Employee Self-Service Profile Completed (1=Yes, 0=No)"
+        },
+        "driving_licence": {
+          "type": "nvarchar(50)",
+          "description": "Driving License Number"
+        },
+        "columndoc_type": {
+          "type": "nvarchar(50)",
+          "description": "Mandatory Document Type"
+        },
+        "mPunch": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Punch In/Out Permission"
+        },
+        "mApprove": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Approval Authority"
+        },
+        "mMispunch": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Mispunch Apply Permission"
+        },
+        "mLeave": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Leave Apply Permission"
+        },
+        "mCalender": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Holiday Calendar Permission"
+        },
+        "mDeviceLog": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Device Log Access"
+        },
+        "mAttendanceLog": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Attendance History Access"
+        },
+        "mLocationLog": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App GPS Location Tracking Access"
+        },
+        "mToDoList": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Task ToDo List Access"
+        },
+        "mSuggestions": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App Feedback Suggestions Access"
+        },
+        "mUpdateIMEI": {
+          "type": "nvarchar(20)",
+          "description": "Permission to update device IMEI"
+        },
+        "mTrackingReport": {
+          "type": "nvarchar(20)",
+          "description": "Live GPS Field Tracking Report Permission"
+        },
+        "mLiveLocation": {
+          "type": "nvarchar(20)",
+          "description": "Real-time Live Location Sharing"
+        },
+        "mAssetScan": {
+          "type": "nvarchar(20)",
+          "description": "Mobile App QR Asset Scanner Permission"
+        },
+        "mGeoFenceSetting": {
+          "type": "nvarchar(20)",
+          "description": "Geo-fence Location Punch Enforcement"
+        },
+        "mUserGeoLocation": {
+          "type": "varchar(255)",
+          "description": "Registered Office Geo-coordinates (Lat,Long,Radius)"
+        },
+        "IsNightShift": {
+          "type": "int",
+          "description": "Night Shift Eligible Flag (1=Yes, 0=No)"
+        },
+        "UTD": {
+          "type": "int",
+          "description": "Unique Transaction Record ID"
+        },
+        "CATEGORY": {
+          "type": "int",
+          "description": "Employee Category Code (Misc_Mst link)"
+        },
+        "CLUSTER": {
+          "type": "int",
+          "description": "Showroom / Dealership Cluster ID"
+        },
+        "CHANNEL": {
+          "type": "int",
+          "description": "Maruti Dealership Channel (Arena, Nexa, Commercial, TrueValue)"
+        },
+        "COSTCENTRE": {
+          "type": "int",
+          "description": "Financial Accounting Cost Centre Code"
+        },
+        "PAN_CARD_VER": {
+          "type": "bit",
+          "description": "PAN Card API Verified Flag (1=Verified, 0=Pending/Failed)"
+        },
+        "AADHAR_CARD_VER": {
+          "type": "bit",
+          "description": "Aadhaar Card API Verified Flag (1=Verified, 0=Pending/Failed)"
+        },
+        "DRIVING_VER": {
+          "type": "bit",
+          "description": "Driving License API Verified Flag (1=Verified, 0=Pending/Failed)"
+        },
+        "PASSPORT_VER": {
+          "type": "bit",
+          "description": "Passport API Verified Flag (1=Verified, 0=Pending/Failed)"
+        },
+        "RESIGNATION_SUBMISSION_DATE": {
+          "type": "date",
+          "description": "Date employee submitted resignation letter"
+        },
+        "REASON_FOR_RESIGNATION": {
+          "type": "nvarchar(255)",
+          "description": "Reason stated for resignation"
+        },
+        "TEN_LEAVE_DATE": {
+          "type": "date",
+          "description": "Tentative Leaving Date"
+        },
+        "SEPERATIONREMARKS": {
+          "type": "nvarchar(255)",
+          "description": "HR Separation Remarks"
+        },
+        "SEPARATION_MODE": {
+          "type": "nvarchar(50)",
+          "description": "Separation Mode (Resignation, Termination, Retirement, Absconding)"
+        },
+        "DATE_OF_SETTLEMENT": {
+          "type": "date",
+          "description": "Full & Final (F&F) Settlement Date"
+        },
+        "INTERVIEWREMAKS": {
+          "type": "nvarchar(255)",
+          "description": "Exit Interview Remarks"
+        },
+        "DATE_OF_EXIT_INTERVIEW": {
+          "type": "date",
+          "description": "Date of Exit Interview conducted"
+        },
+        "EXP_IN_YEAR": {
+          "type": "nvarchar(50)",
+          "description": "Total Industry Experience in Years"
+        },
+        "BONUS": {
+          "type": "varchar(50)",
+          "description": "Bonus Eligibility Type"
+        },
+        "Dlv_Type": {
+          "type": "varchar(50)",
+          "description": "Delivery Type Code"
+        },
+        "DRIVINGLIC_EXPDATE": {
+          "type": "date",
+          "description": "Driving License Expiry Date"
+        },
+        "LIN_NO": {
+          "type": "varchar(50)",
+          "description": "Labour Identification Number (LIN)"
+        },
+        "disable_whats_new": {
+          "type": "int",
+          "description": "Disable app whats new banner"
+        },
+        "MOBILE_RIGHTS": {
+          "type": "money",
+          "description": "Mobile Reimbursement Allowance"
+        },
+        "Confirmation_Date": {
+          "type": "smalldatetime",
+          "description": "Job Confirmation Date post probation"
+        },
+        "Marital_Status": {
+          "type": "int",
+          "description": "Marital Status Code"
+        },
+        "Confirmed_By": {
+          "type": "varchar(50)",
+          "description": "Authority who confirmed employment"
+        },
+        "CDIST": {
+          "type": "smallint",
+          "description": "Current District Code"
+        },
+        "PDIST": {
+          "type": "smallint",
+          "description": "Permanent District Code"
+        },
+        "LASTWOR_DATE2": {
+          "type": "date",
+          "description": "Secondary Relieving Date Record"
+        },
+        "DOJ2": {
+          "type": "date",
+          "description": "Re-joining Date / Transfer Date"
+        },
+        "LastSalary": {
+          "type": "money",
+          "description": "Last Drawn Monthly Salary Amount"
+        },
+        "Resign_Date": {
+          "type": "date",
+          "description": "Resignation Date"
+        },
+        "ExitInt_Date": {
+          "type": "date",
+          "description": "Exit Interview Date"
+        },
+        "DD_CLUB": {
+          "type": "nvarchar(50)",
+          "description": "Maruti Dealership Directors Club / Award Club"
+        },
+        "Apprentice_Date_From": {
+          "type": "date",
+          "description": "Apprenticeship Start Date"
+        },
+        "Apprentice_Date_To": {
+          "type": "date",
+          "description": "Apprenticeship End Date"
+        },
+        "Inserted_By": {
+          "type": "varchar(50)",
+          "description": "System user who inserted the employee record"
+        },
+        "GEOOFFENCELOC": {
+          "type": "nvarchar(255)",
+          "description": "Geofence Allowed Location Coordinates"
+        },
+        "CONTRACT_NUMBER": {
+          "type": "varchar(50)",
+          "description": "Employment Contract Agreement Number"
+        },
+        "RESIGNED_STATUS": {
+          "type": "nvarchar(50)",
+          "description": "Resigned Status Description"
+        },
+        "SEPRATION_CATE": {
+          "type": "nvarchar(50)",
+          "description": "Separation Category"
+        },
+        "FACE_EMBEDDING": {
+          "type": "nvarchar(max)",
+          "description": "Facial recognition 512-d AI biometric embedding"
+        },
+        "Usr_Password": {
+          "type": "varchar(255)",
+          "description": "Encrypted Portal Password"
+        },
+        "Usr_Role_Id": {
+          "type": "int",
+          "description": "User System Role ID"
+        },
+        "Source_Code": {
+          "type": "varchar(50)",
+          "description": "Hiring Source Code"
+        },
+        "Policy_Type": {
+          "type": "varchar(50)",
+          "description": "Applicable HR Policy Type"
         }
-      }
+      },
+      "foreignKeys": [
+        {
+          "column": "BANKACCOUNTNO",
+          "referencesTable": "Account_No_Api",
+          "referencesColumn": "account_number"
+        },
+        {
+          "column": "EMPCODE",
+          "referencesTable": "emp_varify",
+          "referencesColumn": "EMPCODE"
+        },
+        {
+          "column": "EMPCODE",
+          "referencesTable": "attendancetable",
+          "referencesColumn": "Emp_Code"
+        },
+        {
+          "column": "EMPCODE",
+          "referencesTable": "SALARYFILE",
+          "referencesColumn": "Emp_Code"
+        },
+        {
+          "column": "EMPCODE",
+          "referencesTable": "Asset_Issue",
+          "referencesColumn": "Emp_Code"
+        },
+        {
+          "column": "EMPCODE",
+          "referencesTable": "Approval_Matrix",
+          "referencesColumn": "empcode"
+        }
+      ]
     },
     "attendancetable": {
       "tableName": "attendancetable",
