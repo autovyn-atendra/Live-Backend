@@ -86,6 +86,8 @@ const misc_type_list = exports.misc_type_list = [
   { id: 81, name: "Employee Section" },
   { id: 657, name: "Marital Status" },
   { id: 658, name: "Relation" },
+  { id: 91, name: "Region Master" },
+  { id: 92, name: "Leave Master" },
   { id: 95, name: "Employee Designation" },
   { id: 660, name: "RTO INSURANCE MASTER" },
   { id: 661, name: "Evaluation Criteria Master" },
@@ -603,14 +605,16 @@ const buildQueryMeta = (dbEvidence) => {
 // ─── Main Export ──────────────────────────────────────────────────────────────
 
 const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
-
-  payload = req.body
+  payload = req.body || payload || {};
   const startedAt = Date.now();
   const trace = createTrace(req.headers?.["x-request-id"] || payload.conversationId || "");
 
   // ── Validate input ────────────────────────────────────────────────────────
   const message = normalizeValue(payload.message);
   if (!message) throw new ApiError(400, "message is required");
+
+  console.log("\n======================================================");
+  console.log("❓ [AI-QUESTION]:", message);
 
   // ── User context ──────────────────────────────────────────────────────────
   const userContext = buildUserContext(req);
@@ -685,7 +689,14 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
         history,         // pass session history for pronoun/follow-up resolution
       });
 
-      console.log("databaseEvidence",databaseEvidence)
+      if (databaseEvidence?.sqlPlan?.sql) {
+        console.log("🔍 [AI-SQL]:\n" + databaseEvidence.sqlPlan.sql);
+        if (Array.isArray(databaseEvidence.sqlPlan.parameters) && databaseEvidence.sqlPlan.parameters.length) {
+          console.log("📌 [AI-PARAMS]:", databaseEvidence.sqlPlan.parameters);
+        }
+        console.log(`📊 [AI-ROWS]: ${databaseEvidence.rowCount || 0}`);
+      }
+      console.log("======================================================\n");
     } catch (error) {
       console.error("[Orchestrator] DB evidence failed:", error?.message);
       // Non-fatal: answer with what we have
@@ -909,25 +920,32 @@ const deterministicRoute = (message) => {
     };
   }
 
-  // Employee, Salary, Birthday, Designation, Attendance, or Pronoun follow-up queries (iska, iski, unka, etc.)
+  // Employee, Salary, Birthday, Designation, Attendance, Address, KYC, Bank Verify, Asset, or Pronoun follow-up queries (iska, iski, unka, etc.)
+  const hasEmpCode = extractEmployeeCode(text);
   const isEmpQuery =
+    Boolean(hasEmpCode) ||
     PATTERNS.employee.test(text) ||
     /\b(salary|salaries|salaryfile|salary_file|salari|pay|payroll|payslip|ctc|gross|net|basic|hra|earn|total_earn|gross_earn|final_payment|vetan|तनख्वाह|salyear|salmnth)\b/i.test(text) ||
     /\b(birthday|birthdays|bithday|bithdays|brithday|bday|bdays|janmdin|janamdin|dob|date\s*of\s*birth|birth\s*date)\b/i.test(text) ||
     /\b(designation|desig|post|position|department|dept|branch|location|loc_code|loccode)\b/i.test(text) ||
-    /\b(pan|pan_no|panno|pf|pf_no|pfnumber|uan|esic|esi|aadhar|uid|bankacc|account_no)\b/i.test(text) ||
+    /\b(pan|pan_no|panno|pf|pf_no|pfnumber|uan|esic|esi|aadhar|uid|bankacc|account_no|bankaccountno)\b/i.test(text) ||
     /\b(attendance|attendancetable|present|absent|leave|mispunch|punch|hazri|duty)\b/i.test(text) ||
-    (/\b(iska|iski|uska|uski|unka|unki|inhe|yahi|same)\b/i.test(text) && /\b(salary|birthday|birthdays|bithday|bithdays|brithday|bday|janmdin|dob|pan|pf|mobile|number|no|designation|desig|attendance|details?|record|profile|info)\b/i.test(text));
+    /\b(address|permanentaddress|currentaddress|permanent\s*address|current\s*address|pata|ghar\s*ka\s*pata|niwas|sthan|city|state|pincode)\b/i.test(text) ||
+    /\b(asset|assets|laptop|phone|device|kyc|verify|verification|emp_varify)\b/i.test(text) ||
+    /\b(account_no_api|bank\s*verify|account\s*verify|account\s*verification|bank\s*verification|account\s*valid|account\s*invalid|name_at_bank|account_status)\b/i.test(text) ||
+    /\b(approval_matrix|approval\s*matrix|approver|approvers|approver1|approver2|approver3|approval\s*authority|approval\s*level|kiske\s*approval|kiska\s*approval|hierarchy)\b/i.test(text) ||
+    (/\b(iska|iski|uska|uski|unka|unki|inhe|yahi|same)\b/i.test(text) && /\b(salary|birthday|birthdays|bithday|bithdays|brithday|bday|janmdin|dob|pan|pf|mobile|number|no|designation|desig|attendance|details?|record|profile|info|address|pata|bank|account)\b/i.test(text));
 
   if (isEmpQuery && !PATTERNS.schema.test(text)) {
+    const isDeduction = /\b(emp_ded|emp\s*ded|deduction|deductions|katoti|ded_amt|ded_type|tds|arrear|arrears)\b/i.test(text);
     const isSalary = /\b(salary|salaries|salaryfile|salary_file|salari|pay|payroll|payslip|ctc|gross|net|basic|hra|earn|total_earn|gross_earn|final_payment|vetan|तनख्वाह|structure|salarystructure|salyear|salmnth)\b/i.test(text);
-    const tables = isSalary ? ["EMPLOYEEMASTER", "SALARYFILE", "SALARYSTRUCTURE"] : ["EMPLOYEEMASTER"];
+    const tables = isDeduction ? ["Emp_Ded", "Misc_Mst", "EMPLOYEEMASTER"] : isSalary ? ["EMPLOYEEMASTER", "SALARYFILE", "SALARYSTRUCTURE"] : ["EMPLOYEEMASTER"];
     return {
       mode: "DATABASE",
-      intent: "EMPLOYEE_RECORD_LOOKUP",
+      intent: isDeduction ? "EMPLOYEE_DEDUCTION_LOOKUP" : "EMPLOYEE_RECORD_LOOKUP",
       searchQuery: text,
       moduleName: "HR",
-      reason: "Employee attribute/record inquiry → live database query",
+      reason: isDeduction ? "Employee deductions inquiry from Emp_Ded and Misc_Mst" : "Employee attribute/record inquiry → live database query",
       tables,
       needsSalary: isSalary,
       needsPolicy: false,
@@ -1017,9 +1035,6 @@ const classifyChatRequest = exports.classifyChatRequest = async ({ message, hist
   // Try deterministic first
   const fixed = deterministicRoute(text);
   if (fixed) {
-    if (process.env.NODE_ENV === "development") {
-      console.log("[Router] Deterministic:", fixed.intent);
-    }
     return fixed;
   }
 
@@ -1055,9 +1070,6 @@ const classifyChatRequest = exports.classifyChatRequest = async ({ message, hist
     const parsedText = response.choices[0]?.message?.content || "{}";
     const result = JSON.parse(parsedText);
     if (result && result.mode) {
-      if (process.env.NODE_ENV === "development") {
-        console.log("[Router] GPT:", result.intent, result.mode);
-      }
       return {
         mode: result.mode || "DATABASE",
         intent: result.intent || "GENERAL_QUERY",
@@ -1304,9 +1316,6 @@ const filterBestMatches = (rows = [], maxRows = 25) => {
   const scores    = rows.map((r) => Number(r.MatchScore ?? 0));
   const bestScore = Math.max(...scores);
 
-  if (process.env.NODE_ENV === "development") {
-    console.log(`[FinalAnswer] Best score: ${bestScore}, rows: ${rows.length}`);
-  }
 
   if (bestScore === 0) return [];
 
@@ -1446,8 +1455,17 @@ You are an intelligent, helpful, and highly capable AutoVyn ERP assistant.
 - Example: "PRAMOD ARUN PALVE (Code: 19001162) ka birthday **2 January** (02/01/1989) ko aata hai."
 
 5. WHEN ADDRESS IS ASKED (e.g., "permanent address", "address nikalo", "current address", "pata kya hai", "ghar ka pata"):
-- Inspect databaseEvidence rows for PermanentAddress, _clean_PermanentAddress, PERMANENTADDRESS1, PERMANENTADDRESS2, CurrentAddress, _clean_CurrentAddress, CURRENTADDRESS1, CURRENTADDRESS2, Address, _clean_Address.
-- Answer directly with the asked address.
+- Inspect databaseEvidence rows for:
+  * Permanent Address: _clean_PermanentAddress, PERMANENTADDRESS1, PERMANENTADDRESS2, PERMANENTADDRESS, PERM_ADDRESS, PermanentAddress.
+  * Current Address: _clean_CurrentAddress, CURRENTADDRESS1, CURRENTADDRESS2, CURRENTADDRESS, CURR_ADDRESS, CurrentAddress.
+  * City, State, Pincode: CITY, STATE, PINCODE, PERM_CITY, PERM_STATE, PERM_PINCODE.
+- Present the address clearly using available fields:
+  "**[Employee Name] (Code: [Employee Code])** ka Permanent Address:
+  - **Permanent Address:** [PERMANENTADDRESS1] [PERMANENTADDRESS2]
+  - **City:** [CITY]
+  - **State:** [STATE]
+  - **Pincode:** [PINCODE]"
+- If PERMANENTADDRESS1 or _clean_PermanentAddress is present in the database row, NEVER say "permanent address ke liye koi record nahi mila"!
 
 6. WHEN STATUTORY / COMPLIANCE ATTRIBUTES ARE ASKED (e.g., "pf number", "pf no", "pf kitna hai", "esi number", "esi no", "pan number", "aadhar", "bank account", "uan number"):
 - Inspect databaseEvidence rows for _clean_PF_No, pfnumber, PFTRUST_NO, PFNO, _clean_ESI_No, esinumber, ESINO, _clean_UAN_No, UAN_No, PANNO, UID_NO, ADHARNO, etc.:
@@ -1492,6 +1510,121 @@ You are an intelligent, helpful, and highly capable AutoVyn ERP assistant.
     - **Branch / Location:** [Branch Name] (Branch Code: [Branch Code])"
   * If both name and code are present or code is 1, state: "Employee [Employee Name] (Code: [Employee Code]) **Branch Code: 1 ([Branch Name])** ke hain."
   * NEVER say "branch related record nahi mila" if Loc_Code, Location, or Branch is present in databaseEvidence!
+
+12. WHEN ASSET / IT DEVICE ALLOCATION IS ASKED (e.g., "ise kon kon se asset diye gaye hai", "laptop mila hai kya", "device list", "phone issue hua kya", "saman kya allot hai", "asset details"):
+- Inspect databaseEvidence rows for EmployeeName, EmployeeCode, AssetName, Aset_Name, AssetCode, Aset_Code, SerialNo, Asset_Serial_no, AssetType, Category, SubCategory, It_category, IssueDate, RevokeDate, LostDate, AssetStatus, Remarks.
+- Present each issued asset in clear, structured format:
+  "**[Employee Name] (Code: [Employee Code])** ko diye gaye assets:
+  1. **Asset Name:** [AssetName / Aset_Name]
+     - **Asset Code:** [AssetCode / Aset_Code]
+     - **Asset Serial No:** [SerialNo / Asset_Serial_no]
+     - **Issue Date:** [Formatted IssueDate]
+     - **Status:** [AssetStatus] (Active / Assigned, Revoked / Returned, or Lost)
+     - **Remarks:** [Remarks]
+     - **Asset Type:** [AssetType]"
+- If RevokeDate is present, show Revoke Date. If LostDate is present, show Lost Date.
+- If databaseEvidence rowCount is 0 or canAnswer is false, state politely: "Mujhe maaf karna, **[Employee Name] (Code: [Employee Code])** ko diye gaye assets ke liye koi record nahi mila."
+
+13. WHEN KYC / IDENTITY / AADHAAR / PAN VERIFICATION STATUS IS ASKED (e.g., "pan verify hai kya", "aadhaar verify status", "aadhaar linked with pan", "kyc verified hai kya", "name match verify"):
+- Inspect databaseEvidence rows from dbo.emp_varify: pan_card_ver, pan_name_match_ver, aadhaar_linked_ver, aadhaar_card_ver, aadhaar_linked_pan_ver, aadhaar_name_match_emp_name.
+- Translate boolean values ('true'/1 = "Verified / Yes", 'false'/0 = "Not Verified / No", NULL = "Pending / Not Available").
+- Present clearly:
+  "**[Employee Name] (Code: [Employee Code])** ka KYC Verification Status:
+  - **PAN Card Verified:** [Yes / No]
+  - **PAN Name Match with Master:** [Yes / No]
+  - **Aadhaar Card Verified:** [Yes / No]
+  - **Aadhaar Linked Status:** [Yes / No]
+  - **Aadhaar Linked with PAN:** [Yes / No]
+  - **Aadhaar Name Match with Master:** [Yes / No]"
+- If asking for a list/count (e.g. "kitne logo ka aadhaar pan link verify hai"), provide total count and list.
+
+14. WHEN LEAVE & MISS PUNCH REASONS / POLICY MASTER IS ASKED (e.g., "miss punch reason batao", "mere pass miss punch reason batao", "mispunch ke kya kya reasons hain", "leave master details", "leave reasons batao", "CL SL PL ke rules batao", "half day leave reason"):
+- Inspect databaseEvidence rows from dbo.Misc_Mst (where Misc_Type = 92):
+  * ReasonCode / Misc_Code: Unique reason code (e.g. 4 for Casual Leave).
+  * ReasonName / Misc_Name: Name of the leave / mispunch reason (e.g. CASUAL LEAVE (CL), HALF CASUAL LEAVE (FHCL), SICK LEAVE (SL), etc.).
+  * DayValue / Misc_Dtl3: 1 = Full Day Leave, 0.5 = Half Day Leave.
+  * AdvanceApplyDaysLimit / CC_Group: Kitne din pahle leave/mispunch apply kiya ja sakta hai (Advance Apply Limit).
+  * PostApplyDaysLimit / CC_Ledg: Kitne din baad tak apply kiya ja sakta hai (Post Apply Limit).
+  * MaxConsecutiveDays / Continuous_Max: Max kitne consecutive din ki leave le sakta hai.
+  * BackdateAllowed / dis_back_date: 1 = Backdated leave disabled (nahi laga sakta), 0/NULL = Allowed (lagana allowed hai).
+  * HalfLeaveLinkCode / Misc_HOD: Corresponding half leave code.
+- Present all configured reasons in a clean, professional markdown table or structured list:
+  | Reason Code | Reason / Leave Name | Type | Advance Limit | Post Limit | Max Continuous Days | Backdate Apply |
+  | --- | --- | --- | --- | --- | --- | --- |
+
+15. WHEN BANK ACCOUNT VERIFICATION STATUS IS ASKED (e.g., "is employee ka account verify hai ki nahi", "AU19795988 ka bank account verify hai kya", "bank account valid hai ya invalid", "kiska kiska account verify hai", "kitne logo ka account valid hai"):
+- Inspect databaseEvidence rows from dbo.Account_No_Api joined with dbo.EMPLOYEEMASTER:
+  * AccountStatus: 'VALID' = Verified / Valid, 'INVALID' = Invalid / Failed, 'NOT_VERIFIED' = Pending / Penny-drop not done.
+  * MasterBankAccountNo / BankAccountNo: Employee's account number.
+  * NameAtBank: Account holder name registered at bank.
+  * BankNameAtBank / MasterBankName: Bank name.
+  * IFSC / BankBranch: Bank IFSC code and branch name.
+  * UTR: Bank transaction reference ID.
+  * AccountStatusCode: Specific gateway reason (e.g. INVALID_ACCOUNT_FAIL).
+- Present clearly:
+  "**[Employee Name] (Code: [Employee Code])** ka Bank Account Verification Status:
+  - **Bank Account No:** [MasterBankAccountNo / BankAccountNo]
+  - **Account Status:** [VALID / Verified (Active) OR INVALID / Failed]
+  - **Name at Bank:** [NameAtBank]
+  - **Bank Name:** [BankNameAtBank / MasterBankName]
+  - **IFSC Code:** [IFSC]
+  - **UTR / Ref ID:** [UTR]
+  - **Verification Date:** [VerificationDate]"
+- If AccountStatus is INVALID, explain clearly: "Bank account validation **INVALID** (Failed) hai. Gateway se account verify nahi ho paya."
+- If asking for a list or count (e.g. "kitne valid hain aur kitne invalid"), provide the exact breakdown count and table.
+
+16. WHEN APPROVAL MATRIX / WORKFLOW APPROVERS ARE ASKED (e.g., "197003 isme attandance me kon approval hai", "197003 ka approval matrix batao", "is employee ke approvers kaun hai", "attdence module me approver kaun hai", "gatepass approval authority", "democar approval authority", "approval matrix list"):
+- Inspect databaseEvidence rows from dbo.Approval_Matrix joined with dbo.EMPLOYEEMASTER:
+  * ModuleCode / module_code: Workflow module (e.g. attdence / Attendance, democar, gatepass, Lead_Management, expense).
+  * EmployeeCode / EmployeeName / Designation / Location: Target employee requesting approvals (e.g. SANDEEP SHISHUPAL BAGADE (Code: 197003)).
+  * Approver display fields from databaseEvidence:
+    - Level 1 Primary: Approver1_A_Display or Approver1_A_Name with Approver1_A_Code (e.g. "GOPAL SODANI (Code: 1972153)")
+    - Level 1 Alternate / Parallel: Approver1_B_Display or Approver1_B_Name with Approver1_B_Code (e.g. "SHIVAM TRIVEDI (Code: 1924108)")
+    - Level 2 Primary: Approver2_A_Display or Approver2_A_Name (or "None" if null)
+    - Level 2 Alternate / Parallel: Approver2_B_Display or Approver2_B_Name (or "None" if null)
+    - Level 3 Primary: Approver3_A_Display or Approver3_A_Name (or "None" if null)
+    - Level 3 Alternate / Parallel: Approver3_B_Display or Approver3_B_Name (or "None" if null)
+- CRITICAL DISPLAY RULE:
+  * ALWAYS format each approver with the Employee's Full Name AND Employee Code!
+  * Example:
+    "**SANDEEP SHISHUPAL BAGADE (Code: 197003)** ki attendance approval matrix details:
+
+    1. **Level 1 Approvers:**
+       - Primary Approver: **GOPAL SODANI (Code: 1972153)**
+       - Alternate Approver: **SHIVAM TRIVEDI (Code: 1924108)**
+
+    2. **Level 2 Approvers:**
+       - Primary Approver: None
+       - Alternate Approver: None
+
+    3. **Level 3 Approvers:**
+       - Primary Approver: None
+       - Alternate Approver: None"
+  * NEVER display just raw bracketed codes like [1972153] when Approver Name or Approver Display is available in the database row!
+  * If multiple modules were returned without a specific module filter, list each module separately with its approvers.
+
+17. WHEN EMPLOYEE SALARY DEDUCTIONS / EMP_DED REGISTER IS ASKED (e.g., "1953081 isme se ham dekh sakte hai kiska kitna deduction hua aur kisme hua hai", "1953081 ka deduction kitna hua hai", "MAHAVIR ASHOK JAIN ka deduction batao", "August 2024 me kitna deduction kata", "salary deduction list do", "kitna deduction hua aur kisme hua hai"):
+- Inspect databaseEvidence rows from dbo.Emp_Ded joined with dbo.Misc_Mst (where Misc_Type = 610):
+  * EmployeeCode / EmployeeName / Designation / Location: Employee details.
+  * MonthNum / MonthName / YearNum: Deduction payroll period (e.g. August 2024).
+  * RecordDate: Date deduction was recorded.
+  * DeductionHead / Misc_Name: Itemized deduction category (e.g. TDS, Salary Advance, Loan EMI, Fine, Uniform, etc.) from Misc_Type = 610.
+  * DeductionAmount / Ded_Amt: Deduction amount in INR (₹).
+  * Remarks / Ded_Rem: Any specific notes/remarks for the deduction.
+  * Arrears (if non-zero): BasicArrear, HRAArrear, ConveyanceArrear, MedicalArrear, WashingArrear.
+  * IncentiveAmount (if present): INCENTIVE_AMT.
+- Present each deduction clearly with summary and breakdown:
+  "**[Employee Name] (Code: [Employee Code])** ki Deduction Details:
+
+  **Period: [MonthName] [YearNum]**
+  - **Deduction Head / Reason:** [DeductionHead]
+  - **Deduction Amount:** ₹[DeductionAmount]
+  - **Remarks:** [Remarks / None]
+  - **Arrears (if any):** [Basic/HRA/Conv Arrears]
+
+  **Total Deductions:** ₹[Sum of DeductionAmount]"
+- If multiple deduction entries exist across months or heads, present them in a clean markdown table or structured list grouped by period.
+- If rowCount is 0, state politely: "Mujhe maaf karna, **[Employee Name] (Code: [Employee Code])** ke liye koi deduction record nahi mila."
 
 ═══ DATA FORMATTING RULES ═══
 - Clean, concise bullet points for requested fields.
@@ -1872,8 +2005,8 @@ const checkAmbiguity = exports.checkAmbiguity = (candidateRows = []) => {
 const resolveWorkingMemoryEntity = exports.resolveWorkingMemoryEntity = ({ question = "", history = [], workingMemory = {} }) => {
   const currentEntities = extractEntities(question);
 
-  // If question already contains explicit employeeCode or mobile, use it directly
-  if (currentEntities.employeeCode || currentEntities.mobile) {
+  // If question already contains explicit employeeCode, use it directly
+  if (currentEntities.employeeCode) {
     return {
       ...currentEntities,
       fromHistory: false,
@@ -1881,26 +2014,23 @@ const resolveWorkingMemoryEntity = exports.resolveWorkingMemoryEntity = ({ quest
   }
 
   // Check existing working memory first
-  if (workingMemory.employeeCode) {
+  if (workingMemory.employeeCode && !/^[6-9]\d{9}$/.test(String(workingMemory.employeeCode))) {
     return {
       ...currentEntities,
-      employeeCode: workingMemory.employeeCode,
+      employeeCode: String(workingMemory.employeeCode).trim().toUpperCase(),
       fromHistory: true,
     };
   }
 
-  // Check recent conversation history for last mentioned employeeCode
+  // Check recent conversation history using smart resolver (excludes mobile/aadhaar)
   if (Array.isArray(history) && history.length > 0) {
-    for (let i = history.length - 1; i >= 0; i--) {
-      const msg = String(history[i]?.content || "");
-      const match = msg.match(/\b([A-Z]{1,4}\d{4,12})\b/i) || msg.match(/\b(\d{7,12})\b/);
-      if (match) {
-        return {
-          ...currentEntities,
-          employeeCode: match[1].toUpperCase(),
-          fromHistory: true,
-        };
-      }
+    const historyCode = typeof resolveEmployeeFromHistory === "function" ? resolveEmployeeFromHistory(history) : null;
+    if (historyCode) {
+      return {
+        ...currentEntities,
+        employeeCode: String(historyCode).trim().toUpperCase(),
+        fromHistory: true,
+      };
     }
   }
 
@@ -1919,8 +2049,8 @@ const resolveWorkingMemoryEntity = exports.resolveWorkingMemoryEntity = ({ quest
 const updateWorkingMemory = exports.updateWorkingMemory = (currentMemory = {}, newEntities = {}) => {
   const memory = { ...currentMemory };
 
-  if (newEntities.employeeCode) {
-    memory.employeeCode = newEntities.employeeCode;
+  if (newEntities.employeeCode && !/^[6-9]\d{9}$/.test(String(newEntities.employeeCode))) {
+    memory.employeeCode = String(newEntities.employeeCode).trim().toUpperCase();
   }
   if (newEntities.mobile) {
     memory.mobile = newEntities.mobile;
@@ -1958,7 +2088,7 @@ const rewriteQuery = exports.rewriteQuery = ({ question = "", history = [], work
 
   // If query is a follow-up and we resolved an employeeCode from history
   if (resolved.fromHistory && resolved.employeeCode) {
-    const isFollowup = /\b(iska|iski|usuka|uski|yahi|yhi|same|this|above|pada|padha|college|degree|asset|gadi|salary)\b/i.test(q);
+    const isFollowup = /\b(iska|iski|iske|usko|usuko|unko|inko|inhe|unhe|ise|use|uska|uski|uske|unka|unki|unke|yahi|yehi|isi|usi|same|above|this|is\s*employee|is\s*bande|ye\s*banda|pada|padha|college|degree|asset|assets|laptop|laptops|computer|phone|device|devices|saman|gadi|vehicle|salary|attendance|details?|record)\b/i.test(q);
     if (isFollowup) {
       return `Employee ${resolved.employeeCode}: ${q}`;
     }
@@ -2541,6 +2671,7 @@ const QDRANT_UUID_NAMESPACE = "2d597f81-745a-47c6-a714-98f548f8af57";
 
 const ALLOWED_DOCUMENT_TYPES = new Set([
   "TABLE_SCHEMA",
+  "DATABASE_SCHEMA",
   "STATUS_MAPPING",
   "DATABASE_RELATION",
   "BUSINESS_RULE",
@@ -2888,6 +3019,7 @@ const getQdrantClient = exports.getQdrantClient = () => {
     qdrantClientInstance = new QdrantClass({
       url,
       apiKey,
+      checkCompatibility: false,
       timeout: Number(process.env.QDRANT_TIMEOUT_MS || 30000),
     });
   }
@@ -4254,11 +4386,11 @@ const BUSINESS_DICTIONARY = [
   },
   {
     term: "asset",
-    synonyms: ["assets", "device", "laptop", "equipment", "issue", "allotted", "assigned"],
+    synonyms: ["assets", "device", "devices", "laptop", "laptops", "phone", "mobile phone", "desktop", "computer", "equipment", "hardware", "issue", "issued", "allotted", "assigned", "saman", "allocation"],
     table: "Asset_Issue",
-    column: "Asset_Name",
+    column: "Aset_Name",
     module: "ASSETS",
-    description: "Company assets issued to employees",
+    description: "Company IT and physical assets (Laptops, Desktops, Phones, Hardware) issued to employees",
   },
   {
     term: "joining date",
@@ -4267,6 +4399,14 @@ const BUSINESS_DICTIONARY = [
     column: "CURRENTJOINDATE",
     module: "HR",
     description: "Employee current joining date",
+  },
+  {
+    term: "kyc verification",
+    synonyms: ["pan verification", "pan verify", "pan card verify", "pan verified", "pan name match", "aadhaar verify", "aadhaar verification", "aadhaar card verify", "aadhaar linked", "aadhaar linked pan", "aadhaar pan link", "aadhaar name match", "kyc status", "emp verify", "emp_varify", "verification status", "verified"],
+    table: "emp_varify",
+    column: "pan_card_ver",
+    module: "HR",
+    description: "Employee PAN and Aadhaar KYC verification status, name matching, and linkage",
   },
 ];
 
@@ -4343,6 +4483,26 @@ const MONTH_MAP = exports.MONTH_MAP = {
 
 const getMonthNumber = exports.getMonthNumber = (m) => MONTH_MAP[String(m || "").toLowerCase().trim()] || null;
 
+const parseMonthAndYearFromQuery = exports.parseMonthAndYearFromQuery = (question) => {
+  const q = String(question || "").toLowerCase();
+  let monthNum = null;
+  let year = null;
+
+  for (const [name, numStr] of Object.entries(MONTH_MAP)) {
+    if (new RegExp(`\\b${name}\\b`, "i").test(q)) {
+      monthNum = parseInt(numStr, 10);
+      break;
+    }
+  }
+
+  const yrMatch = q.match(/\b(20\d{2})\b/);
+  if (yrMatch) {
+    year = parseInt(yrMatch[1], 10);
+  }
+
+  return { monthNum, year };
+};
+
 // ─── Field hints ──────────────────────────────────────────────────────────────
 
 const FIELD_HINTS = exports.FIELD_HINTS = {
@@ -4394,7 +4554,7 @@ const FIELD_STOP_WORDS = new Set([
   "assign","assigned","assignment","vehicle","vehicles","gadi","gaadi","car","bike",
   "service","servicing","repair","insurance","puc","fitness","permit",
   "birthday","birthdays","bday","bdays","janmdin","janamdin","coming","upcoming","monthdays",
-  "mispunch","mis_punch","mis-punch","manualpunch","manual_punch","punch","punches","mispunches","pending","approved","rejected"
+  "miss","mis","mipunch","mispunch","mis_punch","mis-punch","miss_punch","miss-punch","manualpunch","manual_punch","punch","punches","mispunches","pending","approved","rejected"
 ]);
 
 const GENERAL_STOP_WORDS = new Set([
@@ -4413,7 +4573,7 @@ const GENERAL_STOP_WORDS = new Set([
   "pan", "card", "number", "no", "details", "detail", "info", "information",
   "sabse", "jyada", "zyada", "ziyada", "kiski", "kiska", "sabhi", "sab", "highest", "maximum", "max", "lowest", "minimum", "min", "top", "first",
   "be", "paid", "unpaid", "payable", "disbursed", "disburse", "month", "months", "mahine", "maheene", "maah",
-  "mispunch", "mis_punch", "mis-punch", "manualpunch", "manual_punch", "punch", "punches", "mispunches", "pending", "approved", "rejected",
+  "miss", "mis", "mipunch", "mispunch", "mis_punch", "mis-punch", "miss_punch", "miss-punch", "manualpunch", "manual_punch", "punch", "punches", "mispunches", "pending", "approved", "rejected",
   "branch", "branches", "branchwise", "branch-wise", "branch-vise", "branchcode", "branch_code", "location", "locations", "locationwise", "loc_code", "loccode", "sales", "summary", "report"
 ]);
 
@@ -4421,7 +4581,7 @@ const STOP_WORDS = exports.STOP_WORDS = new Set([...FIELD_STOP_WORDS, ...GENERAL
 
 const isDomainQuery = exports.isDomainQuery = (q) => {
   const text = String(q || "").toLowerCase();
-  return /\b(education|qualification|qualifications|college|degree|board|university|passing\s*year|percentage|score|padh|padha|pada|padhai|siksha|shiksha|asset|assets|aset|item|items|device|devices|laptop|laptops|computer|equipment|issue|issued|revoke|revoked|allot|allotted|assign|assigned|assignment|vehicle|vehicles|gadi|gaadi|car|bike|service|servicing|repair|insurance|puc|fitness|permit|experience|previous\s*company|salary_file|salaryfile|payroll|mispunch|mis_punch|mis-punch|manualpunch|manual_punch|branch|branchwise|branch-wise|location|locationwise|loc_code|loccode|sales|sale|invoice|billing|turnover|revenue|summary|report|breakup|breakdown)\b/i.test(text);
+  return /\b(education|qualification|qualifications|college|degree|board|university|passing\s*year|percentage|score|padh|padha|pada|padhai|siksha|shiksha|asset|assets|aset|item|items|device|devices|laptop|laptops|computer|equipment|issue|issued|revoke|revoked|allot|allotted|assign|assigned|assignment|vehicle|vehicles|gadi|gaadi|car|bike|service|servicing|repair|insurance|puc|fitness|permit|experience|previous\s*company|salary_file|salaryfile|payroll|miss|mis|mipunch|mispunch|mis_punch|mis-punch|miss_punch|miss-punch|manualpunch|manual_punch|branch|branchwise|branch-wise|location|locationwise|loc_code|loccode|sales|sale|invoice|billing|turnover|revenue|summary|report|breakup|breakdown)\b/i.test(text);
 };
 
 // ─── Trailing noise ───────────────────────────────────────────────────────────
@@ -4435,7 +4595,7 @@ const TRAILING_NOISE = new Set([
   "thanks","thank","help","karo","karna","dijiye","dijie","dedijiye",
   "dekhna","dekho","bhi","aur","also","dikhao","dikhaye","send","bhejo","provide",
   "sabse", "jyada", "zyada", "ziyada", "kiski", "kiska", "sabhi", "sab", "highest", "maximum", "max", "lowest", "minimum", "min", "top", "first",
-  "be", "paid", "unpaid", "payable", "disbursed", "mispunch", "mis_punch", "mis-punch", "manualpunch", "manual_punch", "pending", "approved", "rejected"
+  "be", "paid", "unpaid", "payable", "disbursed", "miss", "mis", "mipunch", "mispunch", "mis_punch", "mis-punch", "miss_punch", "miss-punch", "manualpunch", "manual_punch", "pending", "approved", "rejected"
 ]);
 
 // ─── Name Variations ──────────────────────────────────────────────────────────
@@ -4598,13 +4758,6 @@ const detectFilterConditions = exports.detectFilterConditions = (question) => {
   const { cleanQuestion, monthFound, yearFound } =
     extractAndRemoveDateInfo(original);
 
-  if (process.env.NODE_ENV === "development") {
-    console.log("[Filters] Original  :", original);
-    console.log("[Filters] Clean     :", cleanQuestion);
-    console.log("[Filters] Month     :", monthFound);
-    console.log("[Filters] Year      :", yearFound);
-  }
-
   const monthYearFilter = (monthFound || yearFound)
     ? {
         type:     "MONTH_YEAR",
@@ -4673,10 +4826,6 @@ const detectFilterConditions = exports.detectFilterConditions = (question) => {
 
   // Step 7: Month/Year
   if (monthYearFilter) filters.push(monthYearFilter);
-
-  if (process.env.NODE_ENV === "development") {
-    console.log("[Filters] Result:", filters);
-  }
 
   return filters;
 };
@@ -4825,14 +4974,9 @@ const emptyResult = (sqlPlan) => ({
 
 const safeExec = async ({ req, sql, params = {} }) => {
   try {
-    if (process.env.NODE_ENV === "development") {
-      console.log("[DB] SQL:", sql.replace(/\s+/g, " ").substring(0, 400));
-      console.log("[DB] Params:", params);
-    }
     const r = await executeReadOnlySQL({ req, sql, parameterMap: params });
     return { ok: true, rows: r.rows || [] };
   } catch (err) {
-    console.warn("[DB] Exec error:", err?.message);
     return { ok: false, rows: [], error: err?.message };
   }
 };
@@ -5117,6 +5261,53 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
   req, question, userContext, route = null, history = [],
 }) => {
 
+  // ── Step 0: Immediate Deterministic Execution (Bypasses vector search for exact templated queries) ──
+  try {
+    const detPlan = buildDeterministicPlan({
+      question,
+      schemaContext: [],
+      history,
+    });
+
+    if (detPlan?.canAnswer && detPlan?.sql) {
+      try {
+        assertSQLIntentAllowed({ userContext, sqlPlan: detPlan });
+      } catch (secErr) {
+        console.warn("[DB] Security check failed for deterministic plan:", secErr?.message);
+        return emptyResult({ canAnswer: false, reason: secErr?.message });
+      }
+
+      const rawParamMap = paramsToMap(detPlan.parameters || []);
+      let execSQL = detPlan.sql;
+      let execParams = rawParamMap;
+
+      try {
+        const v = validateGeneratedSQL({
+          sql: detPlan.sql,
+          parameters: detPlan.parameters || [],
+        });
+        execSQL = v.sql;
+        execParams = v.parameterMap || rawParamMap;
+      } catch (valErr) {
+        execParams = rawParamMap;
+      }
+
+      const result = await safeExec({ req, sql: execSQL, params: execParams });
+      if (result.ok) {
+        let rows = result.rows || [];
+        if (rows.length > 0 && "MatchScore" in rows[0]) {
+          rows = filterByScore(rows);
+        }
+        return makeResult(rows, detPlan);
+      } else {
+        console.warn("[DB] Deterministic safeExec failed:", result.error);
+        return emptyResult({ canAnswer: false, sql: execSQL, reason: result.error });
+      }
+    }
+  } catch (detErr) {
+    console.warn("[DB] Deterministic plan error:", detErr?.message);
+  }
+
   // ── Step 1: Vector search ─────────────────────────────────────────────────
   const schemaContext = await retrieveRelevantSchema({
     req,
@@ -5124,13 +5315,6 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
     limit:      SCHEMA_LIMIT,
     hintTables: route?.tables || [],
   });
-
-  if (process.env.NODE_ENV === "development") {
-    console.log("[DB] Vector hits:", schemaContext.map((s) => ({
-      table: s.Source_Reference,
-      sim:   s.similarity?.toFixed(3),
-    })));
-  }
 
   if (!schemaContext.length)
     return emptyResult({ canAnswer: false, reason: "No schema found" });
@@ -5148,11 +5332,6 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
     });
 
     if (plan?.canAnswer && plan?.sql) {
-      if (process.env.NODE_ENV === "development") {
-        console.log("[DB] Plan intent:", plan.intent);
-        console.log("[DB] Plan SQL:", plan.sql.substring(0, 300));
-      }
-
       // Security check
       try {
         assertSQLIntentAllowed({ userContext, sqlPlan: plan });
@@ -5161,14 +5340,8 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
         return emptyResult({ canAnswer: false, reason: secErr?.message });
       }
 
-      // ── CRITICAL: Convert parameters array to flat map ──────────────────
-      // plan.parameters = [{name:"exactName", value:"NAGRATNA...", type:"string"}, ...]
-      // We need: {exactName: "NAGRATNA...", ...}
+      // Convert parameters array to flat map
       const rawParamMap = paramsToMap(plan.parameters || []);
-
-      if (process.env.NODE_ENV === "development") {
-        console.log("[DB] Raw param map:", rawParamMap);
-      }
 
       // Validate SQL (remove unused params etc.)
       let execSQL    = plan.sql;
@@ -5180,15 +5353,8 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
           parameters: plan.parameters || [],
         });
         execSQL    = v.sql;
-        // validateGeneratedSQL returns parameterMap with raw values
         execParams = v.parameterMap || rawParamMap;
-
-        if (process.env.NODE_ENV === "development") {
-          console.log("[DB] Validated params:", execParams);
-        }
       } catch (valErr) {
-        console.warn("[DB] SQL validation warning (using raw):", valErr?.message);
-        // Use rawParamMap directly
         execParams = rawParamMap;
       }
 
@@ -5196,27 +5362,14 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
       const result = await safeExec({ req, sql: execSQL, params: execParams });
 
       if (result.ok) {
-        let rows = result.rows;
-
+        let rows = result.rows || [];
         if (rows.length > 0) {
           // Filter fuzzy name results by score
           if ("MatchScore" in rows[0]) {
             rows = filterByScore(rows);
           }
-
-          if (rows.length > 0) {
-            if (process.env.NODE_ENV === "development") {
-              console.log(`[DB] Plan rows: ${rows.length}`);
-              console.log("[DB] Sample:", rows[0]);
-            }
-            return makeResult(rows, plan);
-          }
         }
-
-        // 0 rows - allow fall through for queries to fallback pipeline
-        if (process.env.NODE_ENV === "development") {
-          console.log("[DB] Plan returned 0 rows, running fallback pipeline");
-        }
+        return makeResult(rows, plan);
       }
     }
   } catch (planErr) {
@@ -5263,15 +5416,7 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
     if (historicalCode) {
       exactFilter = { type: "EMP_CODE", value: historicalCode.toUpperCase(), paramName: "empCode", fromHistory: true };
       filters.unshift(exactFilter);
-      if (process.env.NODE_ENV === "development") {
-        console.log("[DB] Follow-up question detected: resolved employee code from history:", exactFilter.value);
-      }
     }
-  }
-
-  if (process.env.NODE_ENV === "development") {
-    console.log("[DB] Fallback filters:", filters);
-    console.log("[DB] Fallback wants:", wantedFields);
   }
 
   const isDomainQuery = /\b(salary|salaries|payroll|payslip|gross|net|basic|hra|ctc|tankhah|attendance|attendence|present|absent|leave|leaves|punch|shift|working\s*days|overtime|ot|education|qualification|qualifications|college|degree|board|university|passing\s*year|percentage|score|padh|padha|pada|padhai|siksha|shiksha|asset|assets|aset|item|items|device|devices|laptop|laptops|computer|equipment|issue|issued|revoke|revoked|allot|allotted|assign|assigned|assignment|vehicle|vehicles|gadi|gaadi|car|bike|service|servicing|repair|insurance|puc|fitness|permit|experience|previous\s*company|salary_file|salaryfile)\b/i.test(
@@ -5355,15 +5500,8 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
   const empTable = tables.find((t) => t.category === "EMPLOYEE") ||
                    tables.find((t) => /employeemaster|emp_master/i.test(t.tableName));
 
-  if (process.env.NODE_ENV === "development") {
-    console.log("[DB] Available tables:", tables.map(t => `${t.tableName} (${t.category})`));
-  }
-
   // ── 0. Unfiltered List / Count / Domain queries (e.g. "total asset batao kitne hai") ─────
   if (!nameFilter && !exactFilter && isListOrCountQuery) {
-    if (process.env.NODE_ENV === "development") {
-      console.log("[DB] Unfiltered List/Count domain query — running strategyDynamicJoin/Single with allowUnfiltered");
-    }
 
     if (empTable) {
       for (const targetTbl of tables) {
@@ -5392,9 +5530,6 @@ const getDatabaseEvidence = exports.getDatabaseEvidence = async ({
 
   // ── 1. Domain-specific queries (Asset, Education, Vehicle, etc.) with filter ──────────────
   if (isDomainQuery && empTable) {
-    if (process.env.NODE_ENV === "development") {
-      console.log("[DB] Domain query — running strategyDynamicJoin FIRST for domain tables");
-    }
     for (const targetTbl of tables) {
       if (targetTbl.tableName.toLowerCase() === empTable.tableName.toLowerCase()) continue;
       // Only try tables that look like domain tables (not salary/attendance)
@@ -5730,21 +5865,11 @@ const strategySingle = async ({
     orderClause,
   ].filter(Boolean).join("\n");
 
-  if (process.env.NODE_ENV === "development") {
-    console.log(`[DB] Single SQL (${tableName}):\n`, sql);
-    console.log(`[DB] Params:`, allParams);
-  }
-
   const result = await safeExec({ req, sql, params: allParams });
   if (!result.ok) return null;
 
   let rows = result.rows;
   if (nameFilter && rows.length > 0) rows = filterByScore(rows);
-
-  if (process.env.NODE_ENV === "development") {
-    console.log(`[DB] Single rows (${tableName}): ${rows.length}`);
-    if (rows[0]) console.log("[DB] Sample:", rows[0]);
-  }
 
   if (!rows.length) return null;
 
@@ -7054,7 +7179,7 @@ const retrieveRelevantSchema = exports.retrieveRelevantSchema = async ({ req, qu
 
     docs = dedupeBySource(docs).sort((a, b) => b.similarity - a.similarity).slice(0, finalLimit);
   } catch (e) {
-    console.error("[Retrieval] Qdrant retrieval failed:", e?.message);
+    // Qdrant optional / non-fatal
   }
 
   const sequelize = await dbname(req, userContext.compcode);
@@ -7099,7 +7224,7 @@ const retrieveRelevantSchema = exports.retrieveRelevantSchema = async ({ req, qu
         }
       }
     } catch (dbErr) {
-      console.error("[Retrieval] AI_Knowledge_Document_Tbl SQL fallback search error:", dbErr?.message);
+      // ignore
     }
   }
 
@@ -7125,7 +7250,6 @@ const retrieveRelevantSchema = exports.retrieveRelevantSchema = async ({ req, qu
 
   // 3) Guarantee EMPLOYEEMASTER if needed
   if (wantEmployee && !docs.some(looksLikeEmployeeMaster)) {
-    if (DEV) console.warn("[Retrieval] No employee-master in KB/Qdrant. Discovering from sys.objects...");
     const candidates = await discoverEmployeeCandidates({ sequelize, max: 80 });
 
     for (const row of (candidates || []).slice(0, 25)) {
@@ -7198,8 +7322,6 @@ const discoverAttendanceCandidates = async ({ sequelize, max = 100 }) => {
   if (wantSalary) {
     const existingSalaryCount = docs.filter(looksLikeSalaryTable).length;
     if (existingSalaryCount < 2) {
-      if (DEV) console.warn("[Retrieval] Salary requested. Discovering additional salary tables from sys.objects...");
-
       const candidates = await discoverSalaryCandidates({ sequelize, max: 150 });
       let addedCount = 0;
 
@@ -7239,8 +7361,6 @@ const discoverAttendanceCandidates = async ({ sequelize, max = 100 }) => {
     /\b(attendance|attendancetable|monthdays|month_days|present|absent|leave|ot|punch|haazri|hazri)\b/i.test(q);
 
   if (wantAttendance && !docs.some(looksLikeAttendanceTable)) {
-    if (DEV) console.warn("[Retrieval] Attendance requested but no attendance table in KB/Qdrant. Discovering from sys.objects...");
-
     const candidates = await discoverAttendanceCandidates({ sequelize, max: 100 });
 
     for (const row of (candidates || []).slice(0, 30)) {
@@ -7284,8 +7404,6 @@ const discoverAttendanceCandidates = async ({ sequelize, max = 100 }) => {
   };
 
   if (wantReminder && !docs.some(looksLikeReminderTable)) {
-    if (DEV) console.warn("[Retrieval] Reminder requested but no reminder table in KB/Qdrant. Discovering from sys.objects...");
-
     const candidates = await sequelize.query(
       `
       SELECT TOP 50
@@ -7349,15 +7467,6 @@ const discoverAttendanceCandidates = async ({ sequelize, max = 100 }) => {
     } catch {
       // ignore
     }
-  }
-
-  if (DEV) {
-    console.log(`[Retrieval] intent=${intent} docs=${docs.length}`);
-    docs.slice(0, Math.min(8, docs.length)).forEach((d, i) => {
-      console.log(
-        `  [${i + 1}] ${(d.Source_Reference || d.Source_Name).padEnd(40)} sim=${Number(d.similarity || 0).toFixed(3)} live=${d.liveSchemaAvailable}`
-      );
-    });
   }
 
   return docs;
@@ -7605,7 +7714,7 @@ const extractName = (question) => {
   s = s.replace(/^(?:ab\s+kya\s+karo|ab\s+karo|kya\s+karo|karo|ab|batao|btao|bta|samjhao|samjho|kripya|krpya|dhyan\s+dein|employee\s+name|emp\s+name|name\s*[:=-])\s*/gi, " ");
 
   s = s.replace(
-    /\b(employee\s*code|emp\s*code|empcode|employee\s*name|emp\s*name|pan(\s*number|\s*no)?|salary|structure|salarystructure|mobile(\s*no|\s*number)?|phone|whatsapp|contact|details?|info(?:rmation)?|number|no|lekar|aao|lao|la|batao|bata|btao|bta|btaye|bataye|batana|bataiye|batado|btado|samjhao|samjho|samjha|bolo|bol|boliye|bologe|dena|chahiye|nikalo|karo|do|dijiye|de|ye|yeh|yehi|yahi|yhi|wo|woh|wohi|wahi|iska|iski|iske|uska|uski|uske|unka|unki|unke|is|ise|inhe|unhe|inko|unko|isko|usko|kiska|kiski|kiske|kisse|kis|kise|isi|usi|ka|ki|ke|ko|se|ne|me|mein|aur|bhi|saath|new\s*joining|joining|candidate|candidates|recruitment|complete|poori|poora|kla|ok|okk|okay|please|plz|pls|sir|ji|bhai|yaar|yar|branch|branches|location|locations|loc_code|loccode|company|godown|attendance|attendancetable|present|absent|leave|holiday|hazri|haazri|aaye|aaya|gairhazir|chhutti|chutti|duty|punch|punches|weakly|weekly|weekoff|weekoff|week\s*off|weak\s*off|sunday|itwar|ravivar|halfday|half\s*day|kab\s*kab|kitne|kitni|kitna|total|count|sankhya|log|staff|people|koun|kaun|the|tha|thi|hote|hain|hai|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|mah|maah|mahine|maheene|month|months|saal|year|years)\b/gi,
+    /\b(employee\s*code|emp\s*code|empcode|employee\s*name|emp\s*name|pan(\s*number|\s*no)?|salary|structure|salarystructure|mobile(\s*no|\s*number)?|phone|whatsapp|contact|details?|info(?:rmation)?|number|no|lekar|aao|lao|la|batao|bata|btao|bta|btaye|bataye|batana|bataiye|batado|btado|samjhao|samjho|samjha|bolo|bol|boliye|bologe|dena|chahiye|nikalo|karo|do|dijiye|de|ye|yeh|yehi|yahi|yhi|wo|woh|wohi|wahi|iska|iski|iske|uska|uski|uske|unka|unki|unke|is|ise|inhe|unhe|inko|unko|isko|usko|kiska|kiski|kiske|kisse|kis|kise|isi|usi|ka|ki|ke|ko|se|ne|me|mein|aur|bhi|saath|par|the|tha|thi|new\s*joining|joining|candidate|candidates|recruitment|complete|poori|poora|kla|ok|okk|okay|please|plz|pls|sir|ji|bhai|yaar|yar|branch|branches|location|locations|loc_code|loccode|company|godown|attendance|attendancetable|present|absent|leave|leaves|casual|sick|privilege|earned|maternity|paternity|cl|sl|pl|el|ml|lwp|holiday|hazri|haazri|aaye|aaya|gairhazir|chhutti|chutti|duty|punch|punches|weakly|weekly|weekoff|weekoff|week\s*off|weak\s*off|sunday|itwar|ravivar|halfday|half\s*day|hd|kab\s*kab|kitne|kitni|kitna|total|count|sankhya|log|staff|people|koun|kaun|hote|hain|hai|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|mah|maah|mahine|maheene|month|months|saal|year|years)\b/gi,
     " "
   );
 
@@ -7642,8 +7751,8 @@ const extractEmployeeCode = (question) => {
   const alphaNum = q.match(/\b([A-Z]{1,4}\d{4,12})\b/i);
   if (alphaNum?.[1]) return String(alphaNum[1]).trim().toUpperCase();
 
-  // plain numeric employee id (e.g. 19012202)
-  const num = q.match(/\b(\d{7,12})\b/);
+  // plain numeric employee id (e.g. 197003, 1953081, 19012202)
+  const num = q.match(/\b(\d{6,12})\b/);
   if (num?.[1]) return String(num[1]).trim();
 
   return null;
@@ -7852,7 +7961,7 @@ const findCol = (columns = [], patterns = []) => {
   if (!patterns) return null;
   const patList = Array.isArray(patterns) ? patterns : [patterns];
   for (const c of columns) {
-    const n = String(c?.name || c?.Column_Name || c || "").trim();
+    const n = String(c?.name || c?.Column_Name || c?.column_name || c?.COLUMN_NAME || (typeof c === "string" ? c : "") || "").trim();
     if (!n) continue;
     for (const re of patList) {
       if (!re) continue;
@@ -7874,7 +7983,7 @@ const findAllCols = (columns = [], patterns = []) => {
   for (const re of patList) {
     if (!re) continue;
     for (const c of columns) {
-      const n = String(c?.name || c?.Column_Name || c || "").trim();
+      const n = String(c?.name || c?.Column_Name || c?.column_name || c?.COLUMN_NAME || (typeof c === "string" ? c : "") || "").trim();
       if (!n || added.has(n.toLowerCase())) continue;
       if (typeof re === "string") {
         if (n.toLowerCase() === re.toLowerCase()) {
@@ -8066,6 +8175,24 @@ const pickEmpDoc = (schemaContext = []) => {
       if (!masterDoc) masterDoc = doc;
     }
   }
+  if (!masterDoc) {
+    try {
+      const cat = require("../utils/erp_table_schema_catalog.json");
+      const empCat = cat?.tables?.["EMPLOYEEMASTER"];
+      if (empCat?.columns) {
+        return {
+          Source_Reference: "EMPLOYEEMASTER",
+          Source_Name: "EMPLOYEEMASTER",
+          liveInspection: {
+            columns: Object.keys(empCat.columns).map(c => ({
+              column_name: c,
+              data_type: empCat.columns[c]?.type || "varchar"
+            }))
+          }
+        };
+      }
+    } catch (_) {}
+  }
   return masterDoc;
 };
 
@@ -8085,6 +8212,26 @@ const pickAllSalaryDocs = (schemaContext = []) => {
     if (emp && (amt || mon || yr || eff)) {
       docs.push(doc);
     }
+  }
+  if (!docs.length) {
+    try {
+      const cat = require("../utils/erp_table_schema_catalog.json");
+      for (const t of ["SalaryStructure", "SalaryFile", "Salary_Structure"]) {
+        const salCat = cat?.tables?.[t];
+        if (salCat?.columns) {
+          docs.push({
+            Source_Reference: t,
+            Source_Name: t,
+            liveInspection: {
+              columns: Object.keys(salCat.columns).map(c => ({
+                column_name: c,
+                data_type: salCat.columns[c]?.type || "varchar"
+              }))
+            }
+          });
+        }
+      }
+    } catch (_) {}
   }
   return docs;
 };
@@ -9128,12 +9275,895 @@ ORDER BY ${orderExpr}`.trim();
   };
 };
 
-const buildMispunchQuerySQL = ({ question, schemaContext }) => {
+const buildAssetQuerySQL = ({ question, schemaContext, history = [] }) => {
   const q = normalizeQ(question);
 
-  const isMispunch = /\b(mispunch|mis_punch|mis-punch|manual_punch|manualpunch|mipunch)\b/i.test(q) ||
+  const isAsset = /\b(asset|assets|aset|laptop|laptops|computer|desktop|phone|mobile\s*phone|device|devices|equipment|hardware|item|items|saman|gadi|vehicle|vehicles|issue|issued|revoke|revoked|allot|allotted|assign|assigned|allotment|allocation)\b/i.test(q);
+  if (!isAsset) return null;
+
+  // 1. Check for explicit employee code in question
+  let empCode = extractEmployeeCode(q);
+
+  // 2. Check for pronoun/follow-up in question or fallback to history
+  const hasPronounOrFollowUp = /\b(ye|yeh|wo|woh|iska|iski|iske|usko|usuko|unko|inko|inhe|unhe|ise|use|uska|uski|uske|unka|unki|unke|yahi|yehi|isi|usi|same|above|this|is\s*employee|is\s*bande|ye\s*banda)\b/i.test(q);
+
+  if (!empCode && (hasPronounOrFollowUp || (Array.isArray(history) && history.length > 0))) {
+    empCode = resolveEmployeeFromHistory(history);
+  }
+
+  const isCount = /\b(count|total|kitne|kitni|how\s*many|number\s*of|kul|sankhya)\b/i.test(q) && !/\b(list|data|records|name|naam|table|koun|kaun|details|de\s*do|bhejo)\b/i.test(q);
+  const isMultiOrList = /\b(list|data|all|sab|sabhi|employees?|log|people|records|table|without|bina|pass|having|available)\b/i.test(q) && !empCode;
+
+  // Single employee asset lookup by Code
+  if (empCode && !isMultiOrList) {
+    const cleanCode = String(empCode).trim().toUpperCase();
+    const sql = `SELECT TOP 100
+  LTRIM(RTRIM(CONVERT(varchar(50), ai.[Emp_Code]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(em.[EMPFIRSTNAME], '') + ' ' + ISNULL(em.[EMPLASTNAME], ''))) AS [EmployeeName],
+  ISNULL(ai.[Aset_Name], ai.[Aset_Code]) AS [AssetName],
+  ai.[Aset_Code] AS [AssetCode],
+  ai.[Asset_Serial_no] AS [SerialNo],
+  ISNULL(ai.[Asset_Type], 'Fixed') AS [AssetType],
+  ai.[Asset_category] AS [Category],
+  ai.[It_category] AS [SubCategory],
+  CONVERT(varchar(10), ai.[Issue_Date], 120) AS [IssueDate],
+  CONVERT(varchar(10), ai.[Revoke_Date], 120) AS [RevokeDate],
+  CONVERT(varchar(10), ai.[Lost_Date], 120) AS [LostDate],
+  CASE 
+    WHEN ai.[Lost_Date] IS NOT NULL THEN 'LOST'
+    WHEN ai.[Revoke_Date] IS NOT NULL AND ai.[Revoke_Date] <= GETDATE() THEN 'REVOKED / RETURNED'
+    ELSE 'ACTIVE / ISSUED'
+  END AS [AssetStatus],
+  ISNULL(ai.[Revoke_Rem], ai.[Issue_Rem]) AS [Remarks],
+  ai.[uploaded_document] AS [UploadedDocument]
+FROM [dbo].[Asset_Issue] AS ai WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS em WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), ai.[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), em.[EMPCODE])))
+WHERE LTRIM(RTRIM(CONVERT(varchar(50), ai.[Emp_Code]))) = :empCode
+ORDER BY ai.[Issue_Date] DESC`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "ASSET_LOOKUP",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: [{ name: "empCode", value: cleanCode, type: "string" }],
+      explanation: `Fetch asset allotment and assigned devices for employee '${cleanCode}' from dbo.Asset_Issue joined with dbo.EMPLOYEEMASTER`,
+      deterministic: true,
+    };
+  }
+
+  // Name based search
+  const empName = extractName(q);
+  if (empName && !isMultiOrList && !isCount) {
+    const sql = `SELECT TOP 100
+  LTRIM(RTRIM(CONVERT(varchar(50), ai.[Emp_Code]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(em.[EMPFIRSTNAME], '') + ' ' + ISNULL(em.[EMPLASTNAME], ''))) AS [EmployeeName],
+  ISNULL(ai.[Aset_Name], ai.[Aset_Code]) AS [AssetName],
+  ai.[Aset_Code] AS [AssetCode],
+  ai.[Asset_Serial_no] AS [SerialNo],
+  ISNULL(ai.[Asset_Type], 'Fixed') AS [AssetType],
+  ai.[Asset_category] AS [Category],
+  ai.[It_category] AS [SubCategory],
+  CONVERT(varchar(10), ai.[Issue_Date], 120) AS [IssueDate],
+  CONVERT(varchar(10), ai.[Revoke_Date], 120) AS [RevokeDate],
+  CONVERT(varchar(10), ai.[Lost_Date], 120) AS [LostDate],
+  CASE 
+    WHEN ai.[Lost_Date] IS NOT NULL THEN 'LOST'
+    WHEN ai.[Revoke_Date] IS NOT NULL AND ai.[Revoke_Date] <= GETDATE() THEN 'REVOKED / RETURNED'
+    ELSE 'ACTIVE / ISSUED'
+  END AS [AssetStatus],
+  ISNULL(ai.[Revoke_Rem], ai.[Issue_Rem]) AS [Remarks],
+  ai.[uploaded_document] AS [UploadedDocument]
+FROM [dbo].[Asset_Issue] AS ai WITH (NOLOCK)
+INNER JOIN [dbo].[EMPLOYEEMASTER] AS em WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), ai.[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), em.[EMPCODE])))
+WHERE (
+  LTRIM(RTRIM(ISNULL(em.[EMPFIRSTNAME], '') + ' ' + ISNULL(em.[EMPLASTNAME], ''))) LIKE :nameSearch
+  OR em.[EMPFIRSTNAME] LIKE :firstNameSearch
+)
+ORDER BY ai.[Issue_Date] DESC`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "ASSET_LOOKUP",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: [
+        { name: "nameSearch", value: `%${empName}%`, type: "string" },
+        { name: "firstNameSearch", value: `%${empName.split(' ')[0]}%`, type: "string" }
+      ],
+      explanation: `Fetch asset allotment for employee name '${empName}' from dbo.Asset_Issue joined with dbo.EMPLOYEEMASTER`,
+      deterministic: true,
+    };
+  }
+
+  // Device category filter
+  let catVal = null;
+  if (/\b(laptop|laptops)\b/i.test(q)) catVal = "%LAPTOP%";
+  else if (/\b(phone|mobile)\b/i.test(q)) catVal = "%PHONE%";
+  else if (/\b(desktop|computer)\b/i.test(q)) catVal = "%DESKTOP%";
+
+  if (isCount) {
+    const catCond = catVal ? "WHERE (ai.[It_category] LIKE :catVal OR ai.[Aset_Name] LIKE :catVal OR ai.[Aset_Code] LIKE :catVal)" : "";
+    const sql = `SELECT 
+  COUNT_BIG(1) AS [TotalAssetsIssued],
+  COUNT(DISTINCT ai.[Emp_Code]) AS [EmployeesWithAssets],
+  SUM(CASE WHEN ai.[Revoke_Date] IS NULL OR ai.[Revoke_Date] > GETDATE() THEN 1 ELSE 0 END) AS [ActiveAssets],
+  SUM(CASE WHEN ai.[Revoke_Date] IS NOT NULL AND ai.[Revoke_Date] <= GETDATE() THEN 1 ELSE 0 END) AS [RevokedAssets],
+  SUM(CASE WHEN ai.[Lost_Date] IS NOT NULL THEN 1 ELSE 0 END) AS [LostAssets]
+FROM [dbo].[Asset_Issue] AS ai WITH (NOLOCK)
+${catCond}`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "ASSET_COUNT",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: catVal ? [{ name: "catVal", value: catVal, type: "string" }] : [],
+      explanation: "Fetch total issued asset statistics from dbo.Asset_Issue",
+      deterministic: true,
+    };
+  }
+
+  // General list of assets
+  const catCond = catVal ? "WHERE (ai.[It_category] LIKE :catVal OR ai.[Aset_Name] LIKE :catVal OR ai.[Aset_Code] LIKE :catVal)" : "";
+  const sql = `SELECT TOP 200
+  LTRIM(RTRIM(CONVERT(varchar(50), ai.[Emp_Code]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(em.[EMPFIRSTNAME], '') + ' ' + ISNULL(em.[EMPLASTNAME], ''))) AS [EmployeeName],
+  ISNULL(ai.[Aset_Name], ai.[Aset_Code]) AS [AssetName],
+  ai.[Aset_Code] AS [AssetCode],
+  ai.[Asset_Serial_no] AS [SerialNo],
+  ISNULL(ai.[Asset_Type], 'Fixed') AS [AssetType],
+  ai.[Asset_category] AS [Category],
+  ai.[It_category] AS [SubCategory],
+  CONVERT(varchar(10), ai.[Issue_Date], 120) AS [IssueDate],
+  CONVERT(varchar(10), ai.[Revoke_Date], 120) AS [RevokeDate],
+  CASE 
+    WHEN ai.[Lost_Date] IS NOT NULL THEN 'LOST'
+    WHEN ai.[Revoke_Date] IS NOT NULL AND ai.[Revoke_Date] <= GETDATE() THEN 'REVOKED / RETURNED'
+    ELSE 'ACTIVE / ISSUED'
+  END AS [AssetStatus],
+  ISNULL(ai.[Revoke_Rem], ai.[Issue_Rem]) AS [Remarks]
+FROM [dbo].[Asset_Issue] AS ai WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS em WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), ai.[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), em.[EMPCODE])))
+${catCond}
+ORDER BY ai.[Issue_Date] DESC`.trim();
+
+  return {
+    canAnswer: true,
+    intent: "ASSET_LIST",
+    sensitivity: "NORMAL",
+    sql,
+    parameters: catVal ? [{ name: "catVal", value: catVal, type: "string" }] : [],
+    explanation: "Fetch list of all issued assets from dbo.Asset_Issue joined with dbo.EMPLOYEEMASTER",
+    deterministic: true,
+  };
+};
+
+const buildKYCQuerySQL = ({ question, schemaContext, history = [] }) => {
+  const q = normalizeQ(question);
+
+  const isKYC = /\b(kyc|kyc_status|pan_card_ver|pan_name_match_ver|aadhaar_card_ver|aadhaar_linked_ver|aadhaar_linked_pan_ver|aadhaar_name_match_emp_name|emp_varify|pan\s*verify|aadhaar\s*verify|aadhaar\s*link|aadhaar\s*linked|aadhaar\s*name\s*match|pan\s*name\s*match)\b/i.test(q) ||
+                (/\b(pan|aadhaar|aadhar)\b/i.test(q) && /\b(verify|verified|verification|linked|link|match|matched|status|varify)\b/i.test(q));
+
+  if (!isKYC) return null;
+
+  let empCode = extractEmployeeCode(q);
+  if (!empCode && Array.isArray(history) && history.length > 0) {
+    const isFollowUp = /\b(yahi|yhi|isi|isii|usi|usii|ussi|isay|usay|iska|iski|usuka|uski|unka|unki|iss|is|ise|inhe|same|this|above|uska|unke)\b/i.test(q);
+    if (isFollowUp) {
+      empCode = resolveEmployeeFromHistory(history);
+    }
+  }
+
+  const isCount = /\b(count|total|kitne|kitni|sankhya|how\s*many)\b/i.test(q) && !empCode;
+  const isMultiOrList = /\b(list|all|sab|sabhi|employees?|log|people|records|kiske|kiska|koun|kaun)\b/i.test(q);
+
+  // 1. Specific employee KYC lookup
+  if (empCode && !isMultiOrList) {
+    const cleanCode = String(empCode).trim().toUpperCase();
+    const sql = `SELECT TOP 10
+  LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(em.[EMPFIRSTNAME], '') + ' ' + ISNULL(em.[EMPLASTNAME], ''))) AS [EmployeeName],
+  [em].[EMPLOYEEDESIGNATION] AS [Designation],
+  [em].[LOCATION] AS [Location],
+  [v].[pan_card_ver] AS [PanCardVerified],
+  [v].[pan_name_match_ver] AS [PanNameMatchVerified],
+  [v].[aadhaar_card_ver] AS [AadhaarCardVerified],
+  [v].[aadhaar_linked_ver] AS [AadhaarLinkedVerified],
+  [v].[aadhaar_linked_pan_ver] AS [AadhaarLinkedWithPanVerified],
+  [v].[aadhaar_name_match_emp_name] AS [AadhaarNameMatchVerified],
+  CONVERT(varchar(10), [v].[Created_At], 120) AS [VerificationDate]
+FROM [dbo].[emp_varify] AS v WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS em WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) = LTRIM(RTRIM(CONVERT(varchar(50), em.[EMPCODE])))
+WHERE LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) = :empCode`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "KYC_LOOKUP",
+      sensitivity: "PERSONAL",
+      sql,
+      parameters: [{ name: "empCode", value: cleanCode, type: "string" }],
+      explanation: `Fetch KYC, Aadhaar and PAN verification status for employee '${cleanCode}' from dbo.emp_varify joined with dbo.EMPLOYEEMASTER`,
+      deterministic: true,
+    };
+  }
+
+  // 2. Count query
+  if (isCount) {
+    const sql = `SELECT
+  COUNT_BIG(1) AS [TotalKYCRecords],
+  COUNT(DISTINCT v.[EMPCODE]) AS [TotalEmployeesInKYC],
+  SUM(CASE WHEN LOWER(LTRIM(RTRIM(CONVERT(varchar(10), v.[pan_card_ver])))) = 'true' THEN 1 ELSE 0 END) AS [PanCardVerifiedCount],
+  SUM(CASE WHEN LOWER(LTRIM(RTRIM(CONVERT(varchar(10), v.[aadhaar_card_ver])))) = 'true' THEN 1 ELSE 0 END) AS [AadhaarCardVerifiedCount],
+  SUM(CASE WHEN LOWER(LTRIM(RTRIM(CONVERT(varchar(10), v.[aadhaar_linked_pan_ver])))) = 'true' THEN 1 ELSE 0 END) AS [AadhaarLinkedPanVerifiedCount],
+  SUM(CASE WHEN LOWER(LTRIM(RTRIM(CONVERT(varchar(10), v.[pan_name_match_ver])))) = 'true' THEN 1 ELSE 0 END) AS [PanNameMatchVerifiedCount],
+  SUM(CASE WHEN LOWER(LTRIM(RTRIM(CONVERT(varchar(10), v.[aadhaar_name_match_emp_name])))) = 'true' THEN 1 ELSE 0 END) AS [AadhaarNameMatchVerifiedCount]
+FROM [dbo].[emp_varify] AS v WITH (NOLOCK)`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "KYC_COUNT",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: [],
+      explanation: "Fetch total KYC, PAN and Aadhaar verification counts from dbo.emp_varify",
+      deterministic: true,
+    };
+  }
+
+  // 3. List query
+  const sql = `SELECT TOP 200
+  LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(em.[EMPFIRSTNAME], '') + ' ' + ISNULL(em.[EMPLASTNAME], ''))) AS [EmployeeName],
+  [em].[EMPLOYEEDESIGNATION] AS [Designation],
+  [em].[LOCATION] AS [Location],
+  [v].[pan_card_ver] AS [PanCardVerified],
+  [v].[pan_name_match_ver] AS [PanNameMatchVerified],
+  [v].[aadhaar_card_ver] AS [AadhaarCardVerified],
+  [v].[aadhaar_linked_pan_ver] AS [AadhaarLinkedWithPanVerified],
+  [v].[aadhaar_name_match_emp_name] AS [AadhaarNameMatchVerified]
+FROM [dbo].[emp_varify] AS v WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS em WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) = LTRIM(RTRIM(CONVERT(varchar(50), em.[EMPCODE])))
+ORDER BY v.[EMPCODE] ASC`.trim();
+
+  return {
+    canAnswer: true,
+    intent: "KYC_LIST",
+    sensitivity: "NORMAL",
+    sql,
+    parameters: [],
+    explanation: "List employee KYC, PAN and Aadhaar verification records from dbo.emp_varify joined with dbo.EMPLOYEEMASTER",
+    deterministic: true,
+  };
+};
+
+const buildBankAccountVerificationQuerySQL = ({ question, schemaContext, history = [] }) => {
+  const q = normalizeQ(question);
+
+  const isBankVerify =
+    /\b(account_no_api|bank\s*verify|account\s*verify|account\s*verification|bank\s*verification|account\s*valid|account\s*invalid|bank\s*valid|bank\s*invalid|name_at_bank|account_status|raw_response|khata\s*verify|khata\s*valid|penny\s*drop)\b/i.test(q) ||
+    (/\b(bank|account|khata|a\/c|bankaccountno)\b/i.test(q) && /\b(verify|verified|verification|valid|invalid|status|check|penny)\b/i.test(q));
+
+  if (!isBankVerify) return null;
+
+  let empCode = extractEmployeeCode(q);
+  let empName = !empCode ? extractName(q) : null;
+  if (empName && /^(COUNT|TOTAL|LIST|ALL|BANK|ACCOUNT|VERIFY|VALID|INVALID|PENNY|DROP|RESPONSE|RAW|STATUS|HAI|KYA|NAHI|BATAO|DIKHAO|SAMJHAO|DETAILS|INFO)$/i.test(empName.replace(/\s+/g, ''))) {
+    empName = null;
+  }
+
+  if (!empCode && !empName && Array.isArray(history) && history.length > 0) {
+    const isFollowUp = /\b(yahi|yhi|isi|isii|usi|usii|ussi|isay|usay|iska|iski|usuka|uski|unka|unki|iss|is|ise|inhe|same|this|above|uska|unke)\b/i.test(q);
+    if (isFollowUp) {
+      empCode = resolveEmployeeFromHistory(history);
+    }
+  }
+
+  const isCount = /\b(count|total|kitne|kitni|sankhya|how\s*many)\b/i.test(q) && !empCode && !empName;
+  const isMultiOrList = /\b(list|all|sab|sabhi|employees?|log|people|records|kiske|kiska|koun|kaun)\b/i.test(q);
+  const wantsOnlyInvalid = /\b(invalid|failed|unverified|unvalid|galat|nahi\s*hua|reject)\b/i.test(q);
+  const wantsOnlyValid = /\b(valid|verified|pass|sahi|hua\s*hai)\b/i.test(q) && !wantsOnlyInvalid;
+
+  // 1. Specific employee Bank Account Verification Lookup (by Code or Name)
+  if ((empCode || empName) && !isMultiOrList && !isCount) {
+    const params = [];
+    let empWhere = "";
+    if (empCode) {
+      const cleanCode = String(empCode).trim().toUpperCase();
+      params.push({ name: "empCode", value: cleanCode, type: "string" });
+      empWhere = "LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) = :empCode";
+    } else {
+      params.push({ name: "empName", value: `%${empName}%`, type: "string" });
+      empWhere = "UPPER(LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], '')))) LIKE :empName";
+    }
+
+    const sql = `SELECT TOP 10
+  LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation],
+  [E].[LOCATION] AS [Location],
+  [E].[BANKACCOUNTNO] AS [MasterBankAccountNo],
+  [E].[BANK_NAME] AS [MasterBankName],
+  [A].[account_number] AS [VerifiedAccountNumber],
+  [A].[Ifsc] AS [IFSC],
+  COALESCE([A].[name_at_bank], JSON_VALUE([A].[raw_response], '$.result.name_at_bank')) AS [NameAtBank],
+  JSON_VALUE([A].[raw_response], '$.result.bank_name') AS [BankNameAtBank],
+  JSON_VALUE([A].[raw_response], '$.result.branch') AS [BankBranch],
+  JSON_VALUE([A].[raw_response], '$.result.utr') AS [UTR],
+  CASE 
+    WHEN [A].[raw_response] LIKE '%"account_status":"VALID"%' OR [A].[account_exists] = 1 THEN 'VALID'
+    WHEN [A].[raw_response] LIKE '%"account_status":"INVALID"%' OR [A].[account_exists] = 0 THEN 'INVALID'
+    ELSE ISNULL(TRY_CAST(JSON_VALUE([A].[raw_response], '$.result.account_status') AS varchar(50)), 'NOT_VERIFIED')
+  END AS [AccountStatus],
+  JSON_VALUE([A].[raw_response], '$.result.account_status_code') AS [AccountStatusCode],
+  JSON_VALUE([A].[raw_response], '$.result.name_match_score') AS [NameMatchScore],
+  CONVERT(varchar(19), [A].[Created_At], 120) AS [VerificationDate]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+LEFT JOIN [dbo].[Account_No_Api] AS A WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(100), E.[BANKACCOUNTNO]))) = LTRIM(RTRIM(CONVERT(varchar(100), A.[account_number])))
+WHERE ${empWhere}
+ORDER BY A.[Created_At] DESC`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "BANK_ACCOUNT_VERIFY_LOOKUP",
+      sensitivity: "PERSONAL",
+      sql,
+      parameters: params,
+      explanation: `Fetch bank account penny-drop verification status for employee '${empCode || empName}' from dbo.Account_No_Api joined with dbo.EMPLOYEEMASTER`,
+      deterministic: true,
+    };
+  }
+
+  // 2. Count query
+  if (isCount) {
+    const sql = `SELECT
+  COUNT(DISTINCT E.[EMPCODE]) AS [TotalEmployeesWithBankAcc],
+  COUNT(DISTINCT A.[account_number]) AS [TotalVerifiedApiRecords],
+  COUNT(DISTINCT CASE WHEN A.[raw_response] LIKE '%"account_status":"VALID"%' OR A.[account_exists] = 1 THEN E.[EMPCODE] END) AS [TotalValidAccounts],
+  COUNT(DISTINCT CASE WHEN A.[raw_response] LIKE '%"account_status":"INVALID"%' OR A.[account_exists] = 0 THEN E.[EMPCODE] END) AS [TotalInvalidAccounts],
+  COUNT(DISTINCT CASE WHEN A.[account_number] IS NULL THEN E.[EMPCODE] END) AS [TotalUnverifiedAccounts]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+LEFT JOIN [dbo].[Account_No_Api] AS A WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(100), E.[BANKACCOUNTNO]))) = LTRIM(RTRIM(CONVERT(varchar(100), A.[account_number])))
+WHERE (E.[LASTWOR_DATE] IS NULL OR E.[LASTWOR_DATE] = '1900-01-01')
+  AND E.[BANKACCOUNTNO] IS NOT NULL AND LTRIM(RTRIM(CONVERT(varchar(50), E.[BANKACCOUNTNO]))) <> ''`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "BANK_ACCOUNT_VERIFY_COUNT",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: [],
+      explanation: "Fetch bank account verification counts (Valid, Invalid, Unverified) from dbo.Account_No_Api joined with dbo.EMPLOYEEMASTER",
+      deterministic: true,
+    };
+  }
+
+  // 3. List query
+  let statusFilter = "";
+  if (wantsOnlyValid) {
+    statusFilter = "WHERE (A.[raw_response] LIKE '%\"account_status\":\"VALID\"%' OR A.[account_exists] = 1)";
+  } else if (wantsOnlyInvalid) {
+    statusFilter = "WHERE (A.[raw_response] LIKE '%\"account_status\":\"INVALID\"%' OR A.[account_exists] = 0)";
+  }
+
+  const sql = `SELECT TOP 200
+  LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation],
+  [E].[LOCATION] AS [Location],
+  [E].[BANKACCOUNTNO] AS [BankAccountNo],
+  [A].[Ifsc] AS [IFSC],
+  COALESCE([A].[name_at_bank], JSON_VALUE([A].[raw_response], '$.result.name_at_bank')) AS [NameAtBank],
+  JSON_VALUE([A].[raw_response], '$.result.bank_name') AS [BankNameAtBank],
+  CASE 
+    WHEN [A].[raw_response] LIKE '%"account_status":"VALID"%' OR [A].[account_exists] = 1 THEN 'VALID'
+    WHEN [A].[raw_response] LIKE '%"account_status":"INVALID"%' OR [A].[account_exists] = 0 THEN 'INVALID'
+    ELSE ISNULL(TRY_CAST(JSON_VALUE([A].[raw_response], '$.result.account_status') AS varchar(50)), 'NOT_VERIFIED')
+  END AS [AccountStatus],
+  CONVERT(varchar(19), [A].[Created_At], 120) AS [VerificationDate]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+INNER JOIN [dbo].[Account_No_Api] AS A WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(100), E.[BANKACCOUNTNO]))) = LTRIM(RTRIM(CONVERT(varchar(100), A.[account_number])))
+${statusFilter}
+ORDER BY A.[Created_At] DESC`.trim();
+
+  return {
+    canAnswer: true,
+    intent: "BANK_ACCOUNT_VERIFY_LIST",
+    sensitivity: "NORMAL",
+    sql,
+    parameters: [],
+    explanation: "List employee bank account penny-drop verification records from dbo.Account_No_Api joined with dbo.EMPLOYEEMASTER",
+    deterministic: true,
+  };
+};
+
+const buildApprovalMatrixQuerySQL = ({ question, schemaContext, history = [] }) => {
+  const q = normalizeQ(question);
+
+  const isApprovalQuery =
+    /\b(approval_matrix|approval\s*matrix|approver|approvers|approver1|approver2|approver3|approval\s*authority|approval\s*level|kiske\s*approval|kiska\s*approval|approval\s*karega|approve\s*karega|approval\s*chain|hierarchy|kon\s*approval|koun\s*approval|approval\s*hai)\b/i.test(q) ||
+    (/\b(approval|approve|approver)\b/i.test(q) && /\b(matrix|rule|rules|module|level|authority|empcode|employee|attendance|attdence|attandance|gatepass|democar|lead)\b/i.test(q));
+
+  if (!isApprovalQuery) return null;
+
+  let empCode = extractEmployeeCode(q);
+  let empName = !empCode ? extractName(q) : null;
+  if (empName && /^(APPROVAL|MATRIX|APPROVER|LEVEL|MODULE|ATTDENCE|ATTENDANCE|ATTANDANCE|DEMOCAR|GATEPASS|LEAD|MANAGEMENT|COUNT|TOTAL|LIST|ALL|BATAO|DIKHAO|SAMJHAO|DETAILS|INFO|KON|KOUN|HAI)$/i.test(empName.replace(/\s+/g, ''))) {
+    empName = null;
+  }
+
+  if (!empCode && !empName && Array.isArray(history) && history.length > 0) {
+    const isFollowUp = /\b(yahi|yhi|isi|isii|usi|usii|ussi|isay|usay|iska|iski|usuka|uski|unka|unki|iss|is|ise|inhe|same|this|above|uska|unke)\b/i.test(q);
+    if (isFollowUp) {
+      empCode = resolveEmployeeFromHistory(history);
+    }
+  }
+
+  // Detect specific module filter if asked (e.g. attendance, democar, gatepass, lead_management)
+  let moduleFilter = "";
+  if (/\b(attdence|attendance|attandance|atendance|atandance|att\b|hazri|leave|mispunch)\b/i.test(q)) {
+    moduleFilter = "AND (LOWER([M].[module_code]) LIKE '%att%' OR LOWER([M].[module_code]) LIKE '%leave%')";
+  } else if (/\b(democar|demo\s*car|car|vehicle)\b/i.test(q)) {
+    moduleFilter = "AND (LOWER([M].[module_code]) LIKE '%democar%' OR LOWER([M].[module_code]) LIKE '%car%')";
+  } else if (/\b(gatepass|gate\s*pass)\b/i.test(q)) {
+    moduleFilter = "AND LOWER([M].[module_code]) LIKE '%gatepass%'";
+  } else if (/\b(lead_management|lead\s*management|lead|enquiry)\b/i.test(q)) {
+    moduleFilter = "AND (LOWER([M].[module_code]) LIKE '%lead%' OR LOWER([M].[module_code]) LIKE '%enquiry%')";
+  } else if (/\b(expense|claim|purchase|travel)\b/i.test(q)) {
+    moduleFilter = "AND (LOWER([M].[module_code]) LIKE '%expense%' OR LOWER([M].[module_code]) LIKE '%claim%' OR LOWER([M].[module_code]) LIKE '%purchase%')";
+  }
+
+  const isCount = /\b(count|total|kitne|kitni|sankhya|how\s*many)\b/i.test(q) && !empCode && !empName;
+  const isMultiOrList = /\b(list|all|sab|sabhi|employees?|log|people|records|kiske|kiska|koun|kaun)\b/i.test(q);
+
+  // 1. Specific Employee Approval Matrix Lookup
+  if ((empCode || empName) && !isMultiOrList && !isCount) {
+    const params = [];
+    let empWhere = "";
+    if (empCode) {
+      const cleanCode = String(empCode).trim().toUpperCase();
+      params.push({ name: "empCode", value: cleanCode, type: "string" });
+      empWhere = "(LTRIM(RTRIM(CONVERT(varchar(50), [M].[empcode]))) = :empCode OR (TRY_CONVERT(int, [M].[empcode]) IS NOT NULL AND TRY_CONVERT(int, [M].[empcode]) = TRY_CONVERT(int, :empCode)))";
+    } else {
+      params.push({ name: "empName", value: `%${empName}%`, type: "string" });
+      empWhere = "UPPER(LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], '')))) LIKE :empName";
+    }
+
+    const sql = `SELECT TOP 50
+  [M].[UTD],
+  [M].[module_code] AS [ModuleCode],
+  [M].[empcode] AS [EmployeeCode],
+  COALESCE(NULLIF(LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))), ''), [M].[empcode]) AS [EmployeeName],
+  COALESCE(NULLIF(LTRIM(RTRIM([E].[EMPLOYEEDESIGNATION])), ''), (SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 95 AND Misc_Code = [E].[DESG])) AS [Designation],
+  [E].[LOCATION] AS [Location],
+  -- Level 1 Approvers
+  [M].[approver1_A] AS [Approver1_A_Code],
+  COALESCE(
+    NULLIF(LTRIM(RTRIM(ISNULL([A1A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A1A].[EMPLASTNAME], ''))), ''),
+    (SELECT TOP 1 LTRIM(RTRIM(ISNULL(E1A.EMPFIRSTNAME, '') + ' ' + ISNULL(E1A.EMPLASTNAME, ''))) FROM dbo.EMPLOYEEMASTER E1A WITH (NOLOCK) WHERE LTRIM(RTRIM(CONVERT(varchar(50), E1A.EMPCODE))) = LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_A]))) OR (TRY_CONVERT(bigint, E1A.EMPCODE) IS NOT NULL AND TRY_CONVERT(bigint, E1A.EMPCODE) = TRY_CONVERT(bigint, [M].[approver1_A]))),
+    [M].[approver1_A]
+  ) AS [Approver1_A_Name],
+  CASE 
+    WHEN NULLIF(LTRIM(RTRIM(ISNULL([A1A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A1A].[EMPLASTNAME], ''))), '') IS NOT NULL 
+      THEN LTRIM(RTRIM(ISNULL([A1A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A1A].[EMPLASTNAME], ''))) + ' (Code: ' + CONVERT(varchar(50), [M].[approver1_A]) + ')'
+    WHEN [M].[approver1_A] IS NOT NULL AND LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_A]))) <> ''
+      THEN CONVERT(varchar(50), [M].[approver1_A])
+    ELSE NULL 
+  END AS [Approver1_A_Display],
+  COALESCE(NULLIF(LTRIM(RTRIM([A1A].[EMPLOYEEDESIGNATION])), ''), (SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 95 AND Misc_Code = [A1A].[DESG])) AS [Approver1_A_Designation],
+  [A1A].[MOBILENO] AS [Approver1_A_Mobile],
+
+  [M].[approver1_B] AS [Approver1_B_Code],
+  COALESCE(
+    NULLIF(LTRIM(RTRIM(ISNULL([A1B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A1B].[EMPLASTNAME], ''))), ''),
+    (SELECT TOP 1 LTRIM(RTRIM(ISNULL(E1B.EMPFIRSTNAME, '') + ' ' + ISNULL(E1B.EMPLASTNAME, ''))) FROM dbo.EMPLOYEEMASTER E1B WITH (NOLOCK) WHERE LTRIM(RTRIM(CONVERT(varchar(50), E1B.EMPCODE))) = LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_B]))) OR (TRY_CONVERT(bigint, E1B.EMPCODE) IS NOT NULL AND TRY_CONVERT(bigint, E1B.EMPCODE) = TRY_CONVERT(bigint, [M].[approver1_B]))),
+    [M].[approver1_B]
+  ) AS [Approver1_B_Name],
+  CASE 
+    WHEN NULLIF(LTRIM(RTRIM(ISNULL([A1B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A1B].[EMPLASTNAME], ''))), '') IS NOT NULL 
+      THEN LTRIM(RTRIM(ISNULL([A1B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A1B].[EMPLASTNAME], ''))) + ' (Code: ' + CONVERT(varchar(50), [M].[approver1_B]) + ')'
+    WHEN [M].[approver1_B] IS NOT NULL AND LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_B]))) <> ''
+      THEN CONVERT(varchar(50), [M].[approver1_B])
+    ELSE NULL 
+  END AS [Approver1_B_Display],
+  COALESCE(NULLIF(LTRIM(RTRIM([A1B].[EMPLOYEEDESIGNATION])), ''), (SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 95 AND Misc_Code = [A1B].[DESG])) AS [Approver1_B_Designation],
+  [A1B].[MOBILENO] AS [Approver1_B_Mobile],
+
+  -- Level 2 Approvers
+  [M].[approver2_A] AS [Approver2_A_Code],
+  COALESCE(
+    NULLIF(LTRIM(RTRIM(ISNULL([A2A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A2A].[EMPLASTNAME], ''))), ''),
+    (SELECT TOP 1 LTRIM(RTRIM(ISNULL(E2A.EMPFIRSTNAME, '') + ' ' + ISNULL(E2A.EMPLASTNAME, ''))) FROM dbo.EMPLOYEEMASTER E2A WITH (NOLOCK) WHERE LTRIM(RTRIM(CONVERT(varchar(50), E2A.EMPCODE))) = LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_A]))) OR (TRY_CONVERT(bigint, E2A.EMPCODE) IS NOT NULL AND TRY_CONVERT(bigint, E2A.EMPCODE) = TRY_CONVERT(bigint, [M].[approver2_A]))),
+    [M].[approver2_A]
+  ) AS [Approver2_A_Name],
+  CASE 
+    WHEN NULLIF(LTRIM(RTRIM(ISNULL([A2A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A2A].[EMPLASTNAME], ''))), '') IS NOT NULL 
+      THEN LTRIM(RTRIM(ISNULL([A2A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A2A].[EMPLASTNAME], ''))) + ' (Code: ' + CONVERT(varchar(50), [M].[approver2_A]) + ')'
+    WHEN [M].[approver2_A] IS NOT NULL AND LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_A]))) <> ''
+      THEN CONVERT(varchar(50), [M].[approver2_A])
+    ELSE NULL 
+  END AS [Approver2_A_Display],
+  COALESCE(NULLIF(LTRIM(RTRIM([A2A].[EMPLOYEEDESIGNATION])), ''), (SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 95 AND Misc_Code = [A2A].[DESG])) AS [Approver2_A_Designation],
+  [A2A].[MOBILENO] AS [Approver2_A_Mobile],
+
+  [M].[approver2_B] AS [Approver2_B_Code],
+  COALESCE(
+    NULLIF(LTRIM(RTRIM(ISNULL([A2B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A2B].[EMPLASTNAME], ''))), ''),
+    (SELECT TOP 1 LTRIM(RTRIM(ISNULL(E2B.EMPFIRSTNAME, '') + ' ' + ISNULL(E2B.EMPLASTNAME, ''))) FROM dbo.EMPLOYEEMASTER E2B WITH (NOLOCK) WHERE LTRIM(RTRIM(CONVERT(varchar(50), E2B.EMPCODE))) = LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_B]))) OR (TRY_CONVERT(bigint, E2B.EMPCODE) IS NOT NULL AND TRY_CONVERT(bigint, E2B.EMPCODE) = TRY_CONVERT(bigint, [M].[approver2_B]))),
+    [M].[approver2_B]
+  ) AS [Approver2_B_Name],
+  CASE 
+    WHEN NULLIF(LTRIM(RTRIM(ISNULL([A2B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A2B].[EMPLASTNAME], ''))), '') IS NOT NULL 
+      THEN LTRIM(RTRIM(ISNULL([A2B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A2B].[EMPLASTNAME], ''))) + ' (Code: ' + CONVERT(varchar(50), [M].[approver2_B]) + ')'
+    WHEN [M].[approver2_B] IS NOT NULL AND LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_B]))) <> ''
+      THEN CONVERT(varchar(50), [M].[approver2_B])
+    ELSE NULL 
+  END AS [Approver2_B_Display],
+  COALESCE(NULLIF(LTRIM(RTRIM([A2B].[EMPLOYEEDESIGNATION])), ''), (SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 95 AND Misc_Code = [A2B].[DESG])) AS [Approver2_B_Designation],
+  [A2B].[MOBILENO] AS [Approver2_B_Mobile],
+
+  -- Level 3 Approvers
+  [M].[approver3_A] AS [Approver3_A_Code],
+  COALESCE(
+    NULLIF(LTRIM(RTRIM(ISNULL([A3A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A3A].[EMPLASTNAME], ''))), ''),
+    (SELECT TOP 1 LTRIM(RTRIM(ISNULL(E3A.EMPFIRSTNAME, '') + ' ' + ISNULL(E3A.EMPLASTNAME, ''))) FROM dbo.EMPLOYEEMASTER E3A WITH (NOLOCK) WHERE LTRIM(RTRIM(CONVERT(varchar(50), E3A.EMPCODE))) = LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_A]))) OR (TRY_CONVERT(bigint, E3A.EMPCODE) IS NOT NULL AND TRY_CONVERT(bigint, E3A.EMPCODE) = TRY_CONVERT(bigint, [M].[approver3_A]))),
+    [M].[approver3_A]
+  ) AS [Approver3_A_Name],
+  CASE 
+    WHEN NULLIF(LTRIM(RTRIM(ISNULL([A3A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A3A].[EMPLASTNAME], ''))), '') IS NOT NULL 
+      THEN LTRIM(RTRIM(ISNULL([A3A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A3A].[EMPLASTNAME], ''))) + ' (Code: ' + CONVERT(varchar(50), [M].[approver3_A]) + ')'
+    WHEN [M].[approver3_A] IS NOT NULL AND LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_A]))) <> ''
+      THEN CONVERT(varchar(50), [M].[approver3_A])
+    ELSE NULL 
+  END AS [Approver3_A_Display],
+  COALESCE(NULLIF(LTRIM(RTRIM([A3A].[EMPLOYEEDESIGNATION])), ''), (SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 95 AND Misc_Code = [A3A].[DESG])) AS [Approver3_A_Designation],
+  [A3A].[MOBILENO] AS [Approver3_A_Mobile],
+
+  [M].[approver3_B] AS [Approver3_B_Code],
+  COALESCE(
+    NULLIF(LTRIM(RTRIM(ISNULL([A3B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A3B].[EMPLASTNAME], ''))), ''),
+    (SELECT TOP 1 LTRIM(RTRIM(ISNULL(E3B.EMPFIRSTNAME, '') + ' ' + ISNULL(E3B.EMPLASTNAME, ''))) FROM dbo.EMPLOYEEMASTER E3B WITH (NOLOCK) WHERE LTRIM(RTRIM(CONVERT(varchar(50), E3B.EMPCODE))) = LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_B]))) OR (TRY_CONVERT(bigint, E3B.EMPCODE) IS NOT NULL AND TRY_CONVERT(bigint, E3B.EMPCODE) = TRY_CONVERT(bigint, [M].[approver3_B]))),
+    [M].[approver3_B]
+  ) AS [Approver3_B_Name],
+  CASE 
+    WHEN NULLIF(LTRIM(RTRIM(ISNULL([A3B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A3B].[EMPLASTNAME], ''))), '') IS NOT NULL 
+      THEN LTRIM(RTRIM(ISNULL([A3B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A3B].[EMPLASTNAME], ''))) + ' (Code: ' + CONVERT(varchar(50), [M].[approver3_B]) + ')'
+    WHEN [M].[approver3_B] IS NOT NULL AND LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_B]))) <> ''
+      THEN CONVERT(varchar(50), [M].[approver3_B])
+    ELSE NULL 
+  END AS [Approver3_B_Display],
+  COALESCE(NULLIF(LTRIM(RTRIM([A3B].[EMPLOYEEDESIGNATION])), ''), (SELECT TOP 1 Misc_Name FROM dbo.Misc_Mst WITH (NOLOCK) WHERE Misc_Type = 95 AND Misc_Code = [A3B].[DESG])) AS [Approver3_B_Designation],
+  [A3B].[MOBILENO] AS [Approver3_B_Mobile],
+
+  -- Limits & Validity
+  [M].[APPROVER1_MINLIMIT] AS [Approver1_MinLimit],
+  [M].[APPROVER1_MAXLIMIT] AS [Approver1_MaxLimit],
+  [M].[APPROVER2_MINLIMIT] AS [Approver2_MinLimit],
+  [M].[APPROVER2_MAXLIMIT] AS [Approver2_MaxLimit],
+  [M].[APPROVER3_MINLIMIT] AS [Approver3_MinLimit],
+  [M].[APPROVER3_MAXLIMIT] AS [Approver3_MaxLimit],
+  [M].[Branch] AS [Branch],
+  CONVERT(varchar(19), [M].[Created_At], 120) AS [Created_At],
+  CONVERT(varchar(10), [M].[ValidFrom], 120) AS [ValidFrom],
+  CONVERT(varchar(10), [M].[ValidTo], 120) AS [ValidTo]
+FROM [dbo].[Approval_Matrix] AS [M] WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[empcode]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [M].[empcode]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [M].[empcode]) IS NOT NULL AND TRY_CONVERT(bigint, [E].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [M].[empcode]) = TRY_CONVERT(bigint, [E].[EMPCODE]))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A1A] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_A]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A1A].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_A]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [A1A].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [M].[approver1_A]) IS NOT NULL AND TRY_CONVERT(bigint, [A1A].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [M].[approver1_A]) = TRY_CONVERT(bigint, [A1A].[EMPCODE]))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A1B] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_B]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A1B].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_B]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [A1B].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [M].[approver1_B]) IS NOT NULL AND TRY_CONVERT(bigint, [A1B].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [M].[approver1_B]) = TRY_CONVERT(bigint, [A1B].[EMPCODE]))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A2A] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_A]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A2A].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_A]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [A2A].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [M].[approver2_A]) IS NOT NULL AND TRY_CONVERT(bigint, [A2A].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [M].[approver2_A]) = TRY_CONVERT(bigint, [A2A].[EMPCODE]))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A2B] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_B]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A2B].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_B]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [A2B].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [M].[approver2_B]) IS NOT NULL AND TRY_CONVERT(bigint, [A2B].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [M].[approver2_B]) = TRY_CONVERT(bigint, [A2B].[EMPCODE]))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A3A] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_A]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A3A].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_A]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [A3A].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [M].[approver3_A]) IS NOT NULL AND TRY_CONVERT(bigint, [A3A].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [M].[approver3_A]) = TRY_CONVERT(bigint, [A3A].[EMPCODE]))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A3B] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_B]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A3B].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_B]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [A3B].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [M].[approver3_B]) IS NOT NULL AND TRY_CONVERT(bigint, [A3B].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [M].[approver3_B]) = TRY_CONVERT(bigint, [A3B].[EMPCODE]))
+WHERE ${empWhere}
+  ${moduleFilter}
+ORDER BY [M].[module_code] ASC, [M].[empcode] ASC`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "APPROVAL_MATRIX_LOOKUP",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: params,
+      explanation: `Fetch multi-level approval matrix and approvers hierarchy for employee '${empCode || empName}' across modules from dbo.Approval_Matrix joined with dbo.EMPLOYEEMASTER`,
+      deterministic: true,
+    };
+  }
+
+  // 2. Count Query
+  if (isCount) {
+    const sql = `SELECT
+  COUNT(*) AS [TotalApprovalRules],
+  COUNT(DISTINCT [M].[empcode]) AS [ConfiguredEmployeesCount],
+  COUNT(DISTINCT [M].[module_code]) AS [ConfiguredModulesCount]
+FROM [dbo].[Approval_Matrix] AS [M] WITH (NOLOCK)
+WHERE 1=1 ${moduleFilter}`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "APPROVAL_MATRIX_COUNT",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: [],
+      explanation: "Fetch approval matrix configuration count statistics from dbo.Approval_Matrix",
+      deterministic: true,
+    };
+  }
+
+  // 3. List Query (e.g. all rules for a module or all employees)
+  const sql = `SELECT TOP 100
+  [M].[UTD],
+  [M].[module_code] AS [ModuleCode],
+  [M].[empcode] AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation],
+  [M].[approver1_A] AS [Approver1_A_Code],
+  LTRIM(RTRIM(ISNULL([A1A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A1A].[EMPLASTNAME], ''))) AS [Approver1_A_Name],
+  [M].[approver1_B] AS [Approver1_B_Code],
+  LTRIM(RTRIM(ISNULL([A1B].[EMPFIRSTNAME], '') + ' ' + ISNULL([A1B].[EMPLASTNAME], ''))) AS [Approver1_B_Name],
+  [M].[approver2_A] AS [Approver2_A_Code],
+  LTRIM(RTRIM(ISNULL([A2A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A2A].[EMPLASTNAME], ''))) AS [Approver2_A_Name],
+  [M].[approver3_A] AS [Approver3_A_Code],
+  LTRIM(RTRIM(ISNULL([A3A].[EMPFIRSTNAME], '') + ' ' + ISNULL([A3A].[EMPLASTNAME], ''))) AS [Approver3_A_Name],
+  [M].[Branch] AS [Branch]
+FROM [dbo].[Approval_Matrix] AS [M] WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[empcode]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A1A] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_A]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A1A].[EMPCODE])))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A1B] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver1_B]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A1B].[EMPCODE])))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A2A] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver2_A]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A2A].[EMPCODE])))
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [A3A] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [M].[approver3_A]))) = LTRIM(RTRIM(CONVERT(varchar(50), [A3A].[EMPCODE])))
+WHERE 1=1 ${moduleFilter}
+ORDER BY [M].[module_code] ASC, [M].[empcode] ASC`.trim();
+
+  return {
+    canAnswer: true,
+    intent: "APPROVAL_MATRIX_LIST",
+    sensitivity: "NORMAL",
+    sql,
+    parameters: [],
+    explanation: "List approval matrix rules and approvers from dbo.Approval_Matrix joined with dbo.EMPLOYEEMASTER",
+    deterministic: true,
+  };
+};
+
+const buildEmployeeDeductionQuerySQL = ({ question, schemaContext, history = [] }) => {
+  const q = normalizeQ(question);
+
+  const isDeductionQuery =
+    /\b(emp_ded|emp\s*ded|deduction|deductions|katoti|salary\s*deduction|ded_amt|ded_type|tds\s*deduction|advance\s*deduction|loan\s*deduction|arrear|arrears)\b/i.test(q) ||
+    (/\b(deduct|deducted|kata|kate|katoti|kitna\s*kata|kisme\s*hua|kisme\s*katoti|kitna\s*deduction)\b/i.test(q) && /\b(salary|amount|rupaye|emp|employee|vetan|tankhah|mahina|month|year|2024|2025|2026|deduction|deductions|isme|isse|iska|uski|unka)\b/i.test(q));
+
+  if (!isDeductionQuery) return null;
+
+  // If question is strictly about statutory PF enrollment / PF number and not monthly itemized deductions/arrears, delegate to statutory/salary plan
+  const isStrictPFOnly = /\b(pf\s*no|pf\s*number|pf\s*status|provident\s*fund\s*no)\b/i.test(q) &&
+    !/\b(emp_ded|emp\s*ded|ded_amt|ded_type|tds|advance|loan|arrear|arrears|kisme|total\s*deduction|katoti)\b/i.test(q);
+  if (isStrictPFOnly) return null;
+
+  let empCode = extractEmployeeCode(q);
+  let empName = !empCode ? extractName(q) : null;
+  if (empName && /^(DEDUCTION|DEDUCTIONS|KATOTI|SALARY|MONTH|YEAR|COUNT|TOTAL|LIST|ALL|BATAO|DIKHAO|SAMJHAO|DETAILS|INFO|KISME|KITNA|HUA|ISME|ISSE)$/i.test(empName.replace(/\s+/g, ''))) {
+    empName = null;
+  }
+
+  if (!empCode && !empName && Array.isArray(history) && history.length > 0) {
+    const isFollowUp = /\b(yahi|yhi|isi|isii|usi|usii|ussi|isay|usay|iska|iski|usuka|uski|unka|unki|iss|is|ise|inhe|same|this|above|uska|unke)\b/i.test(q);
+    if (isFollowUp) {
+      empCode = resolveEmployeeFromHistory(history);
+    }
+  }
+
+  const parsedMQ = parseMonthAndYearFromQuery(q);
+  let monthYearWhere = "";
+  const params = [];
+
+  if (parsedMQ?.monthNum) {
+    params.push({ name: "dedMonth", value: parsedMQ.monthNum, type: "number" });
+    monthYearWhere += " AND [E].[Mnth] = :dedMonth";
+  }
+  if (parsedMQ?.year) {
+    params.push({ name: "dedYear", value: parsedMQ.year, type: "number" });
+    monthYearWhere += " AND [E].[Yr] = :dedYear";
+  }
+
+  // 1. Specific Employee Deductions Lookup (Always prioritize if employee code or name identified)
+  if (empCode || empName) {
+    let empWhere = "";
+    if (empCode) {
+      const cleanCode = String(empCode).trim().toUpperCase();
+      const numOnly = cleanCode.replace(/\D/g, "");
+      params.push({ name: "empCode", value: cleanCode, type: "string" });
+      if (numOnly) {
+        params.push({ name: "empCodeNum", value: numOnly, type: "string" });
+        empWhere = "AND (LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))) = :empCode OR LTRIM(RTRIM(CONVERT(varchar(50), [EM].[EMPCODE]))) = :empCode OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))), 'AU', '') = :empCodeNum OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [EM].[EMPCODE]))), 'AU', '') = :empCodeNum OR (TRY_CONVERT(bigint, [E].[Emp_Id]) IS NOT NULL AND TRY_CONVERT(bigint, [E].[Emp_Id]) = TRY_CONVERT(bigint, :empCodeNum)) OR (TRY_CONVERT(bigint, [EM].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [EM].[EMPCODE]) = TRY_CONVERT(bigint, :empCodeNum)))";
+      } else {
+        empWhere = "AND (LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))) = :empCode OR LTRIM(RTRIM(CONVERT(varchar(50), [EM].[EMPCODE]))) = :empCode OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))), 'AU', '') = REPLACE(:empCode, 'AU', '') OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [EM].[EMPCODE]))), 'AU', '') = REPLACE(:empCode, 'AU', ''))";
+      }
+    } else {
+      params.push({ name: "empName", value: `%${empName}%`, type: "string" });
+      empWhere = "AND (UPPER(LTRIM(RTRIM(ISNULL([E].[Emp_Name], '')))) LIKE :empName OR UPPER(LTRIM(RTRIM(ISNULL([EM].[EMPFIRSTNAME], '') + ' ' + ISNULL([EM].[EMPLASTNAME], '')))) LIKE :empName)";
+    }
+
+    const sql = `SELECT TOP 100
+  [E].[UTD],
+  LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))) AS [EmployeeCode],
+  COALESCE(NULLIF(LTRIM(RTRIM([E].[Emp_Name])), ''), NULLIF(LTRIM(RTRIM(ISNULL([EM].[EMPFIRSTNAME], '') + ' ' + ISNULL([EM].[EMPLASTNAME], ''))), ''), [E].[Emp_Id]) AS [EmployeeName],
+  LTRIM(RTRIM(ISNULL([EM].[EMPLOYEEDESIGNATION], ''))) AS [Designation],
+  [EM].[LOCATION] AS [Location],
+  [E].[Mnth] AS [MonthNum],
+  DATENAME(month, DATEFROMPARTS(ISNULL([E].[Yr], 2024), ISNULL([E].[Mnth], 1), 1)) AS [MonthName],
+  [E].[Yr] AS [YearNum],
+  CONVERT(varchar(10), [E].[Rec_Date], 120) AS [RecordDate],
+  [E].[Ded_Type] AS [DeductionTypeCode],
+  COALESCE(NULLIF(LTRIM(RTRIM([M].[Misc_Name])), ''), 'Deduction Code ' + CONVERT(varchar(20), [E].[Ded_Type])) AS [DeductionHead],
+  [E].[Ded_Amt] AS [DeductionAmount],
+  [E].[Ded_Rem] AS [Remarks],
+  [E].[Basic_Arr] AS [BasicArrear],
+  [E].[HRA_ARR] AS [HRAArrear],
+  [E].[Conv_Arr] AS [ConveyanceArrear],
+  [E].[Medical_Arr] AS [MedicalArrear],
+  [E].[Washing_Arr] AS [WashingArrear],
+  [E].[INCENTIVE_AMT] AS [IncentiveAmount],
+  [E].[Loc_Code] AS [BranchCode]
+FROM [dbo].[Emp_Ded] AS [E] WITH (NOLOCK)
+LEFT JOIN [dbo].[Misc_Mst] AS [M] WITH (NOLOCK)
+  ON (CONVERT(varchar(50), [E].[Ded_Type]) = CONVERT(varchar(50), [M].[Misc_Code]) OR TRY_CONVERT(int, [E].[Ded_Type]) = TRY_CONVERT(int, [M].[Misc_Code]))
+  AND [M].[Misc_Type] = 610
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [EM] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))) = LTRIM(RTRIM(CONVERT(varchar(50), [EM].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [EM].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [E].[Emp_Id]) IS NOT NULL AND TRY_CONVERT(bigint, [EM].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [E].[Emp_Id]) = TRY_CONVERT(bigint, [EM].[EMPCODE]))
+WHERE ([E].[Deleted_By] IS NULL OR [E].[Deleted_By] = '')
+  ${empWhere}
+  ${monthYearWhere}
+ORDER BY [E].[Yr] DESC, [E].[Mnth] DESC, [E].[Rec_Date] DESC`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "EMPLOYEE_DEDUCTION_LOOKUP",
+      sensitivity: "PERSONAL",
+      sql,
+      parameters: params,
+      explanation: `Fetch monthly itemized payroll deductions and arrears for employee '${empCode || empName}' from dbo.Emp_Ded joined with dbo.Misc_Mst (Misc_Type = 610)`,
+      deterministic: true,
+    };
+  }
+
+  // 2. Count Query
+  const isCount = /\b(count|total\s*count|kitne\s*log|kitne\s*employees)\b/i.test(q);
+  if (isCount) {
+    const sql = `SELECT
+  COUNT(*) AS [TotalDeductionRecords],
+  COUNT(DISTINCT [E].[Emp_Id]) AS [TotalEmployeesWithDeductions],
+  ISNULL(SUM([E].[Ded_Amt]), 0) AS [TotalDeductionAmount]
+FROM [dbo].[Emp_Ded] AS [E] WITH (NOLOCK)
+WHERE ([E].[Deleted_By] IS NULL OR [E].[Deleted_By] = '')
+  ${monthYearWhere}`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "EMPLOYEE_DEDUCTION_COUNT",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: params,
+      explanation: "Fetch deduction statistics and total amounts from dbo.Emp_Ded",
+      deterministic: true,
+    };
+  }
+
+  // 3. List Query
+  const sql = `SELECT TOP 100
+  [E].[UTD],
+  LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))) AS [EmployeeCode],
+  COALESCE(NULLIF(LTRIM(RTRIM([E].[Emp_Name])), ''), NULLIF(LTRIM(RTRIM(ISNULL([EM].[EMPFIRSTNAME], '') + ' ' + ISNULL([EM].[EMPLASTNAME], ''))), ''), [E].[Emp_Id]) AS [EmployeeName],
+  [E].[Mnth] AS [MonthNum],
+  DATENAME(month, DATEFROMPARTS(ISNULL([E].[Yr], 2024), ISNULL([E].[Mnth], 1), 1)) AS [MonthName],
+  [E].[Yr] AS [YearNum],
+  CONVERT(varchar(10), [E].[Rec_Date], 120) AS [RecordDate],
+  COALESCE(NULLIF(LTRIM(RTRIM([M].[Misc_Name])), ''), 'Deduction Code ' + CONVERT(varchar(20), [E].[Ded_Type])) AS [DeductionHead],
+  [E].[Ded_Amt] AS [DeductionAmount],
+  [E].[Ded_Rem] AS [Remarks]
+FROM [dbo].[Emp_Ded] AS [E] WITH (NOLOCK)
+LEFT JOIN [dbo].[Misc_Mst] AS [M] WITH (NOLOCK)
+  ON (CONVERT(varchar(50), [E].[Ded_Type]) = CONVERT(varchar(50), [M].[Misc_Code]) OR TRY_CONVERT(int, [E].[Ded_Type]) = TRY_CONVERT(int, [M].[Misc_Code]))
+  AND [M].[Misc_Type] = 610
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [EM] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))) = LTRIM(RTRIM(CONVERT(varchar(50), [EM].[EMPCODE])))
+  OR REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [E].[Emp_Id]))), 'AU', '') = REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), [EM].[EMPCODE]))), 'AU', '')
+  OR (TRY_CONVERT(bigint, [E].[Emp_Id]) IS NOT NULL AND TRY_CONVERT(bigint, [EM].[EMPCODE]) IS NOT NULL AND TRY_CONVERT(bigint, [E].[Emp_Id]) = TRY_CONVERT(bigint, [EM].[EMPCODE]))
+WHERE ([E].[Deleted_By] IS NULL OR [E].[Deleted_By] = '')
+  ${monthYearWhere}
+ORDER BY [E].[Yr] DESC, [E].[Mnth] DESC, [E].[Ded_Amt] DESC`.trim();
+
+  return {
+    canAnswer: true,
+    intent: "EMPLOYEE_DEDUCTION_LIST",
+    sensitivity: "NORMAL",
+    sql,
+    parameters: params,
+    explanation: "List monthly employee deductions from dbo.Emp_Ded joined with dbo.Misc_Mst (Misc_Type = 610)",
+    deterministic: true,
+  };
+};
+
+const buildMispunchQuerySQL = ({ question, schemaContext, history = [] }) => {
+  const q = normalizeQ(question);
+
+  const isMispunch = /\b(mispunch|mis_punch|mis-punch|miss_punch|miss-punch|miss\s*punch|mis\s*punch|manual_punch|manualpunch|manual\s*punch|mipunch)\b/i.test(q) ||
                      (/\b(pending|approved|rejected|manual)\b/i.test(q) && /\b(punch|punches|attendance|entry)\b/i.test(q));
   if (!isMispunch) return null;
+
+  // 1. Check if user is asking specifically for the Miss Punch / Leave Reasons Master itself (e.g. "mere pass miss punch reason batao", "miss punch reason kya hai", "mispunch reason list")
+  const isReasonMasterQuery = /\b(reason|reasons|karan|types?|policy|policies|rules?)\b/i.test(q) &&
+    /\b(master|list|kya\s*hai|rule|policy|type|batao|dikhao|bhejo)\b/i.test(q) &&
+    !/\b(pending|approved|rejected|status|punchin|punchout|in1|out1|kiske|kitne|kitni|kitna|kab|date|december|january|february|march|april|may|june|july|august|september|october|november)\b/i.test(q) &&
+    !extractEmployeeCode(q);
+
+  if (isReasonMasterQuery || /\b(miss\s*punch\s*reason\s*(master|list|type)|mispunch\s*reason\s*(master|list|type)|leave\s*master)\b/i.test(q)) {
+    const sql = `SELECT
+  [Misc_Code] AS [ReasonCode],
+  [Misc_Name] AS [ReasonName],
+  [Misc_Dtl3] AS [DayValue],
+  CASE 
+    WHEN TRY_CONVERT(decimal(5,2), [Misc_Dtl3]) = 1 THEN 'Full Day'
+    WHEN TRY_CONVERT(decimal(5,2), [Misc_Dtl3]) = 0.5 THEN 'Half Day'
+    ELSE 'Other'
+  END AS [DayType],
+  [CC_Group] AS [AdvanceApplyDaysLimit],
+  [CC_Ledg] AS [PostApplyDaysLimit],
+  [Continuous_Max] AS [MaxConsecutiveDays],
+  CASE 
+    WHEN [dis_back_date] = 1 OR [dis_back_date] = '1' THEN 'No (Disabled)'
+    ELSE 'Yes (Allowed)'
+  END AS [BackdateAllowed],
+  [Misc_HOD] AS [HalfLeaveLinkCode]
+FROM [dbo].[Misc_Mst] WITH (NOLOCK)
+WHERE [Misc_Type] = 92
+ORDER BY TRY_CONVERT(int, [Misc_Code]) ASC, [Misc_Name] ASC`.trim();
+
+    return {
+      canAnswer: true,
+      intent: "LEAVE_MASTER",
+      sensitivity: "NORMAL",
+      sql,
+      parameters: [],
+      explanation: "Fetch configured Leave and Miss Punch reasons with full/half day value, advance/post apply limits, and backdate permissions from dbo.Misc_Mst (Misc_Type = 92)",
+      deterministic: true,
+    };
+  }
 
   let mispunchStatus = "ALL";
   if (/\b(pending|unapproved|open|approval\s*pending|baki|baaki)\b/i.test(q)) {
@@ -9144,12 +10174,66 @@ const buildMispunchQuerySQL = ({ question, schemaContext }) => {
     mispunchStatus = "REJECTED";
   }
 
-  const parsedMQ = parseMonthAndYearFromQuery(q);
+  // Extract Employee Code or Name (current question or conversation history)
+  let targetEmpCode = extractEmployeeCode(q) || null;
+  let targetEmpName = !targetEmpCode ? extractName(q) : null;
+
+  if (targetEmpName && /\b(casual|sick|privilege|earned|leave|leaves|absent|present|holiday|halfday|cl|sl|pl|el|lwp|hd|count|total|kitne|kitni|log|miss|punch|mispunch)\b/i.test(targetEmpName)) {
+    targetEmpName = null;
+  }
+
+  if (!targetEmpCode && !targetEmpName && Array.isArray(history) && history.length > 0) {
+    const isFollowUp = /\b(yahi|yhi|isi|isii|usi|usii|ussi|isay|usay|iska|iski|usuka|uski|unka|unki|iss|is|ise|inhe|same|this|above|uska|unke)\b/i.test(q);
+    if (isFollowUp) {
+      targetEmpCode = resolveEmployeeFromHistory(history);
+    }
+  }
+
+  // Month & Year Detection
+  let targetMonthNum = null;
+  let targetYearNum = null;
+
+  for (const [name, num] of Object.entries(CALENDAR_MONTH_MAP)) {
+    if (new RegExp(`\\b${name}\\b`, "i").test(q)) {
+      targetMonthNum = num;
+      break;
+    }
+  }
+
+  const yearMatch = q.match(/\b(20\d{2})\b/);
+  if (yearMatch) {
+    targetYearNum = parseInt(yearMatch[1], 10);
+  }
+
+  if (!targetMonthNum || !targetYearNum) {
+    const parsedMQ = parseMonthAndYearFromQuery(q);
+    if (!targetMonthNum && parsedMQ.monthNum) targetMonthNum = parsedMQ.monthNum;
+    if (!targetYearNum && parsedMQ.year) targetYearNum = parsedMQ.year;
+  }
+
   const params = [];
   const conditions = [];
 
   // Base mispunch condition: attendance record has mispunch reason, manual entry or approval flag
   conditions.push(`([A].[mipunch_reason] IS NOT NULL OR [A].[MAN_APPR] IS NOT NULL OR [A].[MAN_REJ] IS NOT NULL OR [A].[IsManual] = 1 OR [A].[IsManual] = '1')`);
+
+  // Employee filter
+  if (targetEmpCode) {
+    const cleanNum = targetEmpCode.replace(/\D/g, "");
+    const auCode = cleanNum ? `AU${cleanNum}` : targetEmpCode;
+    params.push({ name: "empCode", value: targetEmpCode, type: "string" });
+    params.push({ name: "empCodeNum", value: cleanNum || targetEmpCode, type: "string" });
+    params.push({ name: "empCodeAu", value: auCode, type: "string" });
+    conditions.push(`(
+      LTRIM(RTRIM(CONVERT(varchar(50), [A].[Emp_Code]))) IN (:empCode, :empCodeNum, :empCodeAu)
+      OR LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE]))) IN (:empCode, :empCodeNum, :empCodeAu)
+    )`);
+  } else if (targetEmpName) {
+    params.push({ name: "empName", value: `%${targetEmpName.toUpperCase()}%`, type: "string" });
+    conditions.push(`(
+      UPPER(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], '')) LIKE :empName
+    )`);
+  }
 
   // Status condition
   if (mispunchStatus === "PENDING") {
@@ -9161,26 +10245,27 @@ const buildMispunchQuerySQL = ({ question, schemaContext }) => {
   }
 
   // Month & Year filter
-  if (parsedMQ.monthNum) {
-    params.push({ name: "monthNum", value: parsedMQ.monthNum, type: "number" });
+  if (targetMonthNum) {
+    params.push({ name: "monthNum", value: targetMonthNum, type: "number" });
     conditions.push(`MONTH([A].[dateoffice]) = :monthNum`);
   }
-  if (parsedMQ.year) {
-    params.push({ name: "yearNum", value: parsedMQ.year, type: "number" });
+  if (targetYearNum) {
+    params.push({ name: "yearNum", value: targetYearNum, type: "number" });
     conditions.push(`YEAR([A].[dateoffice]) = :yearNum`);
   }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const sql = `SELECT TOP 100
-  LTRIM(RTRIM(CONVERT(varchar(50), [A].[empcode]))) AS [EmployeeCode],
+  LTRIM(RTRIM(CONVERT(varchar(50), [A].[Emp_Code]))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
   [E].[EMPLOYEEDESIGNATION] AS [Designation],
   [E].[LOCATION] AS [Location],
   CONVERT(varchar(10), [A].[dateoffice], 120) AS [PunchDate],
-  ISNULL([A].[mipunch_reason], 'Regularization') AS [MispunchReason],
-  CONVERT(varchar(8), [A].[App_in1], 108) AS [PunchIn],
-  CONVERT(varchar(8), [A].[App_out1], 108) AS [PunchOut],
+  ISNULL([M].[Misc_Name], ISNULL([A].[mipunch_reason], 'Regularization')) AS [MispunchReason],
+  [M].[Misc_Dtl3] AS [LeaveDayType],
+  CONVERT(varchar(8), [A].[in1], 108) AS [PunchIn],
+  CONVERT(varchar(8), [A].[out1], 108) AS [PunchOut],
   CASE 
     WHEN [A].[MAN_APPR] = 1 OR [A].[MAN_APPR] = '1' OR UPPER(CONVERT(varchar, [A].[MAN_APPR])) = 'Y' THEN 'APPROVED'
     WHEN [A].[MAN_REJ] = 1 OR [A].[MAN_REJ] = '1' OR UPPER(CONVERT(varchar, [A].[MAN_REJ])) = 'Y' THEN 'REJECTED'
@@ -9188,9 +10273,11 @@ const buildMispunchQuerySQL = ({ question, schemaContext }) => {
   END AS [MispunchStatus]
 FROM [dbo].[attendancetable] AS [A] WITH (NOLOCK)
 LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
-  ON LTRIM(RTRIM(CONVERT(varchar(50), [A].[empcode]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [A].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+LEFT JOIN [dbo].[Misc_Mst] AS [M] WITH (NOLOCK)
+  ON CONVERT(varchar(50), [M].[Misc_Code]) = CONVERT(varchar(50), [A].[mipunch_reason]) AND [M].[Misc_Type] = 92
 ${whereClause}
-ORDER BY [A].[dateoffice] DESC, [A].[empcode] ASC`.trim();
+ORDER BY [A].[dateoffice] DESC, [A].[Emp_Code] ASC`.trim();
 
   return {
     canAnswer: true,
@@ -9198,7 +10285,7 @@ ORDER BY [A].[dateoffice] DESC, [A].[empcode] ASC`.trim();
     sensitivity: "NORMAL",
     sql,
     parameters: params,
-    explanation: `Fetch ${mispunchStatus.toLowerCase()} mispunch attendance records from dbo.attendancetable joined with dbo.EMPLOYEEMASTER`,
+    explanation: `Fetch ${mispunchStatus.toLowerCase()} mispunch attendance records from dbo.attendancetable joined with dbo.EMPLOYEEMASTER and dbo.Misc_Mst`,
     deterministic: true,
   };
 };
@@ -9289,6 +10376,11 @@ ORDER BY [E].[EMPCODE] ASC`.trim();
 const buildDailyAttendanceDateQuerySQL = ({ question, schemaContext, history = [] }) => {
   const q = normalizeQ(question);
 
+  // If query is about mispunch / miss punch / manual punch / reasons, bypass daily attendance!
+  if (/\b(mispunch|mis_punch|mis-punch|miss_punch|miss-punch|miss\s*punch|mis\s*punch|manual_punch|manualpunch|manual\s*punch|mipunch)\b/i.test(q)) {
+    return null;
+  }
+
   // If query is specifically targeting a single employee's salary/profile/designation/pan/bank/mobile without attendance keywords, bypass daily attendance!
   const hasEmpCode = extractEmployeeCode(q);
   const hasEmpName = extractName(q);
@@ -9312,6 +10404,10 @@ const buildDailyAttendanceDateQuerySQL = ({ question, schemaContext, history = [
   // 2. Extract Specific Employee Code or Name (current question or conversation history)
   let targetEmpCode = hasEmpCode || null;
   let targetEmpName = !targetEmpCode ? hasEmpName : null;
+
+  if (targetEmpName && /\b(casual|sick|privilege|earned|leave|leaves|absent|present|holiday|halfday|cl|sl|pl|el|lwp|hd|count|total|kitne|kitni|log)\b/i.test(targetEmpName)) {
+    targetEmpName = null;
+  }
 
   if (!targetEmpCode && !targetEmpName && Array.isArray(history) && history.length > 0) {
     const isFollowUp = /\b(yahi|yhi|isi|isii|usi|usii|ussi|isay|usay|iska|iski|usuka|uski|unka|unki|iss|is|ise|inhe|same|this|above|uska|unke)\b/i.test(q);
@@ -9525,11 +10621,20 @@ ORDER BY [A].[dateoffice] DESC`.trim();
   } else if (isHoliday) {
     statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'H' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'H' OR ISNULL([A].[holiday_value], 0) = 1)`;
     statusLabel = "Holiday";
+  } else if (/\b(casual\s*leave|\bcl\b)\b/i.test(q)) {
+    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'CL' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'CL' OR [A].[mipunch_reason] = '4' OR UPPER([M].[Misc_Name]) LIKE '%CASUAL%')`;
+    statusLabel = "Casual_Leave";
+  } else if (/\b(sick\s*leave|\bsl\b)\b/i.test(q)) {
+    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'SL' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'SL' OR UPPER([M].[Misc_Name]) LIKE '%SICK%')`;
+    statusLabel = "Sick_Leave";
+  } else if (/\b(privilege\s*leave|\bpl\b|earned\s*leave|\bel\b)\b/i.test(q)) {
+    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) IN ('PL', 'EL') OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) IN ('PL', 'EL') OR UPPER([M].[Misc_Name]) LIKE '%PRIVILEGE%' OR UPPER([M].[Misc_Name]) LIKE '%EARNED%')`;
+    statusLabel = "Privilege_Leave";
   } else if (isLeave) {
-    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR ISNULL([A].[leavevalue], 0) > 0)`;
+    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR ISNULL([A].[leavevalue], 0) > 0 OR [M].[Misc_Code] IS NOT NULL)`;
     statusLabel = "Leave";
   } else if (isHalfDay) {
-    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'HD' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'HD' OR [A].[presentvalue] = 0.5)`;
+    statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'HD' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'HD' OR [A].[presentvalue] = 0.5 OR TRY_CONVERT(decimal(5,2), [M].[Misc_Dtl3]) = 0.5)`;
     statusLabel = "Half_Day";
   } else if (isAbsent) {
     statusFilter = `AND (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'A' OR (ISNULL([A].[absentvalue], 0) = 1 AND ISNULL([A].[presentvalue], 0) = 0))`;
@@ -9552,10 +10657,11 @@ ORDER BY [A].[dateoffice] DESC`.trim();
   COUNT(DISTINCT CASE WHEN UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'WO' OR ISNULL([A].[wo_value], 0) = 1 THEN [A].[Emp_Code] END) AS [Total_Weekly_Off_Employees],
   COUNT(DISTINCT CASE WHEN UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'P' OR ISNULL([A].[presentvalue], 0) = 1 OR [A].[presentvalue] > 0 THEN [A].[Emp_Code] END) AS [Total_Present_Employees],
   COUNT(DISTINCT CASE WHEN (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) = 'H' OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) = 'H' OR ISNULL([A].[holiday_value], 0) = 1) THEN [A].[Emp_Code] END) AS [Total_Holiday_Employees],
-  COUNT(DISTINCT CASE WHEN (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR ISNULL([A].[leavevalue], 0) > 0) THEN [A].[Emp_Code] END) AS [Total_Leave_Employees],
+  COUNT(DISTINCT CASE WHEN (UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[flag])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR UPPER(LTRIM(RTRIM(CONVERT(varchar(10), [A].[status])))) IN ('CL', 'SL', 'PL', 'LWP', 'EL', 'ML') OR ISNULL([A].[leavevalue], 0) > 0 OR [M].[Misc_Code] IS NOT NULL) THEN [A].[Emp_Code] END) AS [Total_Leave_Employees],
   COUNT(DISTINCT [A].[Emp_Code]) AS [Total_Recorded_Employees],
   ${targetDate ? ":targetDate" : dynamicDateExpr} AS [AttendanceDate]
 FROM [dbo].[attendancetable] AS [A] WITH (NOLOCK)
+LEFT JOIN [dbo].[Misc_Mst] AS [M] WITH (NOLOCK) ON CONVERT(varchar(50), [M].[Misc_Code]) = CONVERT(varchar(50), [A].[mipunch_reason]) AND [M].[Misc_Type] = 92
 WHERE ${dateCondition}`.trim();
 
     return {
@@ -9578,6 +10684,9 @@ WHERE ${dateCondition}`.trim();
   MAX([A].[status]) AS [Status],
   MAX([A].[presentvalue]) AS [PresentValue],
   MAX([A].[absentvalue]) AS [AbsentValue],
+  MAX([A].[mipunch_reason]) AS [MispunchReasonCode],
+  MAX([M].[Misc_Name]) AS [LeaveName],
+  MAX([M].[Misc_Dtl3]) AS [LeaveDayType],
   MAX(CONVERT(varchar(8), [A].[in1], 108)) AS [InTime],
   MAX(CONVERT(varchar(8), [A].[out1], 108)) AS [OutTime],
   MAX([A].[hoursworked]) AS [HoursWorked],
@@ -9585,6 +10694,7 @@ WHERE ${dateCondition}`.trim();
   MAX([E].[EMPLOYEEDESIGNATION]) AS [Designation]
 FROM [dbo].[attendancetable] AS [A] WITH (NOLOCK)
 LEFT JOIN dbo.EMPLOYEEMASTER AS E WITH (NOLOCK) ON [A].[Emp_Code] = [E].[EMPCODE]
+LEFT JOIN dbo.Misc_Mst AS M WITH (NOLOCK) ON CONVERT(varchar(50), [M].[Misc_Code]) = CONVERT(varchar(50), [A].[mipunch_reason]) AND [M].[Misc_Type] = 92
 WHERE ${dateCondition}
   ${statusFilter}
 GROUP BY [A].[Emp_Code], [E].[EMPFIRSTNAME], [E].[EMPLASTNAME]
@@ -9726,9 +10836,33 @@ ORDER BY ${orderExpr}`.trim();
 const buildDeterministicPlan = exports.buildDeterministicPlan = ({ question, schemaContext, history = [] }) => {
   const q = normalizeQ(question);
 
-  // Check birthday plan first (e.g. "aaj kiska kiska birthday hai list do", "September mahine kiska birthday hai", "is mahine kiska birthday hai")
+  // Check asset plan first (e.g. "1911028 ko kon kon se asset diye gaye hai", "ise kon se asset issue kiye", "LAKHAN BHARDWAJ ko laptop mila hai kya", "AU19795967 ke pass kaun sa device hai")
+  const assetPlan = buildAssetQuerySQL({ question: q, schemaContext, history });
+  if (assetPlan) return assetPlan;
+
+  // Check KYC verification plan (dbo.emp_varify e.g. "1972153 ka kyc status", "pan verify status", "aadhaar linked pan")
+  const kycPlan = buildKYCQuerySQL({ question: q, schemaContext, history });
+  if (kycPlan) return kycPlan;
+
+  // Check Bank Account verification plan (dbo.Account_No_Api e.g. "is employee ka account verify hai ki nahi", "bank account valid hai ya invalid")
+  const bankVerifyPlan = buildBankAccountVerificationQuerySQL({ question: q, schemaContext, history });
+  if (bankVerifyPlan) return bankVerifyPlan;
+
+  // Check Approval Matrix plan (dbo.Approval_Matrix e.g. "197003 ka approval matrix", "is employee ke approvers kaun hai", "attdence module me approver")
+  const approvalPlan = buildApprovalMatrixQuerySQL({ question: q, schemaContext, history });
+  if (approvalPlan) return approvalPlan;
+
+  // Check Employee Deductions plan (dbo.Emp_Ded e.g. "1953081 ka deduction kitna hua aur kisme hua", "salary deduction list")
+  const deductionPlan = buildEmployeeDeductionQuerySQL({ question: q, schemaContext, history });
+  if (deductionPlan) return deductionPlan;
+
+  // Check birthday plan (e.g. "aaj kiska kiska birthday hai list do", "September mahine kiska birthday hai", "is mahine kiska birthday hai")
   const bdayPlan = buildBirthdayQuerySQL({ question: q, schemaContext });
   if (bdayPlan) return bdayPlan;
+
+  // Check mispunch plan first if mispunch requested (e.g. "December 2025 me kitne miss punch the", "1953081 ke kitne miss punch the")
+  const mispunchPlan = buildMispunchQuerySQL({ question: q, schemaContext, history });
+  if (mispunchPlan) return mispunchPlan;
 
   // Check daily attendance plan (e.g. "2025-10-21 is date me kitne employee present the ?? total count do")
   const dailyAttPlan = buildDailyAttendanceDateQuerySQL({ question: q, schemaContext, history });
@@ -9737,10 +10871,6 @@ const buildDeterministicPlan = exports.buildDeterministicPlan = ({ question, sch
   // Check statutory plan (PF, PAN, ESI, Aadhaar, Bank) list / count
   const statutoryPlan = buildStatutoryQuerySQL({ question: q, schemaContext });
   if (statutoryPlan) return statutoryPlan;
-
-  // Check mispunch plan first if mispunch requested
-  const mispunchPlan = buildMispunchQuerySQL({ question: q, schemaContext });
-  if (mispunchPlan) return mispunchPlan;
 
   // Check reminder plan if reminder requested
   const remPlan = buildReminderQuerySQL({ question: q, schemaContext });
@@ -9777,7 +10907,7 @@ const buildDeterministicPlan = exports.buildDeterministicPlan = ({ question, sch
   }
 
   // ── Generic Dynamic Check: If vector retrieval returned any non-master domain table ──────
-  // (e.g. Employee_Education, Asset_Issue, Employee_Training, Vendor_Invoice, etc.)
+  // (e.g. Employee_Education, Employee_Training, Vendor_Invoice, etc.)
   // bypass deterministic master lookup so databaseEvidenceService queries the domain table dynamically.
   const isSalaryQuery = /\b(salary|salaries|payroll|payslip|gross|net|basic|hra|ctc|tankhah)\b/i.test(q);
 
@@ -9786,10 +10916,9 @@ const buildDeterministicPlan = exports.buildDeterministicPlan = ({ question, sch
     return src && !/employeemaster|shortlisted_candidate|salaryfile|salary_file|salarystructure|salary_structure|salary_prior|attendancetable|misc_mst|godown_mst|godw_mst/i.test(src);
   });
 
-  const isDomainQuery = (hasCustomDomainTable && !isSalaryQuery) || /\b(education|qualification|qualifications|college|degree|board|university|passing\s*year|percentage|score|padh|padha|pada|padhai|siksha|shiksha|asset|assets|aset|item|items|device|devices|laptop|laptops|computer|equipment|issue|issued|revoke|revoked|allot|allotted|assign|assigned|assignment|vehicle|vehicles|gadi|gaadi|car|bike|service|servicing|repair|insurance|puc|fitness|permit|experience|previous\s*company)\b/i.test(q);
+  const isDomainQuery = (hasCustomDomainTable && !isSalaryQuery) || /\b(education|qualification|qualifications|college|degree|board|university|passing\s*year|percentage|score|padh|padha|pada|padhai|siksha|shiksha|service|servicing|repair|insurance|puc|fitness|permit|experience|previous\s*company)\b/i.test(q);
 
   if (isDomainQuery) {
-    if (DEV) console.log("[SQLGen] Domain query / custom table detected — bypassing deterministic planner → databaseEvidenceService");
     return null;
   }
 
@@ -9814,14 +10943,6 @@ const buildDeterministicPlan = exports.buildDeterministicPlan = ({ question, sch
 
   if (!plan?.sql) {
     return null;
-  }
-
-  if (DEV) {
-    console.log("[SQLGen] Deterministic employee+salary:", {
-      searchType: intent.searchType,
-      searchValue: intent.searchValue,
-      wantedFields: intent.wantedFields,
-    });
   }
 
   return {
@@ -11352,7 +12473,3 @@ exports.deleteConversation = async function (req, res) {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-
-
-
-

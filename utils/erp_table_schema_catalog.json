@@ -32,6 +32,7 @@
         "72": "UOM Master (Units of Measurement)",
         "73": "Tariff Class Master",
         "85": "Branch Master (Links with EMPLOYEEMASTER.LOCATION, Godown_Mst.Branch_Code)",
+        "92": "Leave Master & Policy (Casual Leave, Half Day Leave, Sick Leave, Privilege Leave) with day count value (Misc_Dtl3: 1=Full Day, 0.5=Half Day), advance apply limit (CC_Group), post apply limit (CC_Ledg), max continuous days (Continuous_Max), backdated restricted flag (dis_back_date: 1=disabled, 0/null=allowed), parent half-leave link (Misc_HOD), and applicability (Assessable_Column in 1,2,3,4). Links with attendancetable.mipunch_reason",
         "95": "Employee Designation (Links with EMPLOYEEMASTER.DESG)",
         "404": "Cost Center Master (Accounting cost centres)",
         "610": "Deduction Master",
@@ -142,12 +143,39 @@
     },
     "Account_No_Api": {
       "tableName": "Account_No_Api",
-      "displayName": "Bank Account Penny Drop Verification Log",
-      "module": "BANKING",
+      "displayName": "Bank Account Penny-Drop Verification Log",
+      "module": "BANKING_PAYROLL",
       "primaryKey": [
         "UTD"
       ],
-      "description": "Real-time bank account and IFSC penny-drop verification logs for employee payroll, vendor payouts, and customer refunds.",
+      "foreignKeys": [
+        {
+          "column": "account_number",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "BANKACCOUNTNO"
+        }
+      ],
+      "description": "Real-time bank account and IFSC penny-drop verification logs (RazorpayX / Cashfree). Joins with EMPLOYEEMASTER on EMPLOYEEMASTER.BANKACCOUNTNO = Account_No_Api.account_number. raw_response JSON contains account_status ('VALID' or 'INVALID'), name_at_bank, bank_name, branch, utr, and account_status_code.",
+      "synonyms": [
+        "bank verify",
+        "account verify",
+        "bank account verify",
+        "account_no_api",
+        "penny drop",
+        "bank account valid",
+        "bank account invalid",
+        "name_at_bank",
+        "account_status",
+        "raw_response",
+        "khata verify"
+      ],
+      "sampleQueries": [
+        "AU19795988 ka bank account verify hai kya",
+        "select E.BANKACCOUNTNO, A.account_number, raw_response from Account_No_Api A inner join EMPLOYEEMASTER E on E.BANKACCOUNTNO = A.account_number where EMPCODE = 'AU19795988'",
+        "Kitne employees ka bank account valid hai aur kitne ka invalid",
+        "Invalid bank accounts ki list do",
+        "Kiska kiska bank account verify hai"
+      ],
       "columns": {
         "UTD": {
           "type": "int",
@@ -155,23 +183,23 @@
           "description": "Primary unique record ID"
         },
         "Ifsc": {
-          "type": "varchar(20)",
-          "nullable": false,
+          "type": "varchar(50)",
+          "nullable": true,
           "description": "11-character bank IFSC code"
         },
         "account_number": {
-          "type": "varchar(30)",
+          "type": "varchar(100)",
           "nullable": false,
-          "description": "Bank account number verified"
+          "description": "Bank account number verified (links to EMPLOYEEMASTER.BANKACCOUNTNO)"
         },
         "code": {
           "type": "int",
-          "nullable": false,
+          "nullable": true,
           "description": "API status response code (200 = Success)"
         },
         "timestamp": {
           "type": "bigint",
-          "nullable": false,
+          "nullable": true,
           "description": "Epoch timestamp from banking API"
         },
         "message": {
@@ -180,12 +208,12 @@
           "description": "Verification response message"
         },
         "account_exists": {
-          "type": "bit",
+          "type": "tinyint",
           "nullable": true,
-          "description": "1 = Active & Verified, 0 = Invalid"
+          "description": "1 = Active & Verified (VALID), 0 = Invalid / Failed (INVALID)"
         },
         "name_at_bank": {
-          "type": "varchar(100)",
+          "type": "varchar(200)",
           "nullable": true,
           "description": "Registered account holder name returned by bank"
         },
@@ -195,9 +223,9 @@
           "description": "Bank verification transaction ID"
         },
         "raw_response": {
-          "type": "nvarchar(MAX)",
+          "type": "nvarchar(max)",
           "nullable": true,
-          "description": "Full raw JSON payload from bank gateway"
+          "description": "Full raw JSON payload from bank gateway containing result.account_status ('VALID'/'INVALID'), bank_name, branch, utr, micr, etc."
         },
         "Created_At": {
           "type": "datetime",
@@ -208,12 +236,75 @@
     },
     "Approval_Matrix": {
       "tableName": "Approval_Matrix",
-      "displayName": "Multi-Level Workflow Approval Matrix",
+      "displayName": "Multi-Level Workflow Approval Matrix & Hierarchy",
       "module": "HR_WORKFLOW",
       "primaryKey": [
         "UTD"
       ],
-      "description": "Multi-tier approval hierarchy (Level 1, Level 2, Level 3) with primary and alternate approvers for attendance, leaves, and expenses.",
+      "foreignKeys": [
+        {
+          "column": "empcode",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        },
+        {
+          "column": "approver1_A",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        },
+        {
+          "column": "approver1_B",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        },
+        {
+          "column": "approver2_A",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        },
+        {
+          "column": "approver2_B",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        },
+        {
+          "column": "approver3_A",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        },
+        {
+          "column": "approver3_B",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        }
+      ],
+      "description": "Multi-tier workflow approval hierarchy (Level 1 Primary/Alternate, Level 2 Primary/Alternate, Level 3 Primary/Alternate) configured per employee and per business module (attdence, democar, gatepass, Lead_Management, expense, purchase, travel).",
+      "synonyms": [
+        "approval matrix",
+        "approval authority",
+        "approvers",
+        "approver",
+        "approver1_A",
+        "approver1_B",
+        "approver2_A",
+        "approver2_B",
+        "approver3_A",
+        "approver3_B",
+        "attendance approver",
+        "democar approver",
+        "gatepass approver",
+        "lead management approver",
+        "approval level",
+        "approval hierarchy"
+      ],
+      "sampleQueries": [
+        "197003 ka approval matrix batao",
+        "select module_code,* from Approval_Matrix where empcode = '197003'",
+        "197003 ka attdence module me approver kaun hai",
+        "democar approval authority kaun hai",
+        "gatepass approval matrix do",
+        "Lead_Management me kiska approval lagega"
+      ],
       "columns": {
         "UTD": {
           "type": "int",
@@ -223,7 +314,7 @@
         "module_code": {
           "type": "varchar(100)",
           "nullable": true,
-          "description": "Workflow module (attdence, leave, expense, purchase)"
+          "description": "Workflow module (attdence, democar, gatepass, Lead_Management, expense, purchase, travel)"
         },
         "empcode": {
           "type": "varchar(20)",
@@ -233,12 +324,12 @@
         "approver1_A": {
           "type": "varchar(20)",
           "nullable": true,
-          "description": "Level 1 Primary Approver Employee Code"
+          "description": "Level 1 Primary Approver Employee Code (links to EMPLOYEEMASTER.EMPCODE)"
         },
         "approver1_B": {
           "type": "varchar(20)",
           "nullable": true,
-          "description": "Level 1 Alternate Approver Employee Code"
+          "description": "Level 1 Alternate / Parallel Approver Employee Code"
         },
         "approver2_A": {
           "type": "varchar(20)",
@@ -248,7 +339,7 @@
         "approver2_B": {
           "type": "varchar(20)",
           "nullable": true,
-          "description": "Level 2 Alternate Approver Employee Code"
+          "description": "Level 2 Alternate / Parallel Approver Employee Code"
         },
         "approver3_A": {
           "type": "varchar(25)",
@@ -258,12 +349,47 @@
         "approver3_B": {
           "type": "varchar(25)",
           "nullable": true,
-          "description": "Level 3 Alternate Approver Employee Code"
+          "description": "Level 3 Alternate / Parallel Approver Employee Code"
+        },
+        "APPROVER1_MINLIMIT": {
+          "type": "numeric(18,2)",
+          "nullable": true,
+          "description": "Level 1 approval financial minimum limit"
+        },
+        "APPROVER1_MAXLIMIT": {
+          "type": "numeric(18,2)",
+          "nullable": true,
+          "description": "Level 1 approval financial maximum limit"
+        },
+        "APPROVER2_MINLIMIT": {
+          "type": "numeric(18,2)",
+          "nullable": true,
+          "description": "Level 2 approval financial minimum limit"
+        },
+        "APPROVER2_MAXLIMIT": {
+          "type": "numeric(18,2)",
+          "nullable": true,
+          "description": "Level 2 approval financial maximum limit"
+        },
+        "APPROVER3_MINLIMIT": {
+          "type": "numeric(18,2)",
+          "nullable": true,
+          "description": "Level 3 approval financial minimum limit"
+        },
+        "APPROVER3_MAXLIMIT": {
+          "type": "numeric(18,2)",
+          "nullable": true,
+          "description": "Level 3 approval financial maximum limit"
         },
         "Branch": {
           "type": "varchar(10)",
           "nullable": true,
           "description": "Branch code linking to Misc_Mst (Misc_Type = 85)"
+        },
+        "Created_by": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "User who configured the approval rule"
         },
         "ValidFrom": {
           "type": "datetime2",
@@ -273,7 +399,7 @@
         "ValidTo": {
           "type": "datetime2",
           "nullable": false,
-          "description": "Expiry date (9999-12-31 for active)"
+          "description": "Expiry date (9999-12-31 for active rules)"
         },
         "Created_At": {
           "type": "datetime",
@@ -289,12 +415,54 @@
       "primaryKey": [
         "UTD"
       ],
-      "description": "Manages IT and physical assets (Laptops, Desktops, Phones, Vehicles) assigned to employees with issue and return dates.",
+      "foreignKeys": [
+        {
+          "column": "Emp_Code",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        }
+      ],
+      "description": "Manages IT and physical assets (Laptops, Desktops, Phones, Sim cards, Vehicles, Hardware) assigned to employees with issue, return/revoke, and lost dates.",
+      "synonyms": [
+        "asset",
+        "assets",
+        "aset",
+        "laptop",
+        "laptops",
+        "desktop",
+        "computer",
+        "phone",
+        "mobile phone",
+        "device",
+        "devices",
+        "equipment",
+        "allotted",
+        "allotment",
+        "assigned",
+        "issue",
+        "issued",
+        "revoke",
+        "revoked",
+        "saman",
+        "hardware"
+      ],
+      "sampleQueries": [
+        "1911028 ko kon kon se asset diye gaye hai",
+        "ise kon se asset issue kiye hai",
+        "LAKHAN BHARDWAJ ko laptop mila hai kya",
+        "AU19795967 ke pass kaun sa device hai",
+        "total kitne laptop issue hue hai"
+      ],
       "columns": {
         "UTD": {
           "type": "int",
           "nullable": false,
           "description": "Primary unique record ID"
+        },
+        "SRNO": {
+          "type": "int",
+          "nullable": true,
+          "description": "Employee SRNO or sequential serial number"
         },
         "Emp_Code": {
           "type": "nvarchar(50)",
@@ -304,62 +472,210 @@
         "Aset_Code": {
           "type": "nvarchar(250)",
           "nullable": true,
-          "description": "Asset barcode/tag ID"
+          "description": "Asset barcode/tag ID/short code or device model (e.g. 10002, VIVO PHONE, A5300POF, DELL)"
         },
         "Aset_Name": {
           "type": "nvarchar(500)",
           "nullable": true,
-          "description": "Device title/model name"
+          "description": "Device title/model name (e.g. LAPTOP, VIVO Y11, ASUS LAPTOP, DELL LATITUDE)"
+        },
+        "Asset_Serial_no": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Hardware physical serial number / service tag (e.g. 10001, 1291010, MS12, 111)"
+        },
+        "Asset_Type": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "Asset classification type (e.g. Fixed, Movable, IT Asset)"
         },
         "Asset_category": {
           "type": "varchar(200)",
           "nullable": true,
-          "description": "Major category (IT, NONIT, ADMIN)"
+          "description": "Major category (IT, NONIT, ADMIN, NONE)"
         },
         "It_category": {
           "type": "varchar(200)",
           "nullable": true,
           "description": "Subcategory (LAPTOP, DESKTOP, PHONE, MOUSE)"
         },
-        "Asset_Serial_no": {
-          "type": "nvarchar(100)",
-          "nullable": true,
-          "description": "Hardware physical serial number"
-        },
         "Issue_Date": {
-          "type": "date",
+          "type": "smalldatetime",
           "nullable": true,
           "description": "Date asset was handed over to employee"
         },
         "Issue_Rem": {
           "type": "nvarchar(150)",
           "nullable": true,
-          "description": "Issue remarks"
+          "description": "Issue remarks or approval note (e.g. approved by GM sir to provide new phone, new joining)"
         },
         "Revoke_Date": {
-          "type": "date",
+          "type": "smalldatetime",
           "nullable": true,
-          "description": "Return date (NULL if currently held by employee)"
+          "description": "Return date (NULL if currently held/active with employee)"
+        },
+        "Revoke_User": {
+          "type": "int",
+          "nullable": true,
+          "description": "User ID who processed the revoke/return"
         },
         "Revoke_Cond": {
           "type": "nvarchar(150)",
           "nullable": true,
           "description": "Condition upon return (OKAY, GOOD, DAMAGED)"
         },
+        "Revoke_Rem": {
+          "type": "nvarchar(150)",
+          "nullable": true,
+          "description": "Revoke remarks"
+        },
         "Lost_Date": {
           "type": "date",
           "nullable": true,
-          "description": "Date reported lost/stolen"
+          "description": "Date reported lost or stolen (if applicable)"
         },
         "Emp_Loc": {
           "type": "nvarchar(100)",
           "nullable": true,
-          "description": "Branch location name"
+          "description": "Employee branch/location name"
         },
         "Emp_Dept": {
           "type": "nvarchar(100)",
           "nullable": true,
-          "description": "Department name"
+          "description": "Employee department name"
+        },
+        "Loc_Code": {
+          "type": "int",
+          "nullable": true,
+          "description": "Location code"
+        },
+        "Inv_No": {
+          "type": "int",
+          "nullable": true,
+          "description": "Invoice number of asset purchase"
+        },
+        "uploaded_document": {
+          "type": "varchar(500)",
+          "nullable": true,
+          "description": "Path/URL to uploaded asset handover slip, bill, or invoice image"
+        },
+        "Created_by": {
+          "type": "nvarchar(100)",
+          "nullable": true,
+          "description": "User who created the asset issue entry"
+        },
+        "Created_At": {
+          "type": "datetime",
+          "nullable": false,
+          "description": "Creation timestamp"
+        }
+      }
+    },
+    "emp_varify": {
+      "tableName": "emp_varify",
+      "displayName": "Employee KYC & Identity Verification Register",
+      "module": "HR",
+      "primaryKey": [
+        "SRNO"
+      ],
+      "foreignKeys": [
+        {
+          "column": "EMPCODE",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        }
+      ],
+      "description": "Stores government KYC identity verification status (PAN Card verification, PAN Name match, Aadhaar validity, Aadhaar linked to PAN, and Aadhaar name match with employee master) for all employees.",
+      "synonyms": [
+        "pan verification",
+        "pan verify",
+        "pan card verified",
+        "pan name match",
+        "aadhaar verification",
+        "aadhaar verify",
+        "aadhaar card verify",
+        "aadhaar linked",
+        "aadhaar linked pan",
+        "aadhaar pan link",
+        "kyc status",
+        "kyc verification",
+        "emp verify",
+        "emp_varify",
+        "verification status",
+        "identity verification"
+      ],
+      "sampleQueries": [
+        "1972153 ka PAN aur Aadhaar verify hai kya",
+        "Aadhaar linked with PAN verification status batao",
+        "Kitne employees ka PAN card verified hai",
+        "Kis kis employee ka Aadhaar name match verify nahi hai",
+        "1979495 ka verification details do"
+      ],
+      "columns": {
+        "SRNO": {
+          "type": "int",
+          "nullable": false,
+          "description": "Primary unique record ID"
+        },
+        "EMPCODE": {
+          "type": "varchar(100)",
+          "nullable": false,
+          "description": "Employee Code linking to EMPLOYEEMASTER.EMPCODE"
+        },
+        "pan_card_ver": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "PAN Card format and authenticity verification status ('true'/'false'/1/0)"
+        },
+        "pan_name_match_ver": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "PAN registered name match with Employee Master name ('true'/'false'/1/0)"
+        },
+        "aadhaar_linked_ver": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Aadhaar number linkage and existence verified ('true'/'false'/1/0)"
+        },
+        "aadhaar_card_ver": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Aadhaar Card document verification status ('true'/'false'/1/0)"
+        },
+        "aadhaar_linked_pan_ver": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Aadhaar successfully linked with PAN card status ('true'/'false'/1/0)"
+        },
+        "aadhaar_name_match_emp_name": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Aadhaar card name match with Employee Master name ('true'/'false'/1/0)"
+        },
+        "Location": {
+          "type": "varchar(50)",
+          "nullable": true,
+          "description": "Branch / Location code"
+        },
+        "Created_by": {
+          "type": "varchar(30)",
+          "nullable": true,
+          "description": "User who performed verification"
+        },
+        "Created_At": {
+          "type": "datetime",
+          "nullable": false,
+          "description": "Verification timestamp"
+        },
+        "ValidFrom": {
+          "type": "datetime2(7)",
+          "nullable": false,
+          "description": "System-versioned validity start time"
+        },
+        "ValidTo": {
+          "type": "datetime2(7)",
+          "nullable": false,
+          "description": "System-versioned validity end time"
         }
       }
     },
@@ -698,12 +1014,54 @@
       "primaryKey": [
         "UTD"
       ],
-      "description": "Monthly itemized payroll deductions (TDS, Loan EMIs, Advance recovery, Fines) and salary component arrears.",
+      "foreignKeys": [
+        {
+          "column": "Emp_Id",
+          "referencesTable": "EMPLOYEEMASTER",
+          "referencesColumn": "EMPCODE"
+        },
+        {
+          "column": "Ded_Type",
+          "referencesTable": "Misc_Mst",
+          "referencesColumn": "Misc_Code",
+          "filter": "Misc_Type = 610"
+        }
+      ],
+      "description": "Monthly itemized payroll deductions (TDS, Loan EMIs, Advance recovery, Fines, Uniform, Mobile) and salary component arrears. Joins with Misc_Mst (where Misc_Type = 610) to get deduction head names.",
+      "synonyms": [
+        "deduction",
+        "deductions",
+        "katoti",
+        "salary deduction",
+        "ded_amt",
+        "ded_type",
+        "advance deduction",
+        "loan deduction",
+        "tds deduction",
+        "fine",
+        "penalty",
+        "arrear",
+        "arrears",
+        "emp_ded",
+        "kitna deduction hua",
+        "kisme deduction hua"
+      ],
+      "sampleQueries": [
+        "select top 100 E.*, M.Misc_Name as Deduction_Name from Emp_Ded E LEFT JOIN Misc_Mst M on E.Ded_Type = M.Misc_Code and M.Misc_Type = 610 where Emp_Id = '1953081' and (E.Deleted_By IS NULL or E.Deleted_By = '')",
+        "1953081 ka deduction kitna hua hai aur kisme hua hai batao",
+        "MAHAVIR ASHOK JAIN ka August 2024 ka deduction batao",
+        "August 2024 me kiska kiska deduction hua hai"
+      ],
       "columns": {
         "UTD": {
           "type": "int",
           "nullable": false,
           "description": "Primary unique key"
+        },
+        "Ded_Type": {
+          "type": "int",
+          "nullable": false,
+          "description": "Deduction category code (links to Misc_Mst where Misc_Type = 610)"
         },
         "Emp_Id": {
           "type": "nvarchar(15)",
@@ -725,20 +1083,55 @@
           "nullable": true,
           "description": "Payroll year (e.g. 2024)"
         },
-        "Ded_Type": {
-          "type": "int",
-          "nullable": false,
-          "description": "Deduction type (links to Misc_Mst Misc_Type = 610)"
+        "Rec_Date": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Deduction record date"
         },
         "Ded_Amt": {
           "type": "money",
           "nullable": true,
-          "description": "Deduction amount"
+          "description": "Deduction amount (INR)"
+        },
+        "Basic_Arr": {
+          "type": "money",
+          "nullable": true,
+          "description": "Basic salary arrear"
+        },
+        "HRA_ARR": {
+          "type": "money",
+          "nullable": true,
+          "description": "HRA arrear"
+        },
+        "Conv_Arr": {
+          "type": "money",
+          "nullable": true,
+          "description": "Conveyance arrear"
+        },
+        "Medical_Arr": {
+          "type": "money",
+          "nullable": true,
+          "description": "Medical arrear"
+        },
+        "Washing_Arr": {
+          "type": "money",
+          "nullable": true,
+          "description": "Washing allowance arrear"
         },
         "Ded_Rem": {
           "type": "nvarchar(200)",
           "nullable": true,
-          "description": "Deduction remarks"
+          "description": "Deduction remarks / reason explanation"
+        },
+        "INCENTIVE_AMT": {
+          "type": "money",
+          "nullable": true,
+          "description": "Incentive amount adjustment"
+        },
+        "Entry_Mode": {
+          "type": "int",
+          "nullable": true,
+          "description": "Entry mode"
         },
         "Loc_Code": {
           "type": "int",
@@ -748,7 +1141,12 @@
         "Deleted_By": {
           "type": "varchar(50)",
           "nullable": true,
-          "description": "Soft delete flag (Active if NULL)"
+          "description": "Soft delete user (Active if NULL)"
+        },
+        "Deleted_On": {
+          "type": "datetime",
+          "nullable": true,
+          "description": "Soft delete timestamp"
         }
       }
     },
