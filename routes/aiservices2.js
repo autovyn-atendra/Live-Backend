@@ -627,13 +627,34 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     entities.year = parseInt(yearMatch[1], 10);
   }
 
-  // Branches
-  const knownBranches = ["jaipur", "ajmer", "kota", "udaipur", "jodhpur", "bikaner", "alwar", "bhilwara", "delhi", "noida", "gurgaon"];
-  for (const b of knownBranches) {
-    if (normalized.includes(b)) {
-      entities.branch = b.charAt(0).toUpperCase() + b.slice(1);
-      break;
+  // Branches (numeric codes e.g. branch 1, location 1, loc 1, branch one, or name strings)
+  const numWordMap = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
+  const branchNumMatch = message.match(/\b(?:branch|location|loc|godw|godown|br|loc_code|branch_code|location_code)\s*(?:code\s*|no\s*|number\s*|:\s*|#\s*)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i);
+  if (branchNumMatch) {
+    const rawVal = branchNumMatch[1].toLowerCase();
+    entities.branch = numWordMap[rawVal] !== undefined ? numWordMap[rawVal] : rawVal;
+    entities.locCode = entities.branch;
+  } else {
+    const knownBranches = ["jaipur", "ajmer", "kota", "udaipur", "jodhpur", "bikaner", "alwar", "bhilwara", "delhi", "noida", "gurgaon"];
+    for (const b of knownBranches) {
+      if (normalized.includes(b)) {
+        entities.branch = b.charAt(0).toUpperCase() + b.slice(1);
+        break;
+      }
     }
+  }
+
+  // Salary Metric / Specific Field targets
+  if (/\b(basic|basic_earn|basic\s*pay|basic\s*salary|basic\s*earning)\b/i.test(normalized)) {
+    entities.salaryField = "Basic_Earn";
+  } else if (/\b(gross|gross_earn|gross\s*pay|gross\s*salary|gross\s*earning)\b/i.test(normalized)) {
+    entities.salaryField = "Gross_Earn";
+  } else if (/\b(net|net_pay|net\s*salary|final_payment|take\s*home|in\s*hand)\b/i.test(normalized)) {
+    entities.salaryField = "Final_Payment";
+  } else if (/\b(deduction|deductions|deducation|tot_dedu|katauti|katouti)\b/i.test(normalized)) {
+    entities.salaryField = "Deducation";
+  } else if (/\b(hra|hra_earn)\b/i.test(normalized)) {
+    entities.salaryField = "HRA_Earn";
   }
 
   // Attendance Flags
@@ -643,9 +664,10 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
   if (/\b(weekly off|sunday|itwar)\b/i.test(normalized)) entities.flag = "WO";
 
   // Aggregation
-  if (/\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized)) {
+  const isTotalOrSumKeyword = /\b(total|sum|kul|jog|add|addition|addisition|milakar|sabka|sabhi\s*ka|sabhi\s*karmchari|all\s*employee|all\s*employees|total\s*basic|total\s*gross|total\s*net|total\s*pay|total\s*salary|total\s*amount)\b/i.test(normalized);
+  if (/\b(kitne|count|total count|how many|sankhya|ginti)\b/i.test(normalized)) {
     entities.aggregation = "COUNT";
-  } else if (/\b(total amount|sum|kul rashi|total pay)\b/i.test(normalized)) {
+  } else if (isTotalOrSumKeyword || /\b(sum|kul rashi|total pay)\b/i.test(normalized)) {
     entities.aggregation = "SUM";
   }
 
@@ -714,7 +736,19 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
   const isAbsentList = /\b(absent|anupasthit)\b/i.test(normalized) &&
     (/\b(list|all|kaun kaun|employees|karmchari|details|detail|nikalo|batao)\b/i.test(normalized) || !entities.employeeCode);
 
-  if (isDuplicateBank) {
+  const isSalaryTotalOrSum = /\b(salary|pagar|tankha|vetan|pay|payout|earning|basic|gross|net|deduction|deductions|salaryfile)\b/i.test(normalized) &&
+    (isTotalOrSumKeyword || entities.aggregation === "SUM" || /\b(total|sum|kul|add|addition|addisition)\b/i.test(normalized)) &&
+    !entities.employeeCode;
+
+  const isSalaryCount = /\b(salary|pagar|tankha|vetan|salaryfile)\b/i.test(normalized) &&
+    /\b(kitne|how many|sankhya|ginti|total\s*count|kitne\s*log|kitne\s*karmchari|kitne\s*employees)\b/i.test(normalized) &&
+    !entities.employeeCode;
+
+  if (isSalaryTotalOrSum) {
+    intent = "SALARY_TOTAL_AGGREGATE";
+  } else if (isSalaryCount) {
+    intent = "SALARY_COUNT_AGGREGATE";
+  } else if (isDuplicateBank) {
     intent = "DUPLICATE_BANK_ACCOUNTS";
   } else if (isDuplicatePAN) {
     intent = "DUPLICATE_PAN_NUMBERS";
@@ -1006,9 +1040,50 @@ WHERE (LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = '${cleanEmp}' OR LTR
       }
       break;
 
+    case "SALARY_TOTAL_AGGREGATE":
+      {
+        const loc = entities.branch || entities.locCode;
+        let sql = `SELECT 
+  COUNT(DISTINCT [S].[Emp_Code]) AS [TotalEmployeesPaid],
+  SUM(ISNULL([S].[Basic_Earn], 0)) AS [Total_Basic_Earn],
+  SUM(ISNULL([S].[Gross_Earn], 0)) AS [Total_Gross_Earn],
+  SUM(ISNULL([S].[Final_Payment], 0)) AS [Total_Net_Salary],
+  SUM(ISNULL([S].[Deducation], 0)) AS [Total_Deductions],
+  SUM(ISNULL([S].[HRA_Earn], 0)) AS [Total_HRA_Earn],
+  AVG(ISNULL([S].[Final_Payment], 0)) AS [Avg_Net_Salary]
+FROM [dbo].[SALARYFILE] AS [S] WITH (NOLOCK)
+WHERE 1=1`;
+        if (month) sql += ` AND [S].[SalMnth] = '${month}'`;
+        if (year) sql += ` AND [S].[salyear] = '${year}'`;
+        if (loc) {
+          const cleanLoc = loc.replace(/'/g, "''");
+          sql += ` AND ([S].[Loc_Code] = '${cleanLoc}' OR CONVERT(varchar(50), [S].[Loc_Code]) = '${cleanLoc}')`;
+        }
+        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
+      }
+
+    case "SALARY_COUNT_AGGREGATE":
+      {
+        const loc = entities.branch || entities.locCode;
+        let sql = `SELECT 
+  COUNT(DISTINCT [S].[Emp_Code]) AS [TotalEmployeesWithSalary]
+FROM [dbo].[SALARYFILE] AS [S] WITH (NOLOCK)
+WHERE (ISNULL([S].[Final_Payment], 0) > 0 OR ISNULL([S].[Gross_Earn], 0) > 0)`;
+        if (month) sql += ` AND [S].[SalMnth] = '${month}'`;
+        if (year) sql += ` AND [S].[salyear] = '${year}'`;
+        if (loc) {
+          const cleanLoc = loc.replace(/'/g, "''");
+          sql += ` AND ([S].[Loc_Code] = '${cleanLoc}' OR CONVERT(varchar(50), [S].[Loc_Code]) = '${cleanLoc}')`;
+        }
+        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
+      }
+
     case "EMPLOYEE_SALARY_HISTORY":
     case "SELF_SALARY":
     case "SALARY_REPORT":
+      if (entities.aggregation === "SUM" && !emp) {
+        return getDeterministicSQLTemplate({ intent: "SALARY_TOTAL_AGGREGATE", entities, userContext });
+      }
       if (emp || entities.searchToken) {
         const cleanEmp = (emp || entities.searchToken).replace(/'/g, "''");
         let sql = `SELECT TOP 50
@@ -1822,12 +1897,14 @@ const matchLearnedSimilarQuery = async ({ sequelize, message, intent, entities =
     let highestScore = 0;
 
     for (const r of rows) {
-      // If query specifies a particular employee code, do NOT match company-wide rankings/aggregates or general audit diffs
-      if (entities.employeeCode && (r.Intent === "HIGHEST_SALARY_RANKING" || r.Intent === "EMPLOYEE_AUDIT_HISTORY_DIFF" || (!r.SQL_Query.includes("Emp_Code") && !r.SQL_Query.includes("EMPCODE")))) {
+      const hasEmpWhereFilter = /WHERE\s+.*?\b(Emp_Code|EMPCODE)\s*=/is.test(r.SQL_Query || "");
+
+      // If query specifies a particular employee code, do NOT match company-wide rankings/aggregates or queries without WHERE emp filter
+      if (entities.employeeCode && (!hasEmpWhereFilter || r.Intent === "HIGHEST_SALARY_RANKING" || r.Intent === "EMPLOYEE_AUDIT_HISTORY_DIFF" || r.Intent === "SALARY_TOTAL_AGGREGATE")) {
         continue;
       }
-      // If query is company-wide (no empCode), do NOT match individual employee lookups
-      if (!entities.employeeCode && !entities.isSelf && (r.Intent === "SALARY_REPORT" || r.Intent === "EMPLOYEE_SALARY_HISTORY" || r.Intent === "EMPLOYEE_AUDIT_HISTORY_DIFF")) {
+      // If query is company-wide (no empCode), do NOT match individual employee lookups that filter by a single employee
+      if (!entities.employeeCode && !entities.isSelf && hasEmpWhereFilter) {
         continue;
       }
 
@@ -3016,6 +3093,75 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     };
   }
 
+  // Salary Aggregation Formatter (Total Basic, Gross, Net, Deductions, Employees Count)
+  if ((intent === "SALARY_TOTAL_AGGREGATE" || (rows.length === 1 && (rows[0].Total_Basic_Earn !== undefined || rows[0].TotalBasicEarn !== undefined || rows[0].Total_Net_Salary !== undefined))) && rows.length > 0) {
+    const r = rows[0];
+    const totalEmp = r.TotalEmployeesPaid || r.TotalEmployees || r.TotalEmployeesWithSalary || 0;
+    const basicNum = Number(r.Total_Basic_Earn || r.TotalBasicEarn || 0);
+    const grossNum = Number(r.Total_Gross_Earn || r.TotalGrossEarn || 0);
+    const netNum = Number(r.Total_Net_Salary || r.Total_Net_Pay || r.TotalNetSalary || 0);
+    const dedNum = Number(r.Total_Deductions || r.TotalDeductions || 0);
+    const hraNum = Number(r.Total_HRA_Earn || r.TotalHRAEarn || 0);
+
+    const basic = basicNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const gross = grossNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const net = netNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const ded = dedNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const hra = hraNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    
+    const mStr = entities.month ? `${entities.month}/${entities.year || new Date().getFullYear()}` : (entities.year ? `Year ${entities.year}` : "Overall");
+    const locStr = entities.branch ? ` (Location / Branch: **${entities.branch}**)` : "";
+
+    if (basicNum === 0 && grossNum === 0 && netNum === 0 && totalEmp === 0) {
+      return {
+        answer: `AutoVyn ERP me **${mStr}**${locStr} ke liye koi salary / payroll data process nahi hua hai (Total Basic: ₹0.00).`,
+        summary: `No salary records for ${mStr}${locStr}`
+      };
+    }
+
+    let ans = `AutoVyn ERP Salary & Payroll Summary for **${mStr}**${locStr}:\n\n`;
+    if (entities.salaryField === "Basic_Earn") {
+      ans += `• 💰 **Total Basic Pay / Earnings (SUM):** **₹${basic}**\n`;
+      if (totalEmp > 0) ans += `• 👥 **Total Employees:** ${totalEmp} employee(s)\n`;
+      if (grossNum > 0) ans += `• 📈 **Total Gross Earnings:** ₹${gross}\n`;
+      if (dedNum > 0) ans += `• 📉 **Total Deductions:** ₹${ded}\n`;
+      if (netNum > 0) ans += `• 💵 **Total Net Payout (Final Payment):** ₹${net}`;
+    } else if (entities.salaryField === "Gross_Earn") {
+      ans += `• 📈 **Total Gross Earnings (SUM):** **₹${gross}**\n`;
+      if (totalEmp > 0) ans += `• 👥 **Total Employees:** ${totalEmp} employee(s)\n`;
+      if (basicNum > 0) ans += `• 💰 **Total Basic Pay:** ₹${basic}\n`;
+      if (dedNum > 0) ans += `• 📉 **Total Deductions:** ₹${ded}\n`;
+      if (netNum > 0) ans += `• 💵 **Total Net Payout (Final Payment):** ₹${net}`;
+    } else if (entities.salaryField === "Deducation") {
+      ans += `• 📉 **Total Deductions (SUM):** **₹${ded}**\n`;
+      if (totalEmp > 0) ans += `• 👥 **Total Employees:** ${totalEmp} employee(s)\n`;
+      if (grossNum > 0) ans += `• 📈 **Total Gross Earnings:** ₹${gross}\n`;
+      if (netNum > 0) ans += `• 💵 **Total Net Payout (Final Payment):** ₹${net}`;
+    } else {
+      ans += `• 💵 **Total Net Payout (Final Payment):** **₹${net}**\n`;
+      if (totalEmp > 0) ans += `• 👥 **Total Employees Paid:** ${totalEmp} employee(s)\n`;
+      if (basicNum > 0) ans += `• 💰 **Total Basic Earnings:** ₹${basic}\n`;
+      if (grossNum > 0) ans += `• 📈 **Total Gross Earnings:** ₹${gross}\n`;
+      if (dedNum > 0) ans += `• 📉 **Total Deductions:** ₹${ded}`;
+    }
+
+    return {
+      answer: ans.trim(),
+      summary: `Total Basic: ₹${basic}, Net: ₹${net} for ${mStr}${locStr}`
+    };
+  }
+
+  if (intent === "SALARY_COUNT_AGGREGATE" && rows.length > 0) {
+    const r = rows[0];
+    const count = r.TotalEmployeesWithSalary || r.TotalEmployees || 0;
+    const mStr = entities.month ? `for **${entities.month}/${entities.year || new Date().getFullYear()}**` : "";
+    const locStr = entities.branch ? ` in Branch / Location **${entities.branch}**` : "";
+    return {
+      answer: `AutoVyn ERP ke record ke anusar, ${mStr}${locStr} total **${count} employee(s)** ki salary generate / process hui hai.`,
+      summary: `${count} employees salary processed ${mStr}${locStr}`.trim()
+    };
+  }
+
   // Salary Slip / Payroll Multi-Row & Single-Row Formatters
   if ((intent === "SALARY_REPORT" || intent === "SELF_SALARY") && rows.length > 0 && (rows[0].GrossSalary !== undefined || rows[0].GrossEarnings !== undefined || rows[0].NetSalary !== undefined || rows[0].NetPayment !== undefined || rows[0].FinalPayment !== undefined)) {
     if (rows.length === 1) {
@@ -3599,38 +3745,37 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     };
   }
 
-  // 5.5 RLHF Learned Query Matcher (Checks verified user-liked queries from AI_SQL_Learning_Tbl)
-  let learnedMatch = await matchLearnedSimilarQuery({
-    sequelize,
-    message: rawMessage,
+  // 6. Engine 5: SQL Planning (Deterministic Template First -> RLHF Learned Match -> GPT Planner Fallback)
+  let sqlPlan = getDeterministicSQLTemplate({
     intent: initialClassification.intent,
-    entities: resolvedEntities
+    entities: resolvedEntities,
+    userContext
   });
 
-  let sqlPlan = null;
   let tablesUsed = [];
 
-  if (learnedMatch && learnedMatch.sql) {
-    console.log(`🏆 [V6-RLHF-LearnedGoldenQuery] Matched learned user-approved pattern: ${learnedMatch.source}`);
-    sqlPlan = {
-      sql: learnedMatch.sql,
-      requiresJoin: false,
-      isTemplate: true,
-      confidence: learnedMatch.confidence,
-      targetTable: "AI_SQL_Learning_Tbl"
-    };
-    tablesUsed = ["AI_SQL_Learning_Tbl"];
+  if (sqlPlan && sqlPlan.sql) {
+    console.log("🎯 [V6-SQLPlanner] Instant match with Deterministic Template Library.");
+    tablesUsed = [sqlPlan.targetTable || "ERP_MASTER"];
   } else {
-    // 6. Engine 5: SQL Planning (Deterministic Template First -> GPT Planner Fallback)
-    sqlPlan = getDeterministicSQLTemplate({
+    // 6.1 RLHF Learned Query Matcher (Checks verified user-liked queries from AI_SQL_Learning_Tbl)
+    let learnedMatch = await matchLearnedSimilarQuery({
+      sequelize,
+      message: rawMessage,
       intent: initialClassification.intent,
-      entities: resolvedEntities,
-      userContext
+      entities: resolvedEntities
     });
 
-    if (sqlPlan) {
-      console.log("🎯 [V6-SQLPlanner] Instant match with Deterministic Template Library.");
-      tablesUsed = [sqlPlan.targetTable || "ERP_MASTER"];
+    if (learnedMatch && learnedMatch.sql) {
+      console.log(`🏆 [V6-RLHF-LearnedGoldenQuery] Matched learned user-approved pattern: ${learnedMatch.source}`);
+      sqlPlan = {
+        sql: learnedMatch.sql,
+        requiresJoin: false,
+        isTemplate: true,
+        confidence: learnedMatch.confidence,
+        targetTable: "AI_SQL_Learning_Tbl"
+      };
+      tablesUsed = ["AI_SQL_Learning_Tbl"];
     } else {
       const relevantTables = SchemaEngineInstance.searchRelevantTables(
         rawMessage,
