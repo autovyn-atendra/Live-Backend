@@ -78,7 +78,12 @@ router.post("/cache/clear", (req, res) => {
 router.get(
   "/conversations",
   AI.asyncHandler(async (req, res) => {
-    const data = await AI.listUserConversations({ req, limit: req.query.limit });
+    const data = await AI.listUserConversations({
+      req,
+      limit: req.query.limit,
+      offset: req.query.offset,
+      page: req.query.page,
+    });
     return res.status(200).json({
       success: true,
       message: "Conversations retrieved successfully",
@@ -86,10 +91,18 @@ router.get(
     });
   })
 );
-router.post("/conversations", AI.asyncHandler(async (req, res) => {
-  const data = await AI.listUserConversations({ req, limit: req.body?.limit });
-  return res.status(200).json({ success: true, data });
-}));
+router.post(
+  "/conversations",
+  AI.asyncHandler(async (req, res) => {
+    const data = await AI.listUserConversations({
+      req,
+      limit: req.body?.limit || req.query?.limit,
+      offset: req.body?.offset || req.query?.offset,
+      page: req.body?.page || req.query?.page,
+    });
+    return res.status(200).json({ success: true, data });
+  })
+);
 
 router.get(
   "/conversations/:conversationId",

@@ -624,18 +624,6 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
   console.log("\n======================================================");
   console.log("❓ [AI-QUESTION]:", message);
 
-  // ── Execute V6 Enterprise AI Copilot Engine (with automatic V1 fallback) ────
-  if (AI_V6?.askEnterpriseCopilotV6) {
-    try {
-      const v6Result = await AI_V6.askEnterpriseCopilotV6(req, payload);
-      if (v6Result && v6Result.answer) {
-        return v6Result;
-      }
-    } catch (v6Error) {
-      console.warn("[aiservices] V6 Copilot pipeline yielded notice, continuing with V1 engine:", v6Error?.message);
-    }
-  }
-
   // ── User context ──────────────────────────────────────────────────────────
   const userContext = buildUserContext(req);
   if (!userContext.numericUserId) {
@@ -646,17 +634,79 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
   const sequelize = await dbname(req, userContext.compcode);
   if (!sequelize?.query) throw new ApiError(500, "Database connection failed");
 
-  // ── Conversation ──────────────────────────────────────────────────────────
-  const conv = await getOrCreateConversation({
-    sequelize,
-    conversationId:   payload.conversationId,
-    userCode:         userContext.numericUserId,
-    userName:         userContext.userName,
-    compcode:         userContext.compcode,
-    title:            payload.title || message.slice(0, 100),
-    conversationType: "GENERAL",
-  });
-  const conversationId = conv.conversationId;
+  // ── Conversation Persistence Setup ─────────────────────────────────────────
+  let conversationId = payload.conversationId;
+  try {
+    const conv = await getOrCreateConversation({
+      sequelize,
+      conversationId: payload.conversationId,
+      userCode: userContext.numericUserId,
+      userName: userContext.userName,
+      compcode: userContext.compcode,
+      title: payload.title || message.slice(0, 100),
+      conversationType: "GENERAL",
+    });
+    conversationId = conv.conversationId;
+    payload.conversationId = conversationId;
+  } catch (convErr) {
+    console.warn("[aiservices] Conversation init notice:", convErr?.message);
+    if (!conversationId) {
+      conversationId = `conv_${Date.now()}_${randomUUID().slice(0, 8)}`;
+      payload.conversationId = conversationId;
+    }
+  }
+
+  // ── Save user message ─────────────────────────────────────────────────────
+  try {
+    await saveConversationMessage({
+      sequelize,
+      conversationId,
+      role: "user",
+      content: message,
+      createdBy: String(userContext.numericUserId),
+      metadata: {
+        employeeCode: userContext.employeeCode,
+        roleFlag: userContext.roleFlag,
+      },
+    });
+  } catch (userMsgErr) {
+    console.warn("[aiservices] Non-fatal user message save error:", userMsgErr?.message);
+  }
+
+  // ── Execute V6 Enterprise AI Copilot Engine (with automatic V1 fallback) ────
+  if (AI_V6?.askEnterpriseCopilotV6) {
+    try {
+      const v6Result = await AI_V6.askEnterpriseCopilotV6(req, payload);
+      if (v6Result && v6Result.answer) {
+        v6Result.conversationId = conversationId;
+
+        // Persist assistant response & update session timestamp
+        try {
+          await saveConversationMessage({
+            sequelize,
+            conversationId,
+            role: "assistant",
+            content: v6Result.answer,
+            routeType: v6Result.mode || "DATABASE",
+            modelName: v6Result.model || "gpt-4o-mini",
+            responseTimeMs: Date.now() - startedAt,
+            createdBy: String(userContext.numericUserId),
+            metadata: {
+              intent: v6Result.intent,
+              sql: v6Result.query?.sql,
+              confidence: v6Result.confidence
+            }
+          });
+        } catch (asstMsgErr) {
+          console.warn("[aiservices] Non-fatal assistant message save error:", asstMsgErr?.message);
+        }
+
+        return v6Result;
+      }
+    } catch (v6Error) {
+      console.warn("[aiservices] V6 Copilot pipeline yielded notice, continuing with V1 engine:", v6Error?.message);
+    }
+  }
 
   // ── Save user message ─────────────────────────────────────────────────────
   await saveConversationMessage({
@@ -1129,14 +1179,18 @@ const classifyChatRequest = exports.classifyChatRequest = async ({ message, hist
 
 
 
-const listUserConversations = exports.listUserConversations = async ({ req, limit = 30 }) => {
+const listUserConversations = exports.listUserConversations = async ({ req, limit = 25, offset = 0, page = 1 }) => {
   const user = buildUserContext(req);
   const sequelize = await dbname(req, user.compcode);
 
-  const maxLimit = Math.max(1, Math.min(Number(limit) || 30, 100));
+  const parsedLimit = Math.max(1, Math.min(Number(req?.query?.limit || req?.body?.limit || limit) || 25, 100));
+  const parsedPage = Math.max(1, Number(req?.query?.page || req?.body?.page || page) || 1);
+  const parsedOffset = req?.query?.offset !== undefined 
+    ? Math.max(0, Number(req.query.offset) || 0)
+    : (parsedPage - 1) * parsedLimit;
 
   const rows = await sequelize.query(
-    `SELECT TOP (${maxLimit}) 
+    `SELECT 
        [Conversation_Id],
        [Title],
        [Conversation_Type],
@@ -1148,9 +1202,16 @@ const listUserConversations = exports.listUserConversations = async ({ req, limi
      WHERE [Comp_Code] = :compCode 
        AND [User_Code] = :userCode 
        AND [Status] = 'ACTIVE' 
-     ORDER BY ISNULL([Updated_At], [Created_At]) DESC`,
+     ORDER BY ISNULL([Last_Message_At], ISNULL([Updated_At], [Created_At])) DESC
+     OFFSET :offset ROWS
+     FETCH NEXT :limit ROWS ONLY`,
     {
-      replacements: { compCode: user.compcode, userCode: user.numericUserId },
+      replacements: { 
+        compCode: user.compcode, 
+        userCode: user.numericUserId,
+        offset: parsedOffset,
+        limit: parsedLimit
+      },
       type: QueryTypes.SELECT,
     }
   );
@@ -12448,24 +12509,153 @@ exports.submitFeedback = async function (req, res) {
 
 exports.getAuditLogs = async function (req, res) {
   try {
-    const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
+    const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || req.user?.compcode || "AUTOVYN").trim();
     const sequelize = await dbname(req, compCode);
-    const limit = Math.min(Number(req.query?.limit || 50), 200);
 
-    const query = `
-      IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Query_Audit_Tbl')
+    const page = Math.max(1, parseInt(req.query?.page || req.body?.page, 10) || 1);
+    const limit = Math.min(Math.max(1, parseInt(req.query?.limit || req.body?.limit, 10) || 20), 200);
+    const offset = (page - 1) * limit;
+    const search = String(req.query?.search || req.body?.search || "").trim();
+    const status = String(req.query?.status || req.body?.status || "").trim().toUpperCase();
+    const intent = String(req.query?.intent || req.body?.intent || "").trim();
+    const startDate = String(req.query?.startDate || req.body?.startDate || "").trim();
+    const endDate = String(req.query?.endDate || req.body?.endDate || "").trim();
+
+    // Ensure table exists
+    await sequelize.query(`
+      IF OBJECT_ID('dbo.AI_Query_Audit_Tbl', 'U') IS NULL
       BEGIN
-        SELECT TOP (:limit) UTD, Conversation_Id, User_Id, Emp_Code, Role, User_Query, Intent, Complexity, Tables_Used, Execution_Time_Ms, Confidence_Score, Status_Code, Created_At
-        FROM dbo.AI_Query_Audit_Tbl
-        ORDER BY UTD DESC
+        CREATE TABLE [dbo].[AI_Query_Audit_Tbl] (
+          [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+          [Conversation_Id] VARCHAR(100) NULL,
+          [User_Id] VARCHAR(100) NULL,
+          [Emp_Code] VARCHAR(100) NULL,
+          [Role] VARCHAR(50) NULL,
+          [Comp_Code] VARCHAR(50) NULL,
+          [User_Query] NVARCHAR(MAX) NULL,
+          [Normalized_Query] NVARCHAR(MAX) NULL,
+          [Intent] VARCHAR(100) NULL,
+          [Tables_Used] VARCHAR(500) NULL,
+          [Generated_SQL] NVARCHAR(MAX) NULL,
+          [AI_Response] NVARCHAR(MAX) NULL,
+          [Rows_Returned] INT NULL DEFAULT 0,
+          [Execution_Time_Ms] INT NULL DEFAULT 0,
+          [Confidence_Score] DECIMAL(5,2) NULL DEFAULT 0.95,
+          [Status_Code] VARCHAR(30) NULL DEFAULT 'SUCCESS',
+          [Error_Message] NVARCHAR(MAX) NULL,
+          [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+        );
       END
-      ELSE
+      ELSE IF COL_LENGTH('dbo.AI_Query_Audit_Tbl', 'AI_Response') IS NULL
       BEGIN
-        SELECT 0 AS UTD, 'NONE' AS Conversation_Id, 'No audit records yet' AS User_Query, 'SUCCESS' AS Status_Code, GETDATE() AS Created_At
+        ALTER TABLE [dbo].[AI_Query_Audit_Tbl] ADD [AI_Response] NVARCHAR(MAX) NULL;
       END
-    `;
-    const rows = await sequelize.query(query, { replacements: { limit }, type: QueryTypes.SELECT });
-    return res.status(200).json({ success: true, count: rows.length, data: rows });
+    `, { type: QueryTypes.RAW }).catch(() => {});
+
+    // Dynamic Filter Clauses
+    let whereClauses = ["1=1"];
+    let replacements = { limit, offset };
+
+    if (search) {
+      whereClauses.push("(User_Query LIKE :search OR Normalized_Query LIKE :search OR Generated_SQL LIKE :search OR Intent LIKE :search OR Emp_Code LIKE :search OR User_Id LIKE :search OR AI_Response LIKE :search)");
+      replacements.search = `%${search}%`;
+    }
+
+    if (status && status !== "ALL") {
+      whereClauses.push("Status_Code = :status");
+      replacements.status = status;
+    }
+
+    if (intent && intent !== "ALL") {
+      whereClauses.push("Intent = :intent");
+      replacements.intent = intent;
+    }
+
+    if (startDate) {
+      whereClauses.push("Created_At >= :startDate");
+      replacements.startDate = `${startDate} 00:00:00`;
+    }
+
+    if (endDate) {
+      whereClauses.push("Created_At <= :endDate");
+      replacements.endDate = `${endDate} 23:59:59`;
+    }
+
+    const whereSql = whereClauses.join(" AND ");
+
+    // Fetch Total Count
+    const countResult = await sequelize.query(`
+      SELECT COUNT(1) AS TotalRecords FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE ${whereSql}
+    `, { replacements, type: QueryTypes.SELECT }).catch(() => [{ TotalRecords: 0 }]);
+
+    const totalRecords = Number(countResult[0]?.TotalRecords || 0);
+    const totalPages = Math.ceil(totalRecords / limit) || 1;
+
+    // Fetch Paginated Logs
+    const rows = await sequelize.query(`
+      SELECT 
+        [UTD],
+        [Conversation_Id] AS conversationId,
+        [User_Id] AS userId,
+        [Emp_Code] AS empCode,
+        [Role] AS role,
+        [Comp_Code] AS compCode,
+        [User_Query] AS userQuery,
+        [Normalized_Query] AS normalizedQuery,
+        [Intent] AS intent,
+        [Tables_Used] AS tablesUsed,
+        [Generated_SQL] AS generatedSql,
+        [AI_Response] AS aiResponse,
+        ISNULL([Rows_Returned], 0) AS rowsReturned,
+        ISNULL([Execution_Time_Ms], 0) AS executionTimeMs,
+        ISNULL([Confidence_Score], 0.95) AS confidenceScore,
+        ISNULL([Status_Code], 'SUCCESS') AS statusCode,
+        [Error_Message] AS errorMessage,
+        [Created_At] AS createdAt
+      FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
+      WHERE ${whereSql}
+      ORDER BY [UTD] DESC
+      OFFSET :offset ROWS
+      FETCH NEXT :limit ROWS ONLY
+    `, { replacements, type: QueryTypes.SELECT }).catch(() => []);
+
+    // Fetch Global Stats
+    const statsResult = await sequelize.query(`
+      SELECT 
+        COUNT(1) AS totalQueries,
+        SUM(CASE WHEN Status_Code = 'SUCCESS' THEN 1 ELSE 0 END) AS successQueries,
+        SUM(CASE WHEN Status_Code = 'FAILED' THEN 1 ELSE 0 END) AS failedQueries,
+        AVG(ISNULL(Execution_Time_Ms, 0)) AS avgExecutionTimeMs,
+        COUNT(DISTINCT User_Id) AS activeUsersCount,
+        SUM(CASE WHEN CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS todayQueriesCount
+      FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
+    `, { type: QueryTypes.SELECT }).catch(() => [{}]);
+
+    const globalStats = statsResult[0] || {};
+    const tot = Number(globalStats.totalQueries || 0);
+    const succ = Number(globalStats.successQueries || 0);
+    const successRate = tot > 0 ? ((succ / tot) * 100).toFixed(1) + "%" : "100%";
+
+    return res.status(200).json({
+      success: true,
+      data: rows,
+      pagination: {
+        page,
+        limit,
+        totalRecords,
+        totalPages,
+        hasMore: page < totalPages
+      },
+      stats: {
+        totalQueries: tot,
+        successQueries: succ,
+        failedQueries: Number(globalStats.failedQueries || 0),
+        successRate,
+        avgExecutionTimeMs: Math.round(Number(globalStats.avgExecutionTimeMs || 0)),
+        activeUsersCount: Number(globalStats.activeUsersCount || 0),
+        todayQueriesCount: Number(globalStats.todayQueriesCount || 0)
+      }
+    });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
