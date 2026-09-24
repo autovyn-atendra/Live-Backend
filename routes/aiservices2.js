@@ -619,8 +619,117 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     vehicle: null,
     leaveType: null,
     aggregation: null,
-    searchToken: null
+    searchToken: null,
+    salaryThreshold: null,
+    salaryComparison: null,
+    salaryField: null,
+    salaryMin: null,
+    salaryMax: null,
+    isSalaryRange: false
   };
+
+  // --------------------------------------------------------------------------
+  // Salary Range & Threshold Extraction
+  // Examples: 
+  //   - "50000 se 20000 ke bich kitne employee ki salary hai"
+  //   - "salary between 20000 and 50000"
+  //   - "20000 se 50000 tak ki salary"
+  //   - "50000 rupay se jyada salary", "salary > 50000", "50000 se kam salary"
+  // --------------------------------------------------------------------------
+  const salaryContext = /\b(salary|pagar|tankha|vetan|ctc|gross|net|basic|payout|earn|earning|earnings)\b/i.test(normalized);
+  const salaryNumbers = new Set();
+  let rawSalaryThreshold = null;
+  let detectedSalaryComp = null;
+
+  // 1. Range Pattern (Hindi/Hinglish): <num1> se <num2> ke b[ie]ch / beech / darmiyan / andar / madhya / tak
+  const rangeHinglishMatch = normalized.match(/(?:(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)\s*)?(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*se\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(?:ke\s*(?:bich|beech|darmiyan|andar|madhya)|tak)/i);
+
+  // 2. Range Pattern (English): between <num1> and/to <num2>
+  const rangeEnglishMatch = normalized.match(/between\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:and|to|-)\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?/i);
+
+  // 3. Range Pattern in explicit salary context (e.g. "salary 20000 to 50000" or "salary 20000 se 50000"):
+  const rangeFromToMatch = !rangeHinglishMatch && !rangeEnglishMatch && salaryContext
+    ? normalized.match(/(?:(?:from\s*)?(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)\s*)?(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(?:to|-|se)\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?/i)
+    : null;
+
+  const activeRangeMatch = rangeHinglishMatch || rangeEnglishMatch || rangeFromToMatch;
+  if (activeRangeMatch) {
+    let v1 = parseFloat(activeRangeMatch[1].replace(/,/g, ""));
+    let v2 = parseFloat(activeRangeMatch[2].replace(/,/g, ""));
+
+    const rawMatchStr = activeRangeMatch[0].toLowerCase();
+    if (new RegExp(`${activeRangeMatch[1]}\\s*(?:k\\b|hazar\\b)`).test(rawMatchStr)) v1 *= 1000;
+    if (new RegExp(`${activeRangeMatch[2]}\\s*(?:k\\b|hazar\\b)`).test(rawMatchStr)) v2 *= 1000;
+    if (new RegExp(`${activeRangeMatch[1]}\\s*(?:lakh|lac)`).test(rawMatchStr)) v1 *= 100000;
+    if (new RegExp(`${activeRangeMatch[2]}\\s*(?:lakh|lac)`).test(rawMatchStr)) v2 *= 100000;
+
+    const isLikelyYearRange = (v1 >= 1990 && v1 <= 2040) && (v2 >= 1990 && v2 <= 2040) && !/(?:rupay|rupaye|rupee|rupees|\brs\.?\b|inr|₹|\d+\s*k\b|hazar|lakh|lac)/i.test(rawMatchStr);
+
+    if (!isLikelyYearRange && v1 > 0 && v2 > 0) {
+      entities.isSalaryRange = true;
+      entities.salaryMin = Math.min(v1, v2);
+      entities.salaryMax = Math.max(v1, v2);
+      salaryNumbers.add(String(v1));
+      salaryNumbers.add(String(v2));
+      salaryNumbers.add(String(entities.salaryMin));
+      salaryNumbers.add(String(entities.salaryMax));
+      salaryNumbers.add(activeRangeMatch[1].replace(/,/g, ""));
+      salaryNumbers.add(activeRangeMatch[2].replace(/,/g, ""));
+    }
+  }
+
+  // Single Threshold Extraction (only if not already a range)
+  if (!entities.isSalaryRange) {
+    // Pattern A: Number + (k/hazar/lakh) + (rupay/rupees/rs) + (se jyada / se kam / etc.)
+    const compAfterNumMatch = normalized.match(/(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(?:se\s*(?:jyada|adhik|upar|bada|kam|niche|chhota)|greater\s*than|more\s*than|above|over|higher\s*than|less\s*than|below|under|lower\s*than)/i);
+    if (compAfterNumMatch) {
+      rawSalaryThreshold = compAfterNumMatch[1].replace(/,/g, "");
+      const compText = compAfterNumMatch[0].toLowerCase();
+      if (/\b(kam|niche|chhota|less|below|under|lower)\b/i.test(compText)) {
+        detectedSalaryComp = "<";
+      } else {
+        detectedSalaryComp = ">";
+      }
+    }
+
+    // Pattern B: (greater than / more than / se jyada / etc. or [><]=?) + (rs/rupay) + Number
+    if (!rawSalaryThreshold) {
+      const compBeforeNumMatch = normalized.match(/(?:(?:greater\s*than|more\s*than|above|over|higher\s*than|exceeding|at\s*least|min(?:imum)?|se\s*(?:jyada|adhik|upar|bada)|[>]=?)\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d+)?)|(?:less\s*than|below|under|lower\s*than|at\s*most|max(?:imum)?|se\s*(?:kam|niche|chhota)|[<]=?)\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d+)?))/i);
+      if (compBeforeNumMatch) {
+        if (compBeforeNumMatch[1]) {
+          rawSalaryThreshold = compBeforeNumMatch[1].replace(/,/g, "");
+          detectedSalaryComp = ">";
+        } else if (compBeforeNumMatch[2]) {
+          rawSalaryThreshold = compBeforeNumMatch[2].replace(/,/g, "");
+          detectedSalaryComp = "<";
+        }
+      }
+    }
+
+    // Pattern C: Number + (rupay/rupees/rs) in salary context (e.g. "50000 rupay salary", "50000 rupees salary")
+    if (!rawSalaryThreshold && salaryContext) {
+      const numRupeesMatch = normalized.match(/(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)/i);
+      if (numRupeesMatch) {
+        rawSalaryThreshold = numRupeesMatch[1].replace(/,/g, "");
+        detectedSalaryComp = /\b(kam|below|under|less|niche)\b/i.test(normalized) ? "<" : ">";
+      }
+    }
+
+    if (rawSalaryThreshold) {
+      let parsedThresh = parseFloat(rawSalaryThreshold);
+      if (/\b(\d+)\s*(?:k\b|hazar\b)/i.test(normalized)) {
+        parsedThresh = parsedThresh * 1000;
+      } else if (/\b(\d+(?:\.\d+)?)\s*(?:lakh|lac)\b/i.test(normalized)) {
+        parsedThresh = parsedThresh * 100000;
+      }
+      if (parsedThresh > 0) {
+        entities.salaryThreshold = parsedThresh;
+        entities.salaryComparison = detectedSalaryComp || ">";
+        salaryNumbers.add(String(parsedThresh));
+        salaryNumbers.add(rawSalaryThreshold);
+      }
+    }
+  }
 
   // Self queries
   if (/\b(meri|mera|my|self|mujhe|apni|apna)\b/i.test(normalized)) {
@@ -664,9 +773,10 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     const rawCode = empCodeMatch[1].trim();
     const isYearNumber = /^(19\d{2}|20\d{2})$/.test(rawCode) && (parseInt(rawCode, 10) >= 1990 && parseInt(rawCode, 10) <= 2035);
     const hasDirectEmpPrefix = new RegExp(`\\b(?:emp|employee|karmchari|code|empcode|emp_code|id)\\s*[:=]?\\s*${rawCode}\\b`, 'i').test(normalized);
+    const isSalaryNumber = salaryNumbers.has(rawCode) || salaryNumbers.has(String(parseFloat(rawCode)));
 
-    // Never treat a 4-digit year (1990-2035) as an employee code unless explicitly prefixed with "emp 2026" or "code 2026"
-    if (!isYearNumber || hasDirectEmpPrefix) {
+    // Never treat a salary range/threshold number or 4-digit year as an employee code unless explicitly prefixed with "emp 2026" or "code 50000"
+    if ((!isYearNumber && !isSalaryNumber) || hasDirectEmpPrefix) {
       if ((!entities.accountNumber || entities.accountNumber.length <= 9) && !entities.aadharNumber) {
         entities.employeeCode = rawCode;
       }
@@ -677,7 +787,9 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
   const genericTokenMatch = message.match(/\b([A-Za-z]{1,5}\d+[A-Za-z0-9_-]*|\d+[A-Za-z]+[A-Za-z0-9_-]*|\d{4,10})\b/);
   if (genericTokenMatch) {
     const candidate = genericTokenMatch[1].trim();
-    if (!SEARCH_STOP_WORDS.has(candidate.toLowerCase()) && !/^(salary|payslip|detail|details|attendance|leave|record|update|status)$/i.test(candidate)) {
+    const isSalaryNumber = salaryNumbers.has(candidate) || salaryNumbers.has(String(parseFloat(candidate)));
+    const isYearNumber = /^(19\d{2}|20\d{2})$/.test(candidate) && (parseInt(candidate, 10) >= 1990 && parseInt(candidate, 10) <= 2035);
+    if (!isSalaryNumber && !isYearNumber && !SEARCH_STOP_WORDS.has(candidate.toLowerCase()) && !/^(salary|payslip|detail|details|attendance|leave|record|update|status)$/i.test(candidate)) {
       entities.searchToken = candidate;
     }
   }
@@ -701,7 +813,9 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     candidateName = candidateName.replace(/\s+(along|with|and|aur|their|unka|unki|unke|iska|iski|iske|ke|ki|ka|ko|se|me|mein|par|pe|whose|who|which|that|is|are|the|ye|yeh|wo|woh|bhi|na|ne|his|her|tell|give|show|batao|do|together|including|also|plus|as|having|details?|info|data|records?)\b.*$/i, "").trim();
 
     const lowerCand = candidateName.toLowerCase();
-    if (candidateName && !SEARCH_STOP_WORDS.has(lowerCand) &&
+    const hasForbiddenWord = /\b(kitne|kitna|kitni|kaun|kisne|kiske|kiska|kisko|total|sabka|kisi|koi|bich|beech|darmiyan|andar|tak|employee|employees|karmchari|staff|worker|person|people|log|user|users|admin|sir|batao|dikhao|karo|hai|hain|tha|thi|the|kya|kyu|kaise|kab|kahan|where|who|whom|what|which|how|many|count|salary|attendance|leave|record|records)\b/i.test(candidateName);
+
+    if (candidateName && !hasForbiddenWord && !SEARCH_STOP_WORDS.has(lowerCand) &&
         !/^(employee|employees|karmchari|total|count|salary|attendance|branch|active|inactive|highest|lowest|list|all|kitne|sankhya|data)$/i.test(lowerCand)) {
       entities.employeeName = candidateName;
       entities.nameFilter = candidateName;
@@ -1085,7 +1199,7 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     !entities.employeeCode;
 
   const isSalaryCount = /\b(salary|pagar|tankha|vetan|salaryfile)\b/i.test(normalized) &&
-    /\b(kitne|how many|sankhya|ginti|total\s*count|kitne\s*log|kitne\s*karmchari|kitne\s*employees)\b/i.test(normalized) &&
+    (/\b(kitne|how many|sankhya|ginti|total\s*count|kitne\s*log|kitne\s*karmchari|kitne\s*employees)\b/i.test(normalized) || ((entities.salaryThreshold != null || entities.isSalaryRange) && /\b(kitne|how many|count|sankhya|ginti)\b/i.test(normalized))) &&
     !entities.employeeCode;
 
   // Miss Punch / Regularization Queries (AutoVyn attendancetable.mipunch_reason = 1 or 53, Misc_Type = 92)
@@ -2075,15 +2189,43 @@ WHERE 1=1`;
     case "SALARY_COUNT_AGGREGATE":
       {
         const loc = entities.branch || entities.locCode;
+        const op = entities.salaryComparison || ">";
+        const threshold = entities.salaryThreshold;
+
+        let salaryFilter = `(ISNULL([S].[Final_Payment], 0) > 0 OR ISNULL([S].[Gross_Earn], 0) > 0)`;
+        if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
+          const min = entities.salaryMin;
+          const max = entities.salaryMax;
+          if (entities.salaryField === "Basic_Earn") {
+            salaryFilter = `(ISNULL([S].[Basic_Earn], 0) BETWEEN ${min} AND ${max})`;
+          } else if (entities.salaryField === "Final_Payment") {
+            salaryFilter = `(ISNULL([S].[Final_Payment], 0) BETWEEN ${min} AND ${max})`;
+          } else {
+            salaryFilter = `((ISNULL([S].[Final_Payment], 0) BETWEEN ${min} AND ${max}) OR (ISNULL([S].[Gross_Earn], 0) BETWEEN ${min} AND ${max}))`;
+          }
+        } else if (threshold != null) {
+          if (entities.salaryField === "Basic_Earn") {
+            salaryFilter = `ISNULL([S].[Basic_Earn], 0) ${op} ${threshold}`;
+          } else if (entities.salaryField === "Final_Payment") {
+            salaryFilter = `ISNULL([S].[Final_Payment], 0) ${op} ${threshold}`;
+          } else {
+            salaryFilter = `(ISNULL([S].[Final_Payment], 0) ${op} ${threshold} OR ISNULL([S].[Gross_Earn], 0) ${op} ${threshold})`;
+          }
+        }
+
         let sql = `SELECT 
   COUNT(DISTINCT [S].[Emp_Code]) AS [TotalEmployeesWithSalary]
 FROM [dbo].[SALARYFILE] AS [S] WITH (NOLOCK)
-WHERE (ISNULL([S].[Final_Payment], 0) > 0 OR ISNULL([S].[Gross_Earn], 0) > 0)`;
+WHERE ${salaryFilter}`;
         if (month) sql += ` AND [S].[SalMnth] = '${month}'`;
         if (year) sql += ` AND [S].[salyear] = '${year}'`;
         if (loc) {
           const cleanLoc = loc.replace(/'/g, "''");
           sql += ` AND ([S].[Loc_Code] = '${cleanLoc}' OR CONVERT(varchar(50), [S].[Loc_Code]) = '${cleanLoc}')`;
+        }
+        if (!month && !year) {
+          sql += ` AND [S].[salyear] = (SELECT MAX(salyear) FROM [dbo].[SALARYFILE] WITH (NOLOCK))
+  AND [S].[SalMnth] = (SELECT MAX(SalMnth) FROM [dbo].[SALARYFILE] WITH (NOLOCK) WHERE salyear = (SELECT MAX(salyear) FROM [dbo].[SALARYFILE] WITH (NOLOCK)))`;
         }
         return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
       }
@@ -2115,8 +2257,9 @@ WHERE [S].[PF_Employee] IS NOT NULL AND ISNULL([S].[PF_Employee], 0) > 0`;
       }
 
     case "SALARY_PF_DEDUCTION":
-      if (emp || entities.searchToken) {
-        const cleanEmp = (emp || entities.searchToken).replace(/'/g, "''");
+      const specificEmp = (emp && emp !== String(entities.year) && emp !== "2024" && emp !== "2025" && emp !== "2026") ? emp : ((entities.searchToken && entities.searchToken !== String(entities.year) && entities.searchToken !== "2024" && entities.searchToken !== "2025" && entities.searchToken !== "2026") ? entities.searchToken : null);
+      if (specificEmp) {
+        const cleanEmp = specificEmp.replace(/'/g, "''");
         let sql = `SELECT TOP 50
   LTRIM(RTRIM(CONVERT(varchar(50), ISNULL([E].[EMPCODE], [S].[Emp_Code])))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
@@ -2140,8 +2283,8 @@ WHERE (LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = '${cleanEmp}' OR LTR
         if (year) sql += ` AND [S].[salyear] = ${year}`;
         sql += ` ORDER BY [S].[salyear] DESC, [S].[SalMnth] DESC;`;
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
-      } else if (month || year) {
-        let sql = `SELECT TOP 200
+      } else {
+        let sql = `SELECT
   LTRIM(RTRIM(CONVERT(varchar(50), ISNULL([E].[EMPCODE], [S].[Emp_Code])))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
   [E].[PFNUMBER] AS [PFNUMBER],
@@ -2163,16 +2306,64 @@ WHERE [S].[PF_Employee] IS NOT NULL AND ISNULL([S].[PF_Employee], 0) > 0`;
         if (month) sql += ` AND [S].[SalMnth] = ${month}`;
         if (year) sql += ` AND [S].[salyear] = ${year}`;
         if (branch) sql += ` AND [E].[LOCATION] = '${branch.replace(/'/g, "''")}'`;
-        sql += ` ORDER BY ISNULL([S].[PF_Employee], 0) DESC, [E].[EMPCODE];`;
+        sql += ` ORDER BY [S].[salyear] DESC, [S].[SalMnth] DESC, ISNULL([S].[PF_Employee], 0) DESC, [E].[EMPCODE];`;
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
       }
-      break;
 
     case "EMPLOYEE_SALARY_HISTORY":
     case "SELF_SALARY":
     case "SALARY_REPORT":
       if (entities.aggregation === "SUM" && !emp) {
         return getDeterministicSQLTemplate({ intent: "SALARY_TOTAL_AGGREGATE", entities, userContext });
+      }
+      if ((entities.isSalaryRange || entities.salaryThreshold != null) && !emp) {
+        let salaryFilter = `(ISNULL([S].[Final_Payment], 0) > 0 OR ISNULL([S].[Gross_Earn], 0) > 0)`;
+        if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
+          const min = entities.salaryMin;
+          const max = entities.salaryMax;
+          if (entities.salaryField === "Basic_Earn") {
+            salaryFilter = `(ISNULL([S].[Basic_Earn], 0) BETWEEN ${min} AND ${max})`;
+          } else if (entities.salaryField === "Final_Payment") {
+            salaryFilter = `(ISNULL([S].[Final_Payment], 0) BETWEEN ${min} AND ${max})`;
+          } else {
+            salaryFilter = `((ISNULL([S].[Final_Payment], 0) BETWEEN ${min} AND ${max}) OR (ISNULL([S].[Gross_Earn], 0) BETWEEN ${min} AND ${max}))`;
+          }
+        } else if (entities.salaryThreshold != null) {
+          const op = entities.salaryComparison || ">";
+          const threshold = entities.salaryThreshold;
+          if (entities.salaryField === "Basic_Earn") {
+            salaryFilter = `ISNULL([S].[Basic_Earn], 0) ${op} ${threshold}`;
+          } else if (entities.salaryField === "Final_Payment") {
+            salaryFilter = `ISNULL([S].[Final_Payment], 0) ${op} ${threshold}`;
+          } else {
+            salaryFilter = `(ISNULL([S].[Final_Payment], 0) ${op} ${threshold} OR ISNULL([S].[Gross_Earn], 0) ${op} ${threshold})`;
+          }
+        }
+
+        let sql = `SELECT TOP 100
+  LTRIM(RTRIM(CONVERT(varchar(50), ISNULL([E].[EMPCODE], [S].[Emp_Code])))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  [S].[SalMnth] AS [SalaryMonth],
+  [S].[salyear] AS [SalaryYear],
+  DATENAME(month, DATEFROMPARTS([S].[salyear], [S].[SalMnth], 1)) AS [MonthName],
+  ISNULL([S].[Final_Payment], 0) AS [NetSalary],
+  ISNULL([S].[Gross_Earn], 0) AS [GrossEarnings],
+  ISNULL([S].[Basic_Earn], 0) AS [BasicEarnings],
+  [E].[LOCATION] AS [Location],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation]
+FROM [dbo].[SALARYFILE] AS [S] WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+WHERE ${salaryFilter}`;
+        if (month) sql += ` AND [S].[SalMnth] = ${month}`;
+        if (year) sql += ` AND [S].[salyear] = ${year}`;
+        if (branch) sql += ` AND [E].[LOCATION] = '${branch.replace(/'/g, "''")}'`;
+        if (!month && !year) {
+          sql += ` AND [S].[salyear] = (SELECT MAX(salyear) FROM [dbo].[SALARYFILE] WITH (NOLOCK))
+  AND [S].[SalMnth] = (SELECT MAX(SalMnth) FROM [dbo].[SALARYFILE] WITH (NOLOCK) WHERE salyear = (SELECT MAX(salyear) FROM [dbo].[SALARYFILE] WITH (NOLOCK)))`;
+        }
+        sql += ` ORDER BY ISNULL([S].[Final_Payment], ISNULL([S].[Gross_Earn], 0)) DESC;`;
+        return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
       }
       if (emp || entities.searchToken) {
         const cleanEmp = (emp || entities.searchToken).replace(/'/g, "''");
@@ -3472,6 +3663,12 @@ const canonicalizeQueryPattern = (text) => {
   norm = norm.replace(/\b[a-zA-Z]{2,30}\s+(?:name|naam)\s+ke\b/gi, "<NAME> name ke");
   norm = norm.replace(/\b(?:named|with\s+(?:the\s+)?name|whose\s+name\s+is|name\s+is|name\s+of)\s+[a-zA-Z]{2,30}\b/gi, "named <NAME>");
 
+  // 1.9. Normalize salary ranges and amounts before employee codes
+  norm = norm.replace(/\b(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*se\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(?:ke\s*(?:bich|beech|darmiyan|andar|madhya)|tak)/gi, "<SALARY_RANGE_MIN> se <SALARY_RANGE_MAX> ke bich");
+  norm = norm.replace(/between\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:and|to|-)\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?/gi, "between <SALARY_RANGE_MIN> and <SALARY_RANGE_MAX>");
+  norm = norm.replace(/\b(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(?:se\s*(?:jyada|adhik|upar|bada)|greater\s*than|more\s*than|above|over)/gi, "<SALARY_THRESHOLD> se jyada");
+  norm = norm.replace(/\b(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:k\b|hazar\b|lakh\b|lac\b)?\s*(?:rupay|rupaye|rupee|rupees|rs\.?|inr|₹)?\s*(?:se\s*(?:kam|niche|chhota)|less\s*than|below|under)/gi, "<SALARY_THRESHOLD> se kam");
+
   // 2. Normalize 4-digit years (2020-2030)
   norm = norm.replace(/\b(202[0-9])\b/g, "<YEAR>");
 
@@ -3479,7 +3676,7 @@ const canonicalizeQueryPattern = (text) => {
   const monthRegex = /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\b/g;
   norm = norm.replace(monthRegex, "<MONTH>");
 
-  // 4. Normalize 4-10 digit employee codes (ignore already replaced <YEAR>)
+  // 4. Normalize 4-10 digit employee codes (ignore already replaced placeholders)
   norm = norm.replace(/\b\d{4,10}\b/g, "<EMP_CODE>");
 
   // 5. Clean punctuation
@@ -3685,18 +3882,58 @@ const matchLearnedSimilarQuery = async ({ sequelize, message, originalMessage, i
       if (entities.specificDate && !adaptedSQL.includes(entities.specificDate)) {
         adaptedSQL = adaptedSQL.replace(/dateoffice\s*=\s*'\d{4}-\d{2}-\d{2}'/gi, `dateoffice = '${entities.specificDate}'`);
       }
-      // Limit Adapter: If query asks for "top 5", "top 10", "top 3", adapt "TOP \d+" in SQL
+      // Limit Adapter: If query asks for "kon kon" / "kaun kaun" / "list", strip TOP limit completely
+      const isKonKonLimit = /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(message || "") ||
+        /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(currQ || "");
+
       const topMatch = (message || "").match(/\btop\s*(\d+)\b/i);
-      if (topMatch) {
+      if (isKonKonLimit) {
+        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+TOP\s+\d+\b/i, "SELECT");
+        adaptedSQL = adaptedSQL.replace(/\{\{limit\}\}/gi, "");
+      } else if (topMatch) {
         const reqLimit = parseInt(topMatch[1], 10);
         adaptedSQL = adaptedSQL.replace(/\bSELECT\s+TOP\s+\d+\b/i, `SELECT TOP ${reqLimit}`);
+        adaptedSQL = adaptedSQL.replace(/\{\{limit\}\}/gi, String(reqLimit));
       } else if (/\b(sabse\s*jyada\s*kiski|kiski\s*salary\s*sabse\s*jyada|who\s*has\s*the\s*highest|kiski\s*salary\s*pay\s*hui|highest\s*earner)\b/i.test(message || "")) {
         // Singular highest query
         adaptedSQL = adaptedSQL.replace(/\bSELECT\s+TOP\s+\d+\b/i, `SELECT TOP 1`);
+        adaptedSQL = adaptedSQL.replace(/\{\{limit\}\}/gi, "1");
+      }
+
+      // Salary Range & Threshold Dynamic Parameter Adapters:
+      if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
+        if (adaptedSQL.includes("{{salaryMin}}") || adaptedSQL.includes("{{salaryMax}}")) {
+          adaptedSQL = adaptedSQL.replace(/\{\{salaryMin\}\}/gi, entities.salaryMin);
+          adaptedSQL = adaptedSQL.replace(/\{\{salaryMax\}\}/gi, entities.salaryMax);
+        } else {
+          // Dynamically replace concrete range values if learned rule had static numbers
+          adaptedSQL = adaptedSQL.replace(/([><]=?\s*)'?(?:20000|\d{4,7})'?(\s+AND\s+[A-Za-z0-9_.\[\]\s]+[><]=?\s*)'?(?:50000|\d{4,7})'?/i, (m, p1, p2) => {
+            return `${p1}${entities.salaryMin}${p2}${entities.salaryMax}`;
+          });
+          adaptedSQL = adaptedSQL.replace(/(BETWEEN\s+)'?(?:20000|\d{4,7})'?(\s+AND\s+)'?(?:50000|\d{4,7})'?/gi, `$1${entities.salaryMin}$2${entities.salaryMax}`);
+        }
+      }
+
+      if (entities.salaryThreshold != null) {
+        if (adaptedSQL.includes("{{salaryThreshold}}")) {
+          adaptedSQL = adaptedSQL.replace(/\{\{salaryThreshold\}\}/gi, entities.salaryThreshold);
+        }
+      }
+
+      if (entities.branch && adaptedSQL.includes("{{branch}}")) {
+        adaptedSQL = adaptedSQL.replace(/\{\{branch\}\}/gi, entities.branch);
       }
 
       if (entities.employeeCode && entities.employeeCode !== "2024" && entities.employeeCode !== "2025" && entities.employeeCode !== "2026" && entities.employeeCode !== String(entities.year)) {
+        if ((entities.salaryThreshold && (entities.employeeCode === String(entities.salaryThreshold) || parseFloat(entities.employeeCode) === entities.salaryThreshold)) ||
+            (entities.isSalaryRange && (entities.employeeCode === String(entities.salaryMin) || entities.employeeCode === String(entities.salaryMax) || parseFloat(entities.employeeCode) === entities.salaryMin || parseFloat(entities.employeeCode) === entities.salaryMax))) {
+          return null;
+        }
         const cleanEmp = entities.employeeCode.replace(/'/g, "''");
+
+        if (adaptedSQL.includes("{{employeeCode}}")) {
+          adaptedSQL = adaptedSQL.replace(/\{\{employeeCode\}\}/gi, cleanEmp);
+        }
 
         // 1. If learned rule had a specific employee code in its question, replace that exact code in the SQL
         const oldEmpInRule = ruleQ.match(/\b(\d{4,10})\b/)?.[1];
@@ -3718,14 +3955,33 @@ const matchLearnedSimilarQuery = async ({ sequelize, message, originalMessage, i
       } else if (entities.isToday) {
         adaptedSQL = adaptedSQL.replace(/(MONTH\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:MONTH\s*\([^)]*\)\s*\)?|\d+)/gi, "$1MONTH(GETDATE())");
         adaptedSQL = adaptedSQL.replace(/(DAY\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:DAY\s*\([^)]*\)\s*\)?|\d+)/gi, "$1DAY(GETDATE())");
-      } else if (entities.month && entities.month >= 1 && entities.month <= 12) {
-        adaptedSQL = adaptedSQL.replace(/(SalMnth\s*=\s*'?)\d+('?)/gi, `$1${entities.month}$2`);
-        adaptedSQL = adaptedSQL.replace(/(MONTH\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:MONTH\s*\([^)]*\)\s*\)?|\d+)/gi, `$1${entities.month}`);
+      }
+      if (entities.month && entities.month >= 1 && entities.month <= 12) {
+        adaptedSQL = adaptedSQL.replace(/\{\{month\}\}/gi, String(entities.month));
+        if (/(?:\[?[A-Za-z0-9_]+\]?\.)?\[?SalMnth\]?\s*=/i.test(adaptedSQL) || /MONTH\s*\(/i.test(adaptedSQL)) {
+          adaptedSQL = adaptedSQL.replace(/((?:\[?[A-Za-z0-9_]+\]?\.)?\[?SalMnth\]?\s*=\s*'?)\d+('?)/gi, `$1${entities.month}$2`);
+          adaptedSQL = adaptedSQL.replace(/(MONTH\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:MONTH\s*\([^)]*\)\s*\)?|\d+)/gi, `$1${entities.month}`);
+        } else if (/(?:FROM|JOIN)\s+\[?(?:dbo\]?\.)?\[?SALARYFILE\]?/i.test(adaptedSQL)) {
+          if (/\bWHERE\b/i.test(adaptedSQL)) {
+            adaptedSQL = adaptedSQL.replace(/\bWHERE\b/i, `WHERE [S].[SalMnth] = ${entities.month} AND`);
+          } else {
+            adaptedSQL += ` WHERE [S].[SalMnth] = ${entities.month}`;
+          }
+        }
       }
 
       if (entities.year && entities.year >= 2000) {
-        adaptedSQL = adaptedSQL.replace(/(salyear\s*=\s*'?)\d{4}('?)/gi, `$1${entities.year}$2`);
-        adaptedSQL = adaptedSQL.replace(/(YEAR\s*\([^)]+\)\s*=\s*)\d{4}/gi, `$1${entities.year}`);
+        adaptedSQL = adaptedSQL.replace(/\{\{year\}\}/gi, String(entities.year));
+        if (/(?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:salyear|SalYear)\]?\s*=/i.test(adaptedSQL) || /YEAR\s*\(/i.test(adaptedSQL)) {
+          adaptedSQL = adaptedSQL.replace(/((?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:salyear|SalYear)\]?\s*=\s*'?)\d{4}('?)/gi, `$1${entities.year}$2`);
+          adaptedSQL = adaptedSQL.replace(/(YEAR\s*\([^)]+\)\s*=\s*)\d{4}/gi, `$1${entities.year}`);
+        } else if (/(?:FROM|JOIN)\s+\[?(?:dbo\]?\.)?\[?SALARYFILE\]?/i.test(adaptedSQL)) {
+          if (/\bWHERE\b/i.test(adaptedSQL)) {
+            adaptedSQL = adaptedSQL.replace(/\bWHERE\b/i, `WHERE ([S].[salyear] = ${entities.year} OR [S].[SalYear] = ${entities.year}) AND`);
+          } else {
+            adaptedSQL += ` WHERE ([S].[salyear] = ${entities.year} OR [S].[SalYear] = ${entities.year})`;
+          }
+        }
       }
 
       // STALE LITERAL GUARD: Check if adaptedSQL still contains literal filters from removed words in oldQ
@@ -3865,11 +4121,27 @@ const matchLearnedSimilarQuery = async ({ sequelize, message, originalMessage, i
           const learnedHasBranch = /\b(branch|location|loc|godown)\b/i.test(r.Normalized_Question) || /(?:LOCATION|BRANCH|Loc_Code)\s*=/i.test(r.SQL_Query);
           if (!queryHasBranch && learnedHasBranch && !isExact) continue;
 
-          // Guard: If user query asks for employee details/data/records/profile/list, do not match a count-only learned rule (unless exact)
-          const isAskingDetails = /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|who\s*all|who\s*are\s*they)\b/i.test(normQuery) ||
-            /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun)\b/i.test(normOriginal);
-          const isLearnedCountOnly = /\bCOUNT\s*\(/i.test(r.SQL_Query) && !/\b(SELECT\s+TOP\s+\d+\s+[^,]+,\s*[^,]+)/i.test(r.SQL_Query);
-          if (isAskingDetails && isLearnedCountOnly && !isExact) continue;
+          // Guard: If user query asks for employee details/data/records/profile/list, do not match a count/aggregate learned rule
+          const isAskingDetails = /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|who\s*are\s*they|which\s*employees|kiske\s*kiske|kisko\s*kisko)\b/i.test(normQuery) ||
+            /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko)\b/i.test(normOriginal);
+          const hasEmployeeColumns = /\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME|EMPLASTNAME)\b/i.test(r.SQL_Query);
+          const isLearnedCount = /\bCOUNT\s*\(/i.test(r.SQL_Query);
+          const isLearnedAggregateOnly = !hasEmployeeColumns || (isLearnedCount && !/\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME)\b/i.test(r.SQL_Query));
+          if (isAskingDetails && isLearnedAggregateOnly) continue;
+          if (isAskingDetails && (r.Intent === "PF_DEDUCTION_COUNT" || r.Intent === "PF_COUNT" || r.Intent === "EMPLOYEE_COUNT")) continue;
+
+          // Guard: If user query asks for a COUNT / HOW MANY, do NOT match a multi-row or non-count learned rule!
+          const isUserCountQuery = (/\b(kitne|how many|total count|sankhya|ginti|kitne\s*log|kitne\s*employee|kitne\s*karmchari)\b/i.test(normQuery) ||
+            /\b(kitne|how many|total count|sankhya|ginti|kitne\s*log|kitne\s*employee|kitne\s*karmchari)\b/i.test(normOriginal) ||
+            ["PF_DEDUCTION_COUNT", "SALARY_COUNT_AGGREGATE", "EMPLOYEE_COUNT", "PRESENT_COUNT", "ABSENT_COUNT", "PF_COUNT", "BANK_ACCOUNT_VERIFY_COUNT", "AADHAAR_VERIFY_COUNT", "PAN_VERIFY_COUNT", "KYC_COUNT", "MISPUNCH_COUNT"].includes(intent)) &&
+            !isAskingDetails;
+          if (isUserCountQuery && !isLearnedCount) continue;
+          if (isUserCountQuery && hasEmployeeColumns && !isLearnedCount) continue;
+          if (isUserCountQuery && (r.Intent === "SALARY_PF_DEDUCTION" || r.Intent === "PF_EMPLOYEE_LIST" || r.Intent === "EMPLOYEE_LOOKUP")) continue;
+
+          // Guard: Strict intent-level mutual exclusion for PF queries
+          if (intent === "SALARY_PF_DEDUCTION" && (r.Intent === "PF_DEDUCTION_COUNT" || r.Intent === "PF_COUNT" || isLearnedAggregateOnly)) continue;
+          if (intent === "PF_DEDUCTION_COUNT" && (r.Intent === "SALARY_PF_DEDUCTION" || r.Intent === "PF_EMPLOYEE_LIST" || !isLearnedCount || hasEmployeeColumns)) continue;
 
           const matchLabel = isExact ? "EXACT_LEARNED_GOLDEN_MATCH" : (isExactCanonical ? "CANONICAL_PATTERN_MATCH" : "SUBSET_LEARNED_GOLDEN_MATCH");
           console.log(`🏆 [V6-RLHF-LearnedGoldenQuery] ${matchLabel} for: "${normQuery}" on learned rule: "${learnedNorm}"`);
@@ -3977,23 +4249,55 @@ const matchLearnedSimilarQuery = async ({ sequelize, message, originalMessage, i
           const learnedHasBranch = /\b(branch|location|loc|godown)\b/i.test(r.Normalized_Question) || /(?:LOCATION|BRANCH|Loc_Code)\s*=/i.test(r.SQL_Query);
           if (!queryHasBranch && learnedHasBranch) continue;
 
-          // Guard: If user query asks for employee details/data/records/profile/list, do not match a count-only learned rule
-          const isAskingDetails = /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|who\s*all|who\s*are\s*they)\b/i.test(normQuery) ||
-            /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun)\b/i.test(normOriginal);
-          const isLearnedCountOnly = /\bCOUNT\s*\(/i.test(r.SQL_Query) && !/\b(SELECT\s+TOP\s+\d+\s+[^,]+,\s*[^,]+)/i.test(r.SQL_Query);
-          if (isAskingDetails && isLearnedCountOnly) continue;
+          // Guard: If user query asks for employee details/data/records/profile/list, do not match a count/aggregate learned rule
+          const isAskingDetails = /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|who\s*are\s*they|which\s*employees|kiske\s*kiske|kisko\s*kisko)\b/i.test(normQuery) ||
+            /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko)\b/i.test(normOriginal);
+          const hasEmployeeColumns = /\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME|EMPLASTNAME)\b/i.test(r.SQL_Query);
+          const isLearnedCount = /\bCOUNT\s*\(/i.test(r.SQL_Query);
+          const isLearnedAggregateOnly = !hasEmployeeColumns || (isLearnedCount && !/\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME)\b/i.test(r.SQL_Query));
+          if (isAskingDetails && isLearnedAggregateOnly) continue;
+          if (isAskingDetails && (r.Intent === "PF_DEDUCTION_COUNT" || r.Intent === "PF_COUNT" || r.Intent === "EMPLOYEE_COUNT")) continue;
+
+          // Guard: Reverse of above! If user query asks for a COUNT / HOW MANY, do not match a non-count rule!
+          const isUserCountQuery = (/\b(kitne|how many|total count|sankhya|ginti|kitne\s*log|kitne\s*employee|kitne\s*karmchari)\b/i.test(normQuery) ||
+            /\b(kitne|how many|total count|sankhya|ginti|kitne\s*log|kitne\s*employee|kitne\s*karmchari)\b/i.test(normOriginal) ||
+            ["PF_DEDUCTION_COUNT", "SALARY_COUNT_AGGREGATE", "EMPLOYEE_COUNT", "PRESENT_COUNT", "ABSENT_COUNT", "PF_COUNT", "BANK_ACCOUNT_VERIFY_COUNT", "AADHAAR_VERIFY_COUNT", "PAN_VERIFY_COUNT", "KYC_COUNT", "MISPUNCH_COUNT"].includes(intent)) &&
+            !isAskingDetails;
+          if (isUserCountQuery && !isLearnedCount) continue;
+          if (isUserCountQuery && hasEmployeeColumns && !isLearnedCount) continue;
+          if (isUserCountQuery && (r.Intent === "SALARY_PF_DEDUCTION" || r.Intent === "PF_EMPLOYEE_LIST" || r.Intent === "EMPLOYEE_LOOKUP")) continue;
+
+          // Guard: Strict intent-level mutual exclusion for PF queries
+          if (intent === "SALARY_PF_DEDUCTION" && (r.Intent === "PF_DEDUCTION_COUNT" || r.Intent === "PF_COUNT" || isLearnedAggregateOnly)) continue;
+          if (intent === "PF_DEDUCTION_COUNT" && (r.Intent === "SALARY_PF_DEDUCTION" || r.Intent === "PF_EMPLOYEE_LIST" || !isLearnedCount || hasEmployeeColumns)) continue;
+
+          const isLearnedSingleEmpRule = /(?:WHERE|AND)\s+.*(?:Emp_Code|EMPCODE|Emp_Id|EMPID)\s*=\s*'?[A-Za-z0-9]+'?/i.test(r.SQL_Query) && !isLearnedCount;
+          if (isUserCountQuery && isLearnedSingleEmpRule) continue;
+
+          // Guard: Threshold / Range Comparison Mutual Exclusion
+          const isUserThresholdQuery = Boolean(
+            entities.isSalaryRange ||
+            entities.salaryThreshold != null ||
+            /\b(se\s*(?:jyada|adhik|upar|bada|kam|niche|chhota)|greater\s*than|more\s*than|above|over|less\s*than|below|under|[><]=?|bich|beech|between)\b/i.test(normQuery) ||
+            /\b(se\s*(?:jyada|adhik|upar|bada|kam|niche|chhota)|greater\s*than|more\s*than|above|over|less\s*than|below|under|[><]=?|bich|beech|between)\b/i.test(normOriginal)
+          );
+          const isLearnedThresholdRule = /[><]=?\s*\d+|BETWEEN\s+\d+\s+AND\s+\d+/i.test(r.SQL_Query) ||
+            /\b(se\s*(?:jyada|adhik|upar|bada|kam|niche|chhota)|greater\s*than|more\s*than|above|over|less\s*than|below|under|[><]=?|bich|beech|between)\b/i.test(r.Normalized_Question);
+          if (isUserThresholdQuery && !isLearnedThresholdRule) continue;
+          if (!isUserThresholdQuery && isLearnedThresholdRule) continue;
 
           let score = effectiveJaccard;
           if (r.Intent && r.Intent === intent && intent !== "GENERAL_DATABASE_QUERY") {
             score += 0.20;
           }
-          if (score > highestScore && score >= 0.55) {
+          const minScoreRequired = (r.Intent && r.Intent === intent) ? 0.70 : 0.85;
+          if (score > highestScore && score >= minScoreRequired) {
             highestScore = score;
             bestMatch = r;
           }
         }
 
-        if (bestMatch && highestScore >= 0.55) {
+        if (bestMatch && highestScore >= 0.70) {
           console.log(`🧠 [V6-RLHF-LearnedMatch] Found learned golden pattern (Score: ${highestScore.toFixed(2)}): "${bestMatch.Normalized_Question}"`);
           const adaptedSQL = adaptSQLForEntities(bestMatch.SQL_Query, bestMatch);
           if (adaptedSQL) {
@@ -4145,40 +4449,76 @@ const extractGuidanceComponents = (rawMessage = "") => {
   let filterClause = null;
   let extractedSQL = null;
 
-  // 1. Direct SQL
-  const sqlMatch = rawMessage.match(/\b(SELECT\s+[\s\S]+?\bFROM\s+[\w\.\[\]]+(?:\s+WHERE\s+[\s\S]+?)?)(?=\s+(?:ye\b|use\b|bhi\b|query\b|batao\b|kar\b|ko\b|se\b|me\b|hai\b|h\b|ok\b|$)|;|\bORDER\s+BY)/i) ||
-    rawMessage.match(/\b(SELECT\s+[\s\S]+?(?:;|\bORDER\s+BY\s+[\w\s\.,_\[\]]+(?:\s+DESC|\s+ASC)?))/i);
-  if (sqlMatch) {
-    extractedSQL = (sqlMatch[1] || sqlMatch[0]).replace(/;+$/, "").trim();
+  // 1. Direct SQL Isolation & Cleaning
+  const selectIdx = rawMessage.search(/\b(SELECT|WITH)\b/i);
+  if (selectIdx !== -1) {
+    let candidate = rawMessage.slice(selectIdx);
+    // Separate trailing Hindi/English conversational words jammed into numbers (e.g. 50000ye -> 50000 ye)
+    candidate = candidate.replace(/(\d+)([a-zA-Z]+)/g, (m, p1, p2) => p1 + " " + p2);
+
+    // Cut off conversational trailers starting with word boundaries
+    const cutTrailerRegex = /\s*(?:\bye\b(?:\s+(?:query|bhi|chalao|use|iuse|run|kar|batao|wala|wali|lagao))?|\bquery\b|\buse\s*karo\b|\biuse\s*karo\b|\bchalao\b|\brun\s*karo\b|\blagao\b|\bto\s*sahi\s*aayega\b|\bisko\b|\bok\b|\btheek\s*hai\b|\bsahi\s*hai\b)[\s\S]*$/i;
+    let cleaned = candidate.replace(cutTrailerRegex, "").replace(/;+$/, "").trim();
+
+    if (/\bSELECT\b[\s\S]+\bFROM\b/i.test(cleaned)) {
+      extractedSQL = cleaned;
+    }
   }
 
-  // 2. Target Table Extraction
-  if (/srv_reminder|service reminder|final_due_date/i.test(norm)) {
-    targetTable = "Srv_Reminder_Tbl";
-  } else if (/salary\s*fil\w*|salaryfile|salary_file|total_earn|basic_earn/i.test(norm)) {
-    targetTable = "SALARYFILE";
-  } else if (/account_no_api/i.test(norm)) {
-    targetTable = "Account_No_Api";
-  } else if (/attendancetable|attendance table|mispunch|punch|haziri/i.test(norm)) {
-    targetTable = "attendancetable";
-  } else if (/employeemaster|employee master|emp master/i.test(norm)) {
-    targetTable = "EMPLOYEEMASTER";
-  } else if (/emp_varify|emp verify/i.test(norm)) {
-    targetTable = "emp_varify";
-  } else if (/misc_mst|misc master/i.test(norm)) {
-    targetTable = "Misc_Mst";
-  } else if (/asset_issue|asset/i.test(norm)) {
-    targetTable = "Asset_Issue";
-  } else if (/jobcard|job_card/i.test(norm)) {
-    targetTable = "JobCard";
-  } else {
-    // Dynamic match against SchemaKnowledgeGraph
-    const tableMatch = rawMessage.match(/\b(?:table|table\s*name|from|in)\s*[:=]?\s*\[?([a-zA-Z0-9_]{3,40})\]?/i) ||
-      rawMessage.match(/\b([a-zA-Z0-9_]{3,40})\s+(?:table\s*)(?:me|se)\b/i);
-    if (tableMatch) {
-      const candidate = tableMatch[1].trim();
-      if (SchemaEngineInstance.tableIndex.has(candidate.toLowerCase())) {
-        targetTable = SchemaEngineInstance.tableIndex.get(candidate.toLowerCase()).tableName;
+  // Fallback regex if selectIdx failed (e.g. embedded inside brackets or formatting)
+  if (!extractedSQL) {
+    const fallbackMatch = rawMessage.match(/\b(SELECT\s+[\s\S]+?\bFROM\s+[\w\.\[\]]+(?:\s+WHERE\s+[\s\S]+?)?)(?=\s+(?:\bye\b|\buse\b|\bbhi\b|\bquery\b|\bbatao\b|\bkar\b|\bko\b|\bse\b|\bme\b|\bhai\b|\bh\b|\bok\b|$)|;|\bORDER\s+BY)/i) ||
+      rawMessage.match(/\b(SELECT\s+[\s\S]+?(?:;|\bORDER\s+BY\s+[\w\s\.,_\[\]]+(?:\s+DESC|\s+ASC)?))/i);
+    if (fallbackMatch) {
+      extractedSQL = (fallbackMatch[1] || fallbackMatch[0]).replace(/;+$/, "").trim();
+    }
+  }
+
+  // Ensure COUNT(*) has an alias so MSSQL returns a named column
+  if (extractedSQL && /\bSELECT\s+COUNT\s*\(\s*(\*|\d+|[A-Za-z0-9_.\[\]]+)\s*\)(?!\s+AS\s+)/i.test(extractedSQL)) {
+    extractedSQL = extractedSQL.replace(/\bSELECT\s+COUNT\s*\(\s*(\*|\d+|[A-Za-z0-9_.\[\]]+)\s*\)(?!\s+AS\s+)/i, "SELECT COUNT($1) AS [TotalEmployees]");
+  }
+
+  // 2. Target Table Extraction from SQL or Message
+  if (extractedSQL) {
+    const fromTableMatch = extractedSQL.match(/\bFROM\s+\[?(?:dbo\]?\.)?\[?([a-zA-Z0-9_]+)\]?/i);
+    if (fromTableMatch) {
+      const cand = fromTableMatch[1];
+      if (SchemaEngineInstance.tableIndex.has(cand.toLowerCase())) {
+        targetTable = SchemaEngineInstance.tableIndex.get(cand.toLowerCase()).tableName;
+      } else {
+        targetTable = cand;
+      }
+    }
+  }
+
+  if (!targetTable) {
+    if (/srv_reminder|service reminder|final_due_date/i.test(norm)) {
+      targetTable = "Srv_Reminder_Tbl";
+    } else if (/salary\s*fil\w*|salaryfile|salary_file|total_earn|basic_earn/i.test(norm)) {
+      targetTable = "SALARYFILE";
+    } else if (/account_no_api/i.test(norm)) {
+      targetTable = "Account_No_Api";
+    } else if (/attendancetable|attendance table|mispunch|punch|haziri/i.test(norm)) {
+      targetTable = "attendancetable";
+    } else if (/employeemaster|employee master|emp master/i.test(norm)) {
+      targetTable = "EMPLOYEEMASTER";
+    } else if (/emp_varify|emp verify/i.test(norm)) {
+      targetTable = "emp_varify";
+    } else if (/misc_mst|misc master/i.test(norm)) {
+      targetTable = "Misc_Mst";
+    } else if (/asset_issue|asset/i.test(norm)) {
+      targetTable = "Asset_Issue";
+    } else if (/jobcard|job_card/i.test(norm)) {
+      targetTable = "JobCard";
+    } else {
+      const tableMatch = rawMessage.match(/\b(?:table|table\s*name|from|in)\s*[:=]?\s*\[?([a-zA-Z0-9_]{3,40})\]?/i) ||
+        rawMessage.match(/\b([a-zA-Z0-9_]{3,40})\s+(?:table\s*)(?:me|se)\b/i);
+      if (tableMatch) {
+        const candidate = tableMatch[1].trim();
+        if (SchemaEngineInstance.tableIndex.has(candidate.toLowerCase())) {
+          targetTable = SchemaEngineInstance.tableIndex.get(candidate.toLowerCase()).tableName;
+        }
       }
     }
   }
@@ -4202,6 +4542,135 @@ const extractGuidanceComponents = (rawMessage = "") => {
 };
 
 /**
+ * Automatically parameterizes a SQL query based on the original question and entities.
+ * Identifies dynamic variables (salary range, threshold, employee code, month, year, branch)
+ * so that the query logic can be reused for any similar question without changing code.
+ */
+const parameterizeLearnedQuery = async ({ originalQuestion = "", sql = "", entities = {}, userContext = {} }) => {
+  if (!sql) return { parameterizedSQL: sql, concreteSQL: sql, variables: [] };
+
+  let paramSQL = sql;
+  const variables = [];
+
+  // Try AI parameterization if OpenAI client is available
+  try {
+    const client = getOpenAIClient();
+    if (client && originalQuestion) {
+      const completion = await client.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI ERP Database Template Architect.
+Analyze the user's natural language question and the corresponding SQL query.
+Identify dynamic variables/parameters that would change across similar queries (e.g. salaryMin, salaryMax, salaryThreshold, employeeCode, employeeName, month, year, branch, designation).
+Replace concrete variable values in the SQL with mustache placeholders: {{salaryMin}}, {{salaryMax}}, {{salaryThreshold}}, {{employeeCode}}, {{month}}, {{year}}, {{branch}}, etc.
+Return a valid JSON object with:
+{
+  "parameterizedSQL": "string with {{placeholders}}",
+  "variables": ["salaryMin", "salaryMax"],
+  "intent": "string (e.g. SALARY_COUNT_AGGREGATE, SALARY_REPORT, EMPLOYEE_LOOKUP, etc.)"
+}`
+          },
+          {
+            role: "user",
+            content: `Original Question: "${originalQuestion}"\nSQL Query: "${sql}"`
+          }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.0
+      });
+
+      const parsed = JSON.parse(completion.choices[0].message.content);
+      if (parsed?.parameterizedSQL && Array.isArray(parsed?.variables) && parsed.variables.length > 0) {
+        return {
+          parameterizedSQL: parsed.parameterizedSQL,
+          concreteSQL: sql,
+          variables: parsed.variables,
+          intent: parsed.intent || null
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("[V6-AI-Parameterizer] Notice:", err?.message);
+  }
+
+  // Deterministic Fast Parameterization Fallback
+  // 1. Range parameters (salaryMin and salaryMax)
+  if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
+    const minVal = entities.salaryMin;
+    const maxVal = entities.salaryMax;
+    const minRegex = new RegExp("([><]=?\\s*)'?" + minVal + "'?", "g");
+    const maxRegex = new RegExp("([><]=?\\s*)'?" + maxVal + "'?", "g");
+    const betweenRegex = new RegExp("(BETWEEN\\s+)'?" + minVal + "'?(\\s+AND\\s+)'?" + maxVal + "'?", "gi");
+
+    if (betweenRegex.test(paramSQL)) {
+      paramSQL = paramSQL.replace(betweenRegex, "$1{{salaryMin}}$2{{salaryMax}}");
+      variables.push("salaryMin", "salaryMax");
+    } else {
+      if (minRegex.test(paramSQL)) {
+        paramSQL = paramSQL.replace(minRegex, "$1{{salaryMin}}");
+        variables.push("salaryMin");
+      }
+      if (maxRegex.test(paramSQL)) {
+        paramSQL = paramSQL.replace(maxRegex, "$1{{salaryMax}}");
+        variables.push("salaryMax");
+      }
+    }
+  }
+
+  // 2. Threshold parameter
+  if (entities.salaryThreshold != null && !entities.isSalaryRange) {
+    const threshRegex = new RegExp("([><]=?\\s*)'?" + entities.salaryThreshold + "'?", "g");
+    if (threshRegex.test(paramSQL)) {
+      paramSQL = paramSQL.replace(threshRegex, "$1{{salaryThreshold}}");
+      variables.push("salaryThreshold");
+    }
+  }
+
+  // 3. Employee Code parameter
+  if (entities.employeeCode && entities.employeeCode !== "2024" && entities.employeeCode !== "2025" && entities.employeeCode !== "2026") {
+    const empRegex = new RegExp("((?:Emp_Code|EMPCODE|Emp_Id|EMPID)[^=]*=\\s*')?" + entities.employeeCode + "(')?", "gi");
+    if (empRegex.test(paramSQL)) {
+      paramSQL = paramSQL.replace(empRegex, "$1{{employeeCode}}$2");
+      variables.push("employeeCode");
+    }
+  }
+
+  // 4. Branch / Location parameter
+  if (entities.branch) {
+    const bRegex = new RegExp("((?:LOCATION|BRANCH|Loc_Code)[^=]*=\\s*')" + entities.branch + "(')", "gi");
+    if (bRegex.test(paramSQL)) {
+      paramSQL = paramSQL.replace(bRegex, "$1{{branch}}$2");
+      variables.push("branch");
+    }
+  }
+
+  // 5. Month & Year parameter
+  if (entities.month) {
+    const mRegex = new RegExp("((?:SalMnth|MONTH\\([^)]+\\))\\s*=\\s*'?)" + entities.month + "('?)", "gi");
+    if (mRegex.test(paramSQL)) {
+      paramSQL = paramSQL.replace(mRegex, "$1{{month}}$2");
+      variables.push("month");
+    }
+  }
+  if (entities.year) {
+    const yRegex = new RegExp("((?:salyear|YEAR\\([^)]+\\))\\s*=\\s*'?)" + entities.year + "('?)", "gi");
+    if (yRegex.test(paramSQL)) {
+      paramSQL = paramSQL.replace(yRegex, "$1{{year}}$2");
+      variables.push("year");
+    }
+  }
+
+  return {
+    parameterizedSQL: paramSQL,
+    concreteSQL: sql,
+    variables,
+    intent: null
+  };
+};
+
+/**
  * Permanently learns user correction / data-location rule into:
  * 1. AI_SQL_Learning_Tbl (Golden queries with variations)
  * 2. AI_SQL_Corrections (Active rule)
@@ -4213,6 +4682,8 @@ const persistLearnedDataRule = async ({
   sequelize,
   originalQuestion,
   validatedSQL,
+  parameterizedSQL = null,
+  variables = [],
   targetTable,
   filterClause,
   intent = "DYNAMIC_CUSTOM",
@@ -4231,13 +4702,21 @@ const persistLearnedDataRule = async ({
     // 1. Ensure Learning Tables Exist
     await ensureLearningTablesExist(sequelize);
 
-    // Purge any mis-learned cross-domain entries (e.g. SALARYFILE tagged as WORK_ANNIVERSARY)
+    // Purge any mis-learned cross-domain entries or corrupt dummy queries
     await sequelize.query(`
       IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
       BEGIN
         DELETE FROM [dbo].[AI_SQL_Learning_Tbl]
         WHERE (Tables_Used = 'SALARYFILE' AND (Normalized_Question LIKE '%annivers%' OR Normalized_Question LIKE '%salgir%'))
-           OR (Intent = 'WORK_ANNIVERSARY' AND Tables_Used = 'SALARYFILE');
+           OR (Intent = 'WORK_ANNIVERSARY' AND Tables_Used = 'SALARYFILE')
+           OR (Tables_Used = 'SALARYFILE' AND CONVERT(NVARCHAR(MAX), SQL_Query) LIKE '%WHERE 1=1%' AND CONVERT(NVARCHAR(MAX), SQL_Query) LIKE '%ORDER BY S.[Gross_Earn]%')
+           OR ((Normalized_Question LIKE '%kitne%pf%' OR Normalized_Question LIKE '%how many%pf%') AND CONVERT(NVARCHAR(MAX), SQL_Query) LIKE '%SELECT TOP 500%')
+           OR ((Normalized_Question LIKE '%kitne%pf%' OR Normalized_Question LIKE '%how many%pf%') AND CONVERT(NVARCHAR(MAX), SQL_Query) NOT LIKE '%COUNT%');
+      END
+      IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NOT NULL
+      BEGIN
+        DELETE FROM [dbo].[AI_SQL_Corrections]
+        WHERE Target_Table = 'SALARYFILE' AND CONVERT(NVARCHAR(MAX), Correct_SQL_Pattern) LIKE '%WHERE 1=1%' AND CONVERT(NVARCHAR(MAX), Correct_SQL_Pattern) LIKE '%ORDER BY S.[Gross_Earn]%';
       END
     `, { type: QueryTypes.RAW }).catch(() => { });
 
@@ -4245,6 +4724,21 @@ const persistLearnedDataRule = async ({
     const questionVariations = new Set();
     if (originalQuestion) {
       questionVariations.add(normalizeLower(originalQuestion));
+    }
+
+    if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
+      const min = entities.salaryMin;
+      const max = entities.salaryMax;
+      questionVariations.add(`${min} se ${max} ke bich kitne employee ki salary hai`);
+      questionVariations.add(`${max} se ${min} ke bich kitne employee ki salary hai`);
+      questionVariations.add(`${min} se ${max} tak kitne employee ki salary hai`);
+      questionVariations.add(`${min} se ${max} ke beech kitne karmchari ki salary hai`);
+      questionVariations.add(`salary between ${min} and ${max}`);
+      questionVariations.add(`between ${min} and ${max} salary count`);
+      questionVariations.add(`how many employees have salary between ${min} and ${max}`);
+      questionVariations.add(`<SALARY_RANGE_MIN> se <SALARY_RANGE_MAX> ke bich kitne employee ki salary hai`);
+      questionVariations.add(`between <SALARY_RANGE_MIN> and <SALARY_RANGE_MAX> salary count`);
+      questionVariations.add(`how many employees have salary between <SALARY_RANGE_MIN> and <SALARY_RANGE_MAX>`);
     }
 
     // Keyword & Intent-based generalized variations
@@ -4264,15 +4758,18 @@ const persistLearnedDataRule = async ({
       questionVariations.add("service reminders due list");
       questionVariations.add("service due list");
       questionVariations.add("aaj ke service reminder");
-    } else if (/pf\s*deduct|provident\s*fund\s*deduct|pf\s*katoti|kitne\s*employee\s*ka\s*pf/i.test(normOrig) || intent === "SALARY_PF_DEDUCTION" || intent === "PF_DEDUCTION_COUNT") {
-      questionVariations.add("pf deduction");
-      questionVariations.add("pf deduction list");
-      questionVariations.add("pf deduction report");
+    } else if (intent === "PF_DEDUCTION_COUNT" || (/\b(kitne|how many|count|sankhya|ginti)\b/i.test(normOrig) && /\b(pf|provident)\b/i.test(normOrig))) {
       questionVariations.add("pf deduction count");
       questionVariations.add("kitne employee ka pf deduction hua hai");
+      questionVariations.add("kitne employee ki salary se pf deduction hota hai");
+      questionVariations.add("kitne logo ka pf kata hai");
+      questionVariations.add("how many employees had pf deductions");
+    } else if (intent === "SALARY_PF_DEDUCTION" || (/\b(kon\s*kon|kaun\s*kaun|who\s*all|which|kiska|kiska\s*kiska|list)\b/i.test(normOrig) && /\b(pf|provident)\b/i.test(normOrig))) {
+      questionVariations.add("pf deduction list");
       questionVariations.add("kiska kiska pf kata hai");
-      questionVariations.add("march 2026 me kitne employee ka pf deduction hua hai");
-      questionVariations.add("march 2026 me pf deduction");
+      questionVariations.add("kon kon employee ka pf deduction hua hai");
+      questionVariations.add("kon kon employee ki salary se pf deduction hota hai");
+      questionVariations.add("kaun kaun employee ka pf kata hai");
     } else if (/salary|pagar|tankha|tankhwa|highest payment|payment/i.test(normOrig) || intent === "HIGHEST_SALARY_RANKING") {
       questionVariations.add("highest salary");
       questionVariations.add("highest payment");
@@ -4290,18 +4787,14 @@ const persistLearnedDataRule = async ({
       questionVariations.add("laptop issue report");
     }
 
-    // Generalized template SQL without specific employee code for generic queries
-    let generalizedSQL = validatedSQL;
-    if (entities.employeeCode) {
-      generalizedSQL = generalizedSQL.replace(new RegExp(`(A\\.\\[Emp_Code\\]\\s*=\\s*')${entities.employeeCode}(')`, 'gi'), "$1{EMPCODE}$2");
-      generalizedSQL = generalizedSQL.replace(new RegExp(`(E\\.\\[EMPCODE\\]\\s*=\\s*')${entities.employeeCode}(')`, 'gi'), "$1{EMPCODE}$2");
-    }
+    // Template SQL (parameterized if available, otherwise generalized)
+    let templateSQL = (parameterizedSQL || validatedSQL).replace(/'/g, "''");
 
     // 3. Save into AI_SQL_Learning_Tbl
     for (const q of questionVariations) {
       const escapedQ = q.replace(/'/g, "''");
       const isSpecific = (q === normalizeLower(originalQuestion));
-      const sqlToSave = isSpecific ? escapedSQL : generalizedSQL.replace(/'/g, "''");
+      const sqlToSave = isSpecific ? escapedSQL : templateSQL;
 
       const mergeSql = `
         IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
@@ -4324,12 +4817,12 @@ const persistLearnedDataRule = async ({
       await sequelize.query(mergeSql, { type: QueryTypes.RAW }).catch(() => { });
     }
 
-    // 4. Save into AI_SQL_Corrections
+    // 4. Save into AI_SQL_Corrections (store templateSQL so future matches can parameterize)
     const corrInsertSql = `
       IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NOT NULL
       BEGIN
         INSERT INTO [dbo].[AI_SQL_Corrections] (Correction_Type, User_Message, Target_Table, Correct_SQL_Pattern, Rule_Description, Is_Active, Created_At)
-        VALUES ('USER_DATA_LOCATION', '${escapedMsg}', '${escapedTable}', '${escapedSQL}', '${escapedDesc}', 1, GETDATE());
+        VALUES ('USER_DATA_LOCATION', '${escapedMsg}', '${escapedTable}', '${templateSQL}', '${escapedDesc}', 1, GETDATE());
       END
     `;
     await sequelize.query(corrInsertSql, { type: QueryTypes.RAW }).catch(() => { });
@@ -4445,11 +4938,13 @@ const handleUserCorrectionAndDataLocation = async ({
     } else {
       originalIntent = "SALARY_PF_DEDUCTION";
     }
-  } else if (extractedSQL && (/SALARYFILE/i.test(extractedSQL) || /Final_Payment|Gross_Earn|Basic_Earn/i.test(extractedSQL))) {
-    if (/ORDER\s+BY.+?(?:DESC|ASC)/i.test(extractedSQL) || (/TOP\s+\d+/i.test(extractedSQL) && !/Emp_Code\s*=/i.test(extractedSQL))) {
+  } else if (extractedSQL && (/SALARYFILE/i.test(extractedSQL) || /Final_Payment|Gross_Earn|Basic_Earn|Basic/i.test(extractedSQL))) {
+    if (/COUNT\s*\(/i.test(extractedSQL)) {
+      originalIntent = "SALARY_COUNT_AGGREGATE";
+    } else if (/ORDER\s+BY.+?(?:DESC|ASC)/i.test(extractedSQL) || (/TOP\s+\d+/i.test(extractedSQL) && !/Emp_Code\s*=/i.test(extractedSQL))) {
       originalIntent = "HIGHEST_SALARY_RANKING";
     } else {
-      originalIntent = "EMPLOYEE_SALARY_HISTORY";
+      originalIntent = "SALARY_REPORT";
     }
   } else if (extractedSQL && (/attendancetable/i.test(extractedSQL) || /mipunch|dateoffice/i.test(extractedSQL))) {
     originalIntent = "MISPUNCH_REPORT";
@@ -4470,11 +4965,13 @@ const handleUserCorrectionAndDataLocation = async ({
     } else {
       originalIntent = "SALARY_PF_DEDUCTION";
     }
-  } else if (extractedSQL && (/SALARYFILE/i.test(extractedSQL) || /Final_Payment|Gross_Earn|Basic_Earn/i.test(extractedSQL))) {
-    if (/ORDER\s+BY.+?(?:DESC|ASC)/i.test(extractedSQL) || (/TOP\s+\d+/i.test(extractedSQL) && !/Emp_Code\s*=/i.test(extractedSQL))) {
+  } else if (extractedSQL && (/SALARYFILE/i.test(extractedSQL) || /Final_Payment|Gross_Earn|Basic_Earn|Basic/i.test(extractedSQL))) {
+    if (/COUNT\s*\(/i.test(extractedSQL)) {
+      originalIntent = "SALARY_COUNT_AGGREGATE";
+    } else if (/ORDER\s+BY.+?(?:DESC|ASC)/i.test(extractedSQL) || (/TOP\s+\d+/i.test(extractedSQL) && !/Emp_Code\s*=/i.test(extractedSQL))) {
       originalIntent = "HIGHEST_SALARY_RANKING";
     } else {
-      originalIntent = "EMPLOYEE_SALARY_HISTORY";
+      originalIntent = "SALARY_REPORT";
     }
   }
 
@@ -4539,37 +5036,47 @@ const handleUserCorrectionAndDataLocation = async ({
       ORDER BY A.[dateoffice] DESC
     `.trim();
   } else if (targetTable === "SALARYFILE") {
-    // Specialized SALARYFILE query
-    let whereParts = ["1=1"];
-    if (resolvedEntities.employeeCode) {
-      whereParts.push(`S.[Emp_Code] = '${resolvedEntities.employeeCode.replace(/'/g, "''")}'`);
-    } else if (resolvedEntities.employeeName) {
-      whereParts.push(`(E.[EMPFIRSTNAME] LIKE '%${resolvedEntities.employeeName.replace(/'/g, "''")}%' OR S.[Emp_Code] LIKE '%${resolvedEntities.employeeName.replace(/'/g, "''")}%')`);
-    }
-    if (resolvedEntities.month) {
-      whereParts.push(`S.[SalMnth] = ${resolvedEntities.month}`);
-    }
-    if (resolvedEntities.year) {
-      whereParts.push(`S.[salyear] = ${resolvedEntities.year}`);
-    }
+    if (originalIntent === "SALARY_COUNT_AGGREGATE" || /kitne|how many|count|sankhya/i.test(originalQuestion)) {
+      let whereFilter = filterClause || "(ISNULL(S.[Final_Payment], 0) > 0 OR ISNULL(S.[Gross_Earn], 0) > 0)";
+      if (resolvedEntities.isSalaryRange && resolvedEntities.salaryMin != null && resolvedEntities.salaryMax != null) {
+        whereFilter = `(S.[Basic] > ${resolvedEntities.salaryMin} AND S.[Basic] <= ${resolvedEntities.salaryMax})`;
+      }
+      generatedSQL = `
+        SELECT COUNT(*) AS [TotalEmployees]
+        FROM [dbo].[SALARYFILE] S WITH (NOLOCK)
+        INNER JOIN [dbo].[EMPLOYEEMASTER] E WITH (NOLOCK) ON S.[Emp_Code] = E.[EMPCODE]
+        WHERE ${whereFilter}
+      `.trim();
+    } else {
+      let whereParts = [filterClause || "1=1"];
+      if (resolvedEntities.employeeCode) {
+        whereParts.push(`S.[Emp_Code] = '${resolvedEntities.employeeCode.replace(/'/g, "''")}'`);
+      } else if (resolvedEntities.employeeName) {
+        whereParts.push(`(E.[EMPFIRSTNAME] LIKE '%${resolvedEntities.employeeName.replace(/'/g, "''")}%' OR S.[Emp_Code] LIKE '%${resolvedEntities.employeeName.replace(/'/g, "''")}%')`);
+      }
+      if (resolvedEntities.month) {
+        whereParts.push(`S.[SalMnth] = ${resolvedEntities.month}`);
+      }
+      if (resolvedEntities.year) {
+        whereParts.push(`S.[salyear] = ${resolvedEntities.year}`);
+      }
 
-    generatedSQL = `
-      SELECT TOP 500
-        S.[Emp_Code],
-        LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
-        E.[LOCATION] AS [Branch],
-        S.[SalMnth] AS [Month],
-        S.[salyear] AS [Year],
-        S.[Basic_Earn],
-        S.[HRA_Earn],
-        S.[Gross_Earn],
-        S.[Deducation] AS [TotalDeduction],
-        S.[Final_Payment] AS [NetSalary]
-      FROM [dbo].[SALARYFILE] S WITH (NOLOCK)
-      LEFT JOIN [dbo].[EMPLOYEEMASTER] E WITH (NOLOCK) ON S.[Emp_Code] = E.[EMPCODE]
-      WHERE ${whereParts.join(" AND ")}
-      ORDER BY S.[Gross_Earn] DESC
-    `.trim();
+      generatedSQL = `
+        SELECT TOP 100
+          S.[Emp_Code],
+          LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+          E.[LOCATION] AS [Branch],
+          S.[SalMnth] AS [Month],
+          S.[salyear] AS [Year],
+          S.[Basic] AS [BasicSalary],
+          S.[Gross_Earn],
+          S.[Final_Payment] AS [NetSalary]
+        FROM [dbo].[SALARYFILE] S WITH (NOLOCK)
+        LEFT JOIN [dbo].[EMPLOYEEMASTER] E WITH (NOLOCK) ON S.[Emp_Code] = E.[EMPCODE]
+        WHERE ${whereParts.join(" AND ")}
+        ORDER BY S.[Gross_Earn] DESC
+      `.trim();
+    }
   } else {
     // Dynamic Planner with strict user guidance
     const relevantTables = SchemaEngineInstance.searchRelevantTables(
@@ -4602,7 +5109,8 @@ const handleUserCorrectionAndDataLocation = async ({
   }
 
   // 6. Validate and Repair SQL
-  const validatedSQL = validateAndRepairSQL(generatedSQL, userContext);
+  const isKonKonGuidance = /\b(kon\s*kon|kaun\s*kaun|who\s*all|which\s*employees|kiske\s*kiske|sabka|all\s*employees|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit)\b/i.test(originalQuestion || "");
+  const validatedSQL = validateAndRepairSQL(generatedSQL, userContext, { isKonKonQuery: isKonKonGuidance, noTopLimit: isKonKonGuidance });
   console.log("⚙️ [V6-RLHF-Execute-Guidance]:\n", validatedSQL);
 
   // 7. Execute on Live MSSQL Server
@@ -4620,7 +5128,15 @@ const handleUserCorrectionAndDataLocation = async ({
   const finalSQL = execResult.sql || validatedSQL;
   const sqlExecutionTimeMs = Date.now() - sqlStartTime;
 
-  // 8. Format Human Business Response (AI Formatter with Deterministic Fallback)
+  // 8. Parameterize the Query: identify dynamic variables (salary range, threshold, employee code, etc.)
+  const { parameterizedSQL, variables } = await parameterizeLearnedQuery({
+    originalQuestion,
+    sql: finalSQL,
+    entities: resolvedEntities,
+    userContext
+  });
+
+  // 9. Format Human Business Response (AI Formatter with Deterministic Fallback)
   let formatted = null;
   if (dbRows.length > 0) {
     formatted = await formatResponseViaAI({
@@ -4645,7 +5161,7 @@ const handleUserCorrectionAndDataLocation = async ({
     });
   }
 
-  // Prepend acknowledgment of user guidance
+  // Prepend acknowledgment of user guidance & parameterization note
   let finalAnswer = formatted.answer;
   if (targetTable) {
     if (dbRows.length > 0) {
@@ -4655,6 +5171,10 @@ const handleUserCorrectionAndDataLocation = async ({
     }
   }
 
+  if (variables && variables.length > 0) {
+    finalAnswer += `\n\n🧠 **Dynamic Parameterization:** AI ne is rule ke variables (\`${variables.join(", ")}\`) register kar liye hain. Aage se jab bhi aisi query aayegi (jaise kisi bhi range ya value ke liye), AI automatically yahi logic naye variables ke saath execute karega.`;
+  }
+
   const criticResult = verifyAnswerAgainstEvidence({
     answer: finalAnswer,
     rows: dbRows
@@ -4662,11 +5182,13 @@ const handleUserCorrectionAndDataLocation = async ({
 
   const responseTimeMs = Date.now() - startedAt;
 
-  // 9. PERMANENT AUTONOMOUS SELF-LEARNING (Auto-train golden rule)
+  // 10. PERMANENT AUTONOMOUS SELF-LEARNING (Auto-train golden rule with parameterized SQL)
   await persistLearnedDataRule({
     sequelize,
     originalQuestion,
     validatedSQL: finalSQL,
+    parameterizedSQL,
+    variables,
     targetTable,
     filterClause,
     intent: originalIntent,
@@ -4857,7 +5379,7 @@ Logged In User Role: ${userContext.role}, EmpCode: ${userContext.employeeCode ||
 // ENGINE 6: SQL SECURITY VALIDATOR & AUTO-REPAIR ENGINE
 // ============================================================================
 
-const validateAndRepairSQL = (rawSql, userContext) => {
+const validateAndRepairSQL = (rawSql, userContext, options = {}) => {
   let sql = String(rawSql || "").trim();
 
   // Strip markdown code fences if present
@@ -4874,8 +5396,22 @@ const validateAndRepairSQL = (rawSql, userContext) => {
     throw new ApiError(400, "Invalid SQL: Statement must be a SELECT query.");
   }
 
-  // 2. Ensure TOP limit
-  if (!/\bTOP\s+\d+\b/i.test(sql) && !/\bCOUNT\s*\(/i.test(sql)) {
+  // 2. Ensure TOP limit OR handle unrestricted employee/record queries (e.g. "kon kon employee", "sabka", "all")
+  const isNoTopExplicit = Boolean(
+    options?.noTopLimit ||
+    options?.isKonKonQuery ||
+    userContext?.noTopLimit ||
+    options?.intent === "SALARY_PF_DEDUCTION" ||
+    /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(userContext?.rawMessage || "") ||
+    /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(userContext?.message || "") ||
+    /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(options?.rawMessage || "")
+  );
+
+  if (isNoTopExplicit) {
+    // If the user specifically asks "kon kon employee" or full list, strip any arbitrary TOP limits
+    sql = sql.replace(/\bSELECT\s+TOP\s+\d+\b/i, "SELECT");
+  } else if (!/\bTOP\s+\d+\b/i.test(sql) && !/\bCOUNT\s*\(/i.test(sql) && !/\bSUM\s*\(/i.test(sql) && !/\bAVG\s*\(/i.test(sql)) {
+    // For non-aggregated queries without explicit unlimited request, apply default limit
     sql = sql.replace(/^\s*SELECT\b/i, "SELECT TOP 500");
   }
 
@@ -5038,7 +5574,8 @@ Return ONLY the repaired raw SQL statement without markdown fences or text.
 
         const repairedRaw = response?.choices?.[0]?.message?.content?.trim();
         if (repairedRaw) {
-          currentSQL = validateAndRepairSQL(repairedRaw, userContext);
+          const isKonKonRepair = /\b(kon\s*kon|kaun\s*kaun|who\s*all|which\s*employees|kiske\s*kiske|sabka|all\s*employees|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit)\b/i.test(rawMessage || "");
+          currentSQL = validateAndRepairSQL(repairedRaw, userContext, { isKonKonQuery: isKonKonRepair, noTopLimit: isKonKonRepair });
           console.log(`🔧 [V6-AutoRepair] Retrying with repaired SQL (Attempt ${attempts + 1})...`);
         } else {
           break;
@@ -5591,7 +6128,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     }
 
     return {
-      answer: `Aapke dwara puche gaye sawal ke liye database me koi record nahi mila. (No records found matching criteria).`,
+      answer: `No records found matching criteria`,
       summary: "No records found"
     };
   }
@@ -6802,11 +7339,27 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
   if (intent === "SALARY_COUNT_AGGREGATE" && rows.length > 0) {
     const r = rows[0];
-    const count = r.TotalEmployeesWithSalary || r.TotalEmployees || 0;
-    const mStr = entities.month ? `for **${entities.month}/${entities.year || new Date().getFullYear()}**` : "";
-    const locStr = entities.branch ? ` in Branch / Location **${entities.branch}**` : "";
+    const count = r.TotalEmployeesWithSalary ?? r.TotalEmployees ?? r.TotalCount ?? Object.values(r)[0] ?? 0;
+    const mStr = entities.month ? ` **${entities.month}/${entities.year || new Date().getFullYear()}** ke liye` : "";
+    const locStr = entities.branch ? ` Branch / Location **${entities.branch}** me` : "";
+    if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
+      const minF = Number(entities.salaryMin).toLocaleString("en-IN");
+      const maxF = Number(entities.salaryMax).toLocaleString("en-IN");
+      return {
+        answer: `AutoVyn ERP ke record ke anusar,${locStr}${mStr} **₹${minF}** se **₹${maxF}** ke beech salary wale kul **${count} employee(s)** hain.`,
+        summary: `₹${minF} se ₹${maxF} ke beech salary: ${count} employee(s)`
+      };
+    }
+    if (entities.salaryThreshold) {
+      const compWord = (entities.salaryComparison === "<" || entities.salaryComparison === "<=") ? "kam" : "jyada";
+      const threshFormatted = Number(entities.salaryThreshold).toLocaleString("en-IN");
+      return {
+        answer: `AutoVyn ERP ke record ke anusar,${locStr}${mStr} **₹${threshFormatted}** se **${compWord}** salary wale kul **${count} employee(s)** hain.`,
+        summary: `₹${threshFormatted} se ${compWord} salary: ${count} employee(s)`
+      };
+    }
     return {
-      answer: `AutoVyn ERP ke record ke anusar, ${mStr}${locStr} total **${count} employee(s)** ki salary generate / process hui hai.`,
+      answer: `AutoVyn ERP ke record ke anusar,${mStr}${locStr} total **${count} employee(s)** ki salary generate / process hui hai.`,
       summary: `${count} employees salary processed ${mStr}${locStr}`.trim()
     };
   }
@@ -6836,7 +7389,13 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         summary: `Salary Slip for ${r.EmployeeCode} (${m}/${y}): Net ₹${net}`
       };
     } else {
-      let ans = `AutoVyn ERP me **${rows.length} employee(s)** ke salary records mile hain:\n\n`;
+      let titleHeader = `AutoVyn ERP me **${rows.length} employee(s)** ke salary records mile hain`;
+      if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
+        const minF = Number(entities.salaryMin).toLocaleString("en-IN");
+        const maxF = Number(entities.salaryMax).toLocaleString("en-IN");
+        titleHeader = `AutoVyn ERP ke record ke anusar, **₹${minF}** se **₹${maxF}** ke beech salary wale **${rows.length} employee(s)** ke records mile hain`;
+      }
+      let ans = `${titleHeader}:\n\n`;
       ans += `| Emp Code | Employee Name | Month/Year | Gross Earn | Net Pay | Deductions | Location |\n`;
       ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
       for (const r of rows.slice(0, 50)) {
@@ -8203,7 +8762,13 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       }
 
     // 7. Engine 6: SQL Validation & Auto-Repair
-    let validatedSQL = validateAndRepairSQL(sqlPlan.sql, userContext);
+    const isKonKonQuery = /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(rawMessage || "") ||
+      /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(englishQuery || "");
+
+    let validatedSQL = validateAndRepairSQL(sqlPlan.sql, userContext, {
+      isKonKonQuery,
+      noTopLimit: isKonKonQuery || Boolean(userContext?.noTopLimit)
+    });
 
     // 8. Execute Primary SQL on MSSQL Server with Auto-Repair Reflection Loop
     console.log("⚙️ [V6-MSSQL-Execute]:\n", validatedSQL);
@@ -8998,7 +9563,7 @@ const getAuditLogs = async (reqOrPayload, maybeRes) => {
       ISNULL([Confidence_Score], 0.95) AS confidenceScore,
       ISNULL([Status_Code], 'SUCCESS') AS statusCode,
       [Error_Message] AS errorMessage,
-      [Created_At] AS createdAt
+      CONVERT(VARCHAR(19), [Created_At], 120) AS createdAt
     FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
     WHERE ${whereSql}
     ORDER BY [UTD] DESC
@@ -9069,6 +9634,7 @@ module.exports = {
   detectAndStoreUserCorrection,
   handleUserCorrectionAndDataLocation,
   extractGuidanceComponents,
+  parameterizeLearnedQuery,
   persistLearnedDataRule,
   asyncHandler,
   ApiError,

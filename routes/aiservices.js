@@ -12577,7 +12577,7 @@ exports.getAuditLogs = async function (req, res) {
         ISNULL([Confidence_Score], 0.95) AS confidenceScore,
         ISNULL([Status_Code], 'SUCCESS') AS statusCode,
         [Error_Message] AS errorMessage,
-        [Created_At] AS createdAt
+        CONVERT(VARCHAR(19), [Created_At], 120) AS createdAt
       FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
       WHERE ${whereSql}
       ORDER BY [UTD] DESC
