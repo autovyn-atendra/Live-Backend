@@ -5723,6 +5723,13 @@ FROM
 exports.InsertUserActHst = async function (req, res) {
   const compcode = req.headers.compcode;
   const sequelize = await dbname(req, compcode);
+  if (!sequelize) {
+    return res.status(500).send({
+      Status: false,
+      Message: "Database connection failed",
+    });
+  }
+
   const data = req.body;
   if (!data) {
     return res.status(400).send({
@@ -5741,16 +5748,15 @@ exports.InsertUserActHst = async function (req, res) {
   if (data.Loc_Code) {
     if (typeof data.Loc_Code === "string" && data.Loc_Code.includes(",")) {
       data.Loc_Code = 0; // if comma-separated → set to 0
-      data.Action_LMode = 1
+      data.Action_LMode = 1;
     } else {
       // convert to number if single value
       data.Loc_Code = Number(data.Loc_Code) || 0;
-      data.Action_LMode = 0
+      data.Action_LMode = 0;
     }
   } else {
     data.Loc_Code = 0;
   }
-
 
   // Get current date (YYYY-MM-DD)
   const getCurrentDate = () => {
@@ -5766,86 +5772,57 @@ exports.InsertUserActHst = async function (req, res) {
     return Number(`${hh}.${mm}`); // Example -> 143522
   };
 
-  const t = await sequelize.transaction();
-
   try {
     // Validate input
     const { error, value } = UserCloudActHstSchema.validate(data);
     if (error) {
       console.log("❌ Validation error:", error.details[0].message);
-      await t.rollback();
       return res.status(400).send({
         Status: false,
         Message: error.details[0].message,
       });
     }
 
-    // for web
-    let insertedRow
-    if (value.Src_Portal == 1) {
-      // Insert record
-      insertedRow = await UserCloudActHst.create(
-        {
-          USER_Code: value.USER_Code || 0,
-          Login_Batch: value.Login_Batch || null,
-          Action_Taken: value.Action_Taken || null,
+    const payload = {
+      USER_Code: value.USER_Code || 0,
+      Login_Batch: value.Login_Batch || null,
+      Action_Taken: value.Action_Taken || null,
 
-          // Auto timestamp here
-          Action_Date: getCurrentDate(),
-          Action_Time: getCurrentTime(),
+      // Auto timestamp here
+      Action_Date: getCurrentDate(),
+      Action_Time: getCurrentTime(),
 
-          Ledg_Code: value.Ledg_Code || 0,
-          Group_Code: value.Group_Code || 0,
-          Book_Code: value.Book_Code || 0,
-          Loc_Code: value.Loc_Code || 0,
-          Action_LMode: value.Action_LMode || 0,
-          Src_Portal: value.Src_Portal || 0,
-          Emp_Code: value.Emp_Code || null,
-        },
-        { transaction: t }
-      );
-    } else {
-      // for mob
-      insertedRow = await UserMobActHst.create(
-        {
-          USER_Code: value.USER_Code || 0,
-          Login_Batch: value.Login_Batch || null,
-          Action_Taken: value.Action_Taken || null,
+      Ledg_Code: value.Ledg_Code || 0,
+      Group_Code: value.Group_Code || 0,
+      Book_Code: value.Book_Code || 0,
+      Loc_Code: value.Loc_Code || 0,
+      Action_LMode: value.Action_LMode || 0,
+      Src_Portal: value.Src_Portal || 0,
+      Emp_Code: value.Emp_Code || null,
+    };
 
-          // Auto timestamp here
-          Action_Date: getCurrentDate(),
-          Action_Time: getCurrentTime(),
-
-          Ledg_Code: value.Ledg_Code || 0,
-          Group_Code: value.Group_Code || 0,
-          Book_Code: value.Book_Code || 0,
-          Loc_Code: value.Loc_Code || 0,
-          Action_LMode: value.Action_LMode || 0,
-          Src_Portal: value.Src_Portal || 0,
-          Emp_Code: value.Emp_Code || null,
-        },
-        { transaction: t }
-      );
-    }
-
-
-    await t.commit();
+    // Insert record for web (1) or mobile
+    const insertedRow = (value.Src_Portal == 1)
+      ? await UserCloudActHst.create(payload)
+      : await UserMobActHst.create(payload);
 
     return res.status(200).send({
       Status: true,
       Message: "Inserted successfully",
       Data: insertedRow,
     });
-
   } catch (err) {
-    console.error("🔥 Error inserting USER_ACT_HST:", err);
-    await t.rollback();
+    console.error("🔥 Error inserting USER_ACT_HST:", err?.message || err);
     return res.status(500).send({
       success: false,
       message: "An error occurred.",
     });
   } finally {
-    await sequelize.close();
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (_) {}
+    }
   }
 };
 

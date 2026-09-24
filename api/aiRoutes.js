@@ -74,6 +74,7 @@ router.post("/cache/clear", (req, res) => {
 // ============================================================
 // CONVERSATIONS & SESSIONS API
 // GET /conversations, POST /conversations, DELETE /conversations/:id
+// Aliases: GET /history, POST /history
 // ============================================================
 router.get(
   "/conversations",
@@ -93,6 +94,32 @@ router.get(
 );
 router.post(
   "/conversations",
+  AI.asyncHandler(async (req, res) => {
+    const data = await AI.listUserConversations({
+      req,
+      limit: req.body?.limit || req.query?.limit,
+      offset: req.body?.offset || req.query?.offset,
+      page: req.body?.page || req.query?.page,
+    });
+    return res.status(200).json({ success: true, data });
+  })
+);
+
+// History Aliases
+router.get(
+  "/history",
+  AI.asyncHandler(async (req, res) => {
+    const data = await AI.listUserConversations({
+      req,
+      limit: req.query.limit,
+      offset: req.query.offset,
+      page: req.query.page,
+    });
+    return res.status(200).json({ success: true, message: "Conversations retrieved successfully", data });
+  })
+);
+router.post(
+  "/history",
   AI.asyncHandler(async (req, res) => {
     const data = await AI.listUserConversations({
       req,
@@ -132,6 +159,8 @@ router.get("/schema/sync", AI.syncSchemaIntelligence);
 // ============================================================
 router.get("/schema/tables", AI.getSchemaTables);
 router.post("/schema/tables", AI.getSchemaTables);
+router.get("/schema/search", AI.getSchemaTables);
+router.post("/schema/search", AI.getSchemaTables);
 router.get("/schema/columns", AI.getSchemaColumns);
 router.post("/schema/columns", AI.getSchemaColumns);
 router.get("/schema/columns/:tableName", AI.getSchemaColumns);
@@ -156,12 +185,21 @@ router.post("/synonyms", AI.getSynonyms);
 router.post("/synonyms/save", AI.saveSynonym);
 
 // ============================================================
-// AI AUDIT TELEMETRY & FEEDBACK API
-// POST /feedback, GET /audit, POST /audit
+// AI AUDIT TELEMETRY, FEEDBACK & DYNAMIC RULES API
+// POST /feedback, GET /audit, POST /audit, GET /rules, POST /rules/save, POST /rules/delete, POST /test-sql
+// Aliases: GET /analytics, POST /analytics, POST /debug/sql
 // ============================================================
 router.post("/feedback", AI.submitFeedback);
 router.get("/audit", AI.getAuditLogs);
 router.post("/audit", AI.getAuditLogs);
+router.get("/analytics", AI.getAuditLogs);
+router.post("/analytics", AI.getAuditLogs);
+router.get("/rules", AI.getAILearnedRules);
+router.post("/rules", AI.getAILearnedRules);
+router.post("/rules/save", AI.saveAILearnedRule);
+router.post("/rules/delete", AI.deleteAILearnedRule);
+router.post("/test-sql", AI.testSQLQuery);
+router.post("/debug/sql", AI.testSQLQuery);
 
 // ============================================================
 // KNOWLEDGE DOCUMENTS MANAGEMENT API

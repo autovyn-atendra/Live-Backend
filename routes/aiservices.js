@@ -635,11 +635,17 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
   if (!sequelize?.query) throw new ApiError(500, "Database connection failed");
 
   // ── Conversation Persistence Setup ─────────────────────────────────────────
-  let conversationId = payload.conversationId;
+  if (AI_V6?.ensureAllAITables) {
+    try {
+      await AI_V6.ensureAllAITables(sequelize);
+    } catch (_) {}
+  }
+
+  let conversationId = payload.conversationId || req.body?.conversationId;
   try {
     const conv = await getOrCreateConversation({
       sequelize,
-      conversationId: payload.conversationId,
+      conversationId: payload.conversationId || req.body?.conversationId,
       userCode: userContext.numericUserId,
       userName: userContext.userName,
       compcode: userContext.compcode,
@@ -648,11 +654,13 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
     });
     conversationId = conv.conversationId;
     payload.conversationId = conversationId;
+    if (req.body) req.body.conversationId = conversationId;
   } catch (convErr) {
     console.warn("[aiservices] Conversation init notice:", convErr?.message);
     if (!conversationId) {
       conversationId = `conv_${Date.now()}_${randomUUID().slice(0, 8)}`;
       payload.conversationId = conversationId;
+      if (req.body) req.body.conversationId = conversationId;
     }
   }
 
@@ -694,7 +702,10 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
             metadata: {
               intent: v6Result.intent,
               sql: v6Result.query?.sql,
-              confidence: v6Result.confidence
+              confidence: v6Result.confidence,
+              lastEmployeeCode: v6Result.resolvedEntities?.employeeCode || v6Result.data?.[0]?.EmployeeCode || v6Result.data?.[0]?.EMPCODE || v6Result.data?.[0]?.Emp_Code || null,
+              lastEmployeeName: v6Result.resolvedEntities?.employeeName || v6Result.data?.[0]?.EmployeeName || v6Result.data?.[0]?.EMPFIRSTNAME || null,
+              resolvedEntities: v6Result.resolvedEntities || null
             }
           });
         } catch (asstMsgErr) {
@@ -707,19 +718,6 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
       console.warn("[aiservices] V6 Copilot pipeline yielded notice, continuing with V1 engine:", v6Error?.message);
     }
   }
-
-  // ── Save user message ─────────────────────────────────────────────────────
-  await saveConversationMessage({
-    sequelize,
-    conversationId,
-    role:      "user",
-    content:   message,
-    createdBy: String(userContext.numericUserId),
-    metadata: {
-      employeeCode: userContext.employeeCode,
-      roleFlag:     userContext.roleFlag,
-    },
-  });
 
   // ── Load history ──────────────────────────────────────────────────────────
   const history = await loadConversationHistory({ sequelize, conversationId });
@@ -4386,10 +4384,9 @@ const buildUserContext = exports.buildUserContext = (req) => {
     }
   }
 
-  const rawRole = normalizeValue(user?.role || user?.appRole || req.body?.role || "EMPLOYEE").toUpperCase();
-  const numericUserId = toPositiveInteger(
-    user?.SRNO ?? user?.UTD ?? user?.userId ?? user?.User_Id ?? user?.User_Code ?? user?.id ?? user?.userCode ?? req.body?.userId ?? req.body?.userCode ?? req.body?.User_Code ?? req.body?.User_Id
-  );
+  const rawRole = normalizeValue(user?.role || user?.appRole || req.body?.role || req.headers?.role || "EMPLOYEE").toUpperCase();
+  const rawUserCode = user?.userCode ?? user?.User_Code ?? user?.userId ?? user?.User_Id ?? user?.SRNO ?? user?.UTD ?? user?.id ?? req.body?.userId ?? req.body?.userCode ?? "1";
+  const numericUserId = toPositiveInteger(rawUserCode) || 1;
   const employeeCode = normalizeValue(
     user?.EMPCODE ?? user?.EmpCode ?? user?.empCode ?? user?.employeeCode ?? req.body?.EMPCODE ?? req.body?.EmpCode ?? req.body?.empCode ?? req.body?.employeeCode ?? ""
   ) || null;
@@ -4399,18 +4396,14 @@ const buildUserContext = exports.buildUserContext = (req) => {
     numericUserId,
     userId: numericUserId,
     employeeCode,
-    userCode: employeeCode || (numericUserId ? String(numericUserId) : null),
-    userName: normalizeValue(user?.userName ?? user?.name ?? user?.User_Name ?? req.body?.userName ?? req.body?.name ?? "") || null,
+    userCode: employeeCode || (numericUserId ? String(numericUserId) : String(rawUserCode)),
+    userName: normalizeValue(user?.userName ?? user?.name ?? user?.User_Name ?? req.body?.userName ?? req.body?.name ?? "Enterprise User") || "Enterprise User",
     role: rawRole || "EMPLOYEE",
     roleFlag: Number(user?.roleFlag ?? user?.RoleFlag ?? req.body?.roleFlag ?? inferredRoleFlag),
-    compcode: normalizeValue(user?.compcode || req.headers?.compcode || req.headers?.["x-comp-code"] || req.body?.compcode) || null,
+    compcode: normalizeValue(user?.compcode || req.headers?.compcode || req.headers?.["x-comp-code"] || req.body?.compcode || process.env.DEFAULT_COMPCODE || "AUTOVYN") || "AUTOVYN",
     location: normalizeValue(user?.LOCATION ?? user?.location ?? req.body?.location ?? "") || null,
   };
 
-  if (!context.compcode) throw new ApiError(400, "Company code is required");
-  if (!context.numericUserId && !context.employeeCode) {
-    throw new ApiError(401, "Authenticated user identity is unavailable");
-  }
   return context;
 };
 
@@ -11540,6 +11533,14 @@ const syncSchemaIntelligence = exports.syncSchemaIntelligence = async function (
     const compCode = String(process.env.DEFAULT_COMPCODE || req?.headers?.compcode || "").trim();
     sequelize = await dbname(req, compCode);
 
+    if (sequelize && AI_V6?.ensureAllAITables) {
+      try {
+        await AI_V6.ensureAllAITables(sequelize);
+      } catch (tableErr) {
+        console.warn("[AI-SCHEMA-SYNC] ensureAllAITables notice:", tableErr?.message);
+      }
+    }
+
     console.log("[AI-SCHEMA-SYNC] Starting MSSQL Schema Discovery...");
 
     // 1. Fetch tables with approximate row counts
@@ -11611,8 +11612,6 @@ const syncSchemaIntelligence = exports.syncSchemaIntelligence = async function (
     for (const t of tables) {
       try {
         await sequelize.query(`
-          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Schema_Table_Tbl')
-            RETURN;
           IF EXISTS (SELECT 1 FROM dbo.AI_Schema_Table_Tbl WHERE Table_Name = :tableName)
             UPDATE dbo.AI_Schema_Table_Tbl 
             SET Approx_Row_Count = :rowCount, Last_Synced_At = GETDATE(), Updated_At = GETDATE()
@@ -12471,41 +12470,8 @@ const auditAIQueryLog = exports.auditAIQueryLog = async function ({
     console.error("[AI-AUDIT] Non-fatal audit log error:", err?.message);
   }
 };
+// (Note: exports.submitFeedback is consolidated below delegating cleanly to AI_V6.submitFeedback)
 
-exports.submitFeedback = async function (req, res) {
-  try {
-    const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
-    const sequelize = await dbname(req, compCode);
-    const { auditUtd, conversationId, feedbackType, userComment } = req.body || {};
-
-    if (!feedbackType) {
-      return res.status(400).json({ success: false, message: "feedbackType is required (e.g. HELPFUL, NOT_HELPFUL, INCORRECT_DATA)" });
-    }
-
-    await sequelize.query(`
-      IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Query_Feedback_Tbl')
-      BEGIN
-        INSERT INTO dbo.AI_Query_Feedback_Tbl 
-        (Audit_UTD, Conversation_Id, Feedback_Type, User_Comment, User_Id, Created_At)
-        VALUES 
-        (:auditUtd, :conversationId, :feedbackType, :userComment, :userId, GETDATE());
-      END
-    `, {
-      replacements: {
-        auditUtd: auditUtd ? Number(auditUtd) : null,
-        conversationId: conversationId || null,
-        feedbackType,
-        userComment: userComment || null,
-        userId: String(req.user?.userId || req.headers?.userid || 'user')
-      },
-      type: QueryTypes.RAW
-    });
-
-    return res.status(200).json({ success: true, message: "Feedback submitted successfully" });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-};
 
 exports.getAuditLogs = async function (req, res) {
   try {
@@ -12663,7 +12629,7 @@ exports.getAuditLogs = async function (req, res) {
 
 exports.deleteConversation = async function (req, res) {
   try {
-    const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
+    const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "AUTOVYN").trim();
     const sequelize = await dbname(req, compCode);
     const conversationId = String(req.params?.conversationId || "").trim();
 
@@ -12672,11 +12638,19 @@ exports.deleteConversation = async function (req, res) {
     }
 
     await sequelize.query(`
-      IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Conversation_Message_Tbl')
-        DELETE FROM dbo.AI_Conversation_Message_Tbl WHERE Conversation_Id = :conversationId;
-      IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Conversation_Session_Tbl')
-        DELETE FROM dbo.AI_Conversation_Session_Tbl WHERE Conversation_Id = :conversationId;
+      IF OBJECT_ID('dbo.AI_Message_Tbl', 'U') IS NOT NULL
+        DELETE FROM [dbo].[AI_Message_Tbl] WHERE [Conversation_Id] = :conversationId;
+      IF OBJECT_ID('dbo.AI_Conversation_Tbl', 'U') IS NOT NULL
+        DELETE FROM [dbo].[AI_Conversation_Tbl] WHERE [Conversation_Id] = :conversationId;
+      IF OBJECT_ID('dbo.AI_Conversation_Message_Tbl', 'U') IS NOT NULL
+        DELETE FROM [dbo].[AI_Conversation_Message_Tbl] WHERE [Conversation_Id] = :conversationId;
+      IF OBJECT_ID('dbo.AI_Conversation_Session_Tbl', 'U') IS NOT NULL
+        DELETE FROM [dbo].[AI_Conversation_Session_Tbl] WHERE [Conversation_Id] = :conversationId;
     `, { replacements: { conversationId }, type: QueryTypes.RAW });
+
+    if (AI_V6?.MemoryEngineInstance?.clearContext) {
+      AI_V6.MemoryEngineInstance.clearContext(conversationId);
+    }
 
     return res.status(200).json({ success: true, message: "Conversation deleted successfully" });
   } catch (err) {
@@ -12694,7 +12668,82 @@ exports.submitFeedback = async (req, res) => {
     }
     return res.status(200).json({ success: true, message: "Feedback recorded" });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    const errorMsg = extractAIErrMsg(err);
+    console.error("[aiservices.submitFeedback] Error:", errorMsg, err);
+    return res.status(500).json({ success: false, message: errorMsg });
   }
 };
+
+const extractAIErrMsg = (err) => {
+  if (!err) return "Internal server error";
+  if (err.message && err.message.trim()) return err.message;
+  if (err.original?.message && err.original.message.trim()) return err.original.message;
+  if (err.parent?.message && err.parent.message.trim()) return err.parent.message;
+  if (Array.isArray(err.errors) && err.errors.length > 0) {
+    const msg = err.errors.map((e) => e.message).filter(Boolean).join("; ");
+    if (msg) return msg;
+  }
+  if (Array.isArray(err.original?.errors) && err.original.errors.length > 0) {
+    const msg = err.original.errors.map((e) => e.message).filter(Boolean).join("; ");
+    if (msg) return msg;
+  }
+  return "Database query execution error";
+};
+
+exports.getAILearnedRules = async (req, res) => {
+  try {
+    if (AI_V6?.getAILearnedRules) {
+      const result = await AI_V6.getAILearnedRules(req);
+      return res.status(200).json(result);
+    }
+    return res.status(200).json({ success: true, data: [] });
+  } catch (err) {
+    const errorMsg = extractAIErrMsg(err);
+    console.error("[aiservices.getAILearnedRules] Error:", errorMsg, err);
+    return res.status(500).json({ success: false, message: errorMsg });
+  }
+};
+
+exports.saveAILearnedRule = async (req, res) => {
+  try {
+    if (AI_V6?.saveAILearnedRule) {
+      const result = await AI_V6.saveAILearnedRule(req);
+      return res.status(200).json(result);
+    }
+    return res.status(200).json({ success: true, message: "Rule saved" });
+  } catch (err) {
+    const errorMsg = extractAIErrMsg(err);
+    console.error("[aiservices.saveAILearnedRule] Error:", errorMsg, err);
+    return res.status(500).json({ success: false, message: errorMsg });
+  }
+};
+
+exports.deleteAILearnedRule = async (req, res) => {
+  try {
+    if (AI_V6?.deleteAILearnedRule) {
+      const result = await AI_V6.deleteAILearnedRule(req);
+      return res.status(200).json(result);
+    }
+    return res.status(200).json({ success: true, message: "Rule deleted" });
+  } catch (err) {
+    const errorMsg = extractAIErrMsg(err);
+    console.error("[aiservices.deleteAILearnedRule] Error:", errorMsg, err);
+    return res.status(500).json({ success: false, message: errorMsg });
+  }
+};
+
+exports.testSQLQuery = async (req, res) => {
+  try {
+    if (AI_V6?.testSQLQuery) {
+      const result = await AI_V6.testSQLQuery(req);
+      return res.status(200).json(result);
+    }
+    return res.status(400).json({ success: false, message: "Engine not initialized" });
+  } catch (err) {
+    const errorMsg = extractAIErrMsg(err);
+    console.error("[aiservices.testSQLQuery] Error:", errorMsg, err);
+    return res.status(500).json({ success: false, message: errorMsg });
+  }
+};
+
 

@@ -31,9 +31,9 @@ const { dbname } = require("../utils/dbconfig");
 
 // Safe Optional Libraries
 let axios;
-try { axios = require("axios"); } catch (_) {}
+try { axios = require("axios"); } catch (_) { }
 let stringSimilarity;
-try { stringSimilarity = require("string-similarity"); } catch (_) {}
+try { stringSimilarity = require("string-similarity"); } catch (_) { }
 let moment;
 try { moment = require("moment"); } catch (_) {
   moment = (d) => ({
@@ -82,7 +82,7 @@ const toPositiveInteger = (val) => {
 // Stop words to prevent false positive searches in fallback engine
 const SEARCH_STOP_WORDS = new Set([
   "ka", "ki", "ke", "ko", "se", "me", "mein", "par", "pe", "hai", "hain", "tha", "the", "thi", "h", "kya",
-  "kiska", "kiske", "kiski", "batao", "bataiye", "detail", "details", "record", "records",
+  "kis", "kiska", "kiske", "kiski", "kisko", "batao", "bataiye", "detail", "details", "record", "records",
   "what", "who", "whom", "whose", "find", "show", "query", "tell", "about", "list", "please",
   "adhar", "aadhar", "aadhaar", "uid", "uidai", "pan", "panno", "bank", "account", "khata",
   "mobile", "phone", "number", "mob", "contact", "call", "cell", "attendance", "attandance",
@@ -91,10 +91,29 @@ const SEARCH_STOP_WORDS = new Set([
   "dept", "department", "designation", "role", "name", "naam", "emp", "employee", "karmchari",
   "iski", "iska", "inke", "unka", "unki", "mera", "meri", "apna", "apni",
   "present", "absent", "count", "total", "kitne", "kitna", "aaj", "kal", "today", "yesterday", "summary",
+  "pf", "provident", "fund", "pension", "eps", "deduct", "deduction", "deductions", "kata", "katoti",
+  "service", "services", "reminder", "reminders", "due", "due_list", "pending", "customer", "vehicle", "chassis", "engine", "jobcard",
+  "invoice", "invoices", "bill", "bills", "billing", "voucher", "vouchers", "ledger", "account", "accounts", "stock", "inventory",
+  "gatepass", "ro", "workshop", "insurance", "model", "fuel", "booking", "bookings", "lead", "leads", "enquiry", "dms",
+  "target", "achievement", "profit", "loss", "trial", "balance", "pnl", "asset", "assets", "history", "audit", "report", "reports",
   "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
   "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
   "miss", "mispunch", "punch", "punches", "select", "from", "where", "join", "joining", "inner", "left", "right", "cross", "order", "desc", "asc", "try_convert", "convert", "response", "galat", "lagana", "banao", "sahi", "reason", "reasons", "mipunch_reason", "attendancetable", "employeemaster", "misc_mst",
-  "jab", "tab", "abhi", "tak", "since", "till", "hua", "huwa", "gaya", "overall"
+  "jab", "tab", "abhi", "tak", "since", "till", "hua", "huwa", "gaya", "overall",
+  "kon", "kaun", "pass", "wala", "wale", "wali", "rakhta", "rakhti", "rakhte", "dikhao", "dikhaye", "karo", "karen", "kare", "hoga", "hogi", "honge", "hota", "hoti", "hote", "jinka", "jinke", "jinki",
+  "work", "works", "anniversary", "anniversy", "aniversary", "anversary", "saalgirah", "salgirah", "day", "days", "birthday", "bday", "janamdin",
+  "marriage", "marrige", "marraige", "merriage", "shadi", "shaadi", "sadi", "saadi", "wedding", "vivah", "byah", "dom", "doma", "patni", "pati", "wife", "husband",
+  "anniv", "anniversaries", "holiday", "holidays", "leave", "leaves", "chhutti", "chhutiyan", "chhuttiyan", "sick", "casual", "privilege",
+  "kin", "kinko", "kinka", "kisiko", "kinhi", "kinhe",
+  "ab", "ye", "yeh", "wo", "woh", "kripya", "pls", "sabse", "jyada", "zyada", "kam", "adhik", "badi", "chhoti",
+  "aur", "and", "then", "also", "basic", "gross", "net", "ctc", "ok", "post", "pad", "info", "information", "profile", "contact", "address", "pura", "puri", "sara", "sari", "bataye", "batana", "dekhna", "chahiye", "karu", "karo",
+  "permanent", "temporary", "current", "present", "residential", "residence", "pata", "addresses",
+  "nikalo", "nikalna", "nikal", "dikhana", "dikhao", "dikhaye", "batao", "bataiye", "do", "dena",
+  "city", "state", "pincode", "pin", "house", "tehsil", "dist", "district",
+  "retrieve", "retrieval", "fetch", "fetching", "provide", "providing", "give", "giving", "display", "displaying", "get", "getting", "bring",
+  "their", "there", "them", "these", "those", "this", "that", "they", "with", "whose", "whom", "where", "when", "which",
+  "number", "numbers", "person", "persons", "people", "both", "each", "every", "kindly",
+  "inki", "inka", "inke", "inhe", "inhein", "unka", "unki", "unke", "unhe", "unhein", "iska", "iski", "iske"
 ]);
 
 // ============================================================================
@@ -166,6 +185,98 @@ const cosineSimilarity = (vecA, vecB) => {
 };
 
 // ============================================================================
+// MULTILINGUAL TRANSLATION & CANONICALIZATION ENGINE
+// ============================================================================
+
+const TranslationCache = new Map();
+
+/**
+ * Detects if a query contains non-English characters or vernacular words,
+ * and translates it into clean, standardized enterprise English using fast LLM / cache.
+ * Preserves employee codes, IDs, numbers, and dates accurately.
+ */
+const translateToEnglishIfVernacular = async (text) => {
+  const normalized = normalizeText(text);
+  if (!normalized) return { englishQuery: "", isTranslated: false };
+
+  // Fast check: If it's a SQL query or code, do not translate
+  if (/^\s*(SELECT|INSERT|UPDATE|DELETE|EXEC|WITH)\b/i.test(normalized)) {
+    return { englishQuery: normalized, isTranslated: false };
+  }
+
+  // 1. Check for non-ASCII / Unicode characters (Devanagari, Gujarati, Bengali, Tamil, etc.)
+  const hasNonLatinScript = /[^\u0000-\u007F]/.test(normalized);
+
+  // 2. Check for Hindi / Hinglish / Vernacular marker words in Latin script
+  const hasVernacularMarkers = /\b(batao|bataiye|bata|dikhao|dikhaye|kiska|kiske|kiski|kisko|kitne|kitna|kitni|sabse|jyada|zyada|adhik|kam|pagar|tankha|tankhwa|vetan|chhutti|chutti|haziri|karmchari|janamdin|saalgirah|salgirah|aaj|kal|parso|pichhla|mahina|saal|hoga|hogi|honge|hai|hain|tha|the|thi|me|mein|se|ko|ka|ki|ke|par|pe|kare|karo|nikalo|chahiye|milega|kiske pass|kon kon|kaun kaun|jinka|jinke|jinki|wale|wali|walo|rakhta|rakhti|rakhte|kripya|dijiye)\b/i.test(normalized);
+
+  if (!hasNonLatinScript && !hasVernacularMarkers) {
+    // Already standard English
+    return { englishQuery: normalized, isTranslated: false };
+  }
+
+  // Check in-memory translation cache (LRU-style capped at 2000 entries)
+  const cacheKey = normalized.toLowerCase();
+  if (TranslationCache.has(cacheKey)) {
+    return {
+      englishQuery: TranslationCache.get(cacheKey),
+      originalQuery: normalized,
+      isTranslated: true
+    };
+  }
+
+  try {
+    const client = getOpenAIClient();
+    const config = getModelConfig();
+
+    const response = await client.chat.completions.create({
+      model: config.fastModel || "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert enterprise ERP multilingual translator.
+Translate the user's ERP query into clear, concise, standard business English.
+CRITICAL PRESERVATION RULES:
+1. Preserve all employee codes (e.g. 1924108, 1600159), IDs, numbers, and dates (e.g. January 2026, 2026-03-15) exactly as they are.
+2. Preserve employee names (e.g. PANKAJ MOHANDAS JETHANI) exactly.
+3. Preserve ERP table or column names (e.g. SALARYFILE, PF_Employee, attendancetable) if mentioned.
+4. Output ONLY the plain English translated sentence. Do NOT add explanations, notes, or quotes.`
+        },
+        {
+          role: "user",
+          content: normalized
+        }
+      ],
+      temperature: 0.0,
+      max_tokens: 150
+    });
+
+    let translated = response?.choices?.[0]?.message?.content?.trim() || "";
+    // Strip any accidental leading/trailing quotes or "Translation:" prefixes
+    translated = translated.replace(/^["'`]|["'`]$/g, "").replace(/^Translation\s*:\s*/i, "").trim();
+
+    if (translated) {
+      if (TranslationCache.size > 2000) {
+        const firstKey = TranslationCache.keys().next().value;
+        TranslationCache.delete(firstKey);
+      }
+      TranslationCache.set(cacheKey, translated);
+
+      return {
+        englishQuery: translated,
+        originalQuery: normalized,
+        isTranslated: true,
+        translationUsage: response.usage
+      };
+    }
+  } catch (err) {
+    console.warn("[V6-Translator] Translation notice, falling back to original query:", err?.message);
+  }
+
+  return { englishQuery: normalized, isTranslated: false };
+};
+
+// ============================================================================
 // USER CONTEXT & JWT RESOLUTION
 // ============================================================================
 
@@ -180,7 +291,7 @@ const buildUserContext = (req = {}) => {
       if (decoded && typeof decoded === "object") {
         user = { ...decoded, ...user };
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   const compcode = String(
@@ -255,7 +366,7 @@ const ERP_SYNONYM_DICTIONARY = {
       "dob", "doj", "pan", "aadhar", "passport", "license", "driving", "biometric",
       "mspin", "supervisor", "manager", "probation", "resignation", "relieving"
     ],
-    defaultColumns: ["EMPCODE", "EMPFIRSTNAME", "EMPLASTNAME", "LOCATION", "DEPT", "EMPLOYEEDESIGNATION", "CURRENTJOINDATE", "MOBILENO", "PANNO", "ADHARNO", "BANKACCOUNTNO"],
+    defaultColumns: ["EMPCODE", "EMPFIRSTNAME", "EMPLASTNAME", "LOCATION", "EMPLOYEEDESIGNATION", "CURRENTJOINDATE", "MOBILENO", "PANNO", "ADHARNO", "BANKACCOUNTNO"],
     businessMeaning: "Master database of all active and separated employees covering 257 columns (personal, statutory KYC, banking, family, emergency, hierarchy, and dates)."
   },
   // Bank Account Penny-Drop Verification
@@ -367,8 +478,6 @@ class SchemaKnowledgeGraph {
     this.addRelation("EMPLOYEEMASTER", "Asset_Issue", "EMPCODE", "Emp_Code", "LEFT");
     this.addRelation("EMPLOYEEMASTER", "Approval_Matrix", "EMPCODE", "empcode", "LEFT");
     this.addRelation("EMPLOYEEMASTER", "Misc_Mst", "LOCATION", "Misc_Code", "LEFT", "Misc_Mst.Misc_Type = 85");
-    this.addRelation("EMPLOYEEMASTER", "Misc_Mst", "DEPT", "Misc_Code", "LEFT", "Misc_Mst.Misc_Type = 11");
-    this.addRelation("EMPLOYEEMASTER", "Misc_Mst", "DESG", "Misc_Code", "LEFT", "Misc_Mst.Misc_Type = 95");
   }
 
   addRelation(tableA, tableB, colA, colB, joinType = "LEFT", extraCondition = "") {
@@ -476,8 +585,15 @@ const SchemaEngineInstance = new SchemaKnowledgeGraph();
 // ENGINE 1: INTENT ENGINE & ENGINE 2: ENTITY EXTRACTION ENGINE
 // ============================================================================
 
-const classifyIntentAndExtractEntities = async ({ message, history = [], userContext = {} }) => {
-  const normalized = normalizeLower(message);
+const classifyIntentAndExtractEntities = async ({ message, originalMessage, history = [], userContext = {} }) => {
+  const normEnglish = normalizeLower(message || "");
+  const normOriginal = normalizeLower(originalMessage || "");
+  const normalized = normOriginal && normOriginal !== normEnglish
+    ? `${normEnglish} ${normOriginal}`
+    : normEnglish;
+  const fullMessageText = (originalMessage && originalMessage !== message)
+    ? `${message} ${originalMessage}`
+    : (message || "");
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1; // 1-12
@@ -490,6 +606,11 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     mobileNumber: null,
     aadharNumber: null,
     branch: null,
+    branches: null,
+    excludeBranch: null,
+    designation: null,
+    employeeStatus: null,
+    isSeparationEvent: false,
     department: null,
     month: null,
     year: null,
@@ -541,18 +662,19 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
   const empCodeMatch = message.match(/\b([A-Za-z]{1,4}\d{1,8}|\d{3,9})\b/i);
   if (empCodeMatch) {
     const rawCode = empCodeMatch[1].trim();
-    const isYear = /^(19\d{2}|20\d{2})$/.test(rawCode) && (parseInt(rawCode, 10) >= 1990 && parseInt(rawCode, 10) <= 2035);
-    const hasExplicitEmpContext = /\b(emp|employee|karmchari|user|code|id|is employee|ka miss punch|ki salary|ka record|ka leave|ka attendance)\b/i.test(normalized);
+    const isYearNumber = /^(19\d{2}|20\d{2})$/.test(rawCode) && (parseInt(rawCode, 10) >= 1990 && parseInt(rawCode, 10) <= 2035);
+    const hasDirectEmpPrefix = new RegExp(`\\b(?:emp|employee|karmchari|code|empcode|emp_code|id)\\s*[:=]?\\s*${rawCode}\\b`, 'i').test(normalized);
 
-    if (!isYear || hasExplicitEmpContext) {
+    // Never treat a 4-digit year (1990-2035) as an employee code unless explicitly prefixed with "emp 2026" or "code 2026"
+    if (!isYearNumber || hasDirectEmpPrefix) {
       if ((!entities.accountNumber || entities.accountNumber.length <= 9) && !entities.aadharNumber) {
         entities.employeeCode = rawCode;
       }
     }
   }
 
-  // Generic Search Token fallback (alphanumeric ID or code, not a plain dictionary word or month)
-  const genericTokenMatch = message.match(/\b([A-Za-z]{1,4}\d+|\d+[A-Za-z]+|[A-Za-z0-9_-]{5,25})\b/);
+  // Generic Search Token fallback: strictly alphanumeric ID or code containing numbers (e.g. AU19796099, 1924108, EMP123)
+  const genericTokenMatch = message.match(/\b([A-Za-z]{1,5}\d+[A-Za-z0-9_-]*|\d+[A-Za-z]+[A-Za-z0-9_-]*|\d{4,10})\b/);
   if (genericTokenMatch) {
     const candidate = genericTokenMatch[1].trim();
     if (!SEARCH_STOP_WORDS.has(candidate.toLowerCase()) && !/^(salary|payslip|detail|details|attendance|leave|record|update|status)$/i.test(candidate)) {
@@ -560,7 +682,33 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     }
   }
 
-  // Month Names
+  // Employee Name Extraction (e.g. "shantanu name ke", "rakesh naam ke", "with the name atendra", "named shantanu", "name shantanu", "whose name is shantanu")
+  const checkTexts = [originalMessage, message].filter(Boolean);
+  let namePatternMatch = null;
+  for (const txt of checkTexts) {
+    namePatternMatch = 
+      txt.match(/\b([A-Za-z]{2,30}(?:\s+[A-Za-z]{2,30}){0,2})\s+(?:name|naam)\s+ke\b/i) ||
+      txt.match(/\b([A-Za-z]{2,30}(?:\s+[A-Za-z]{2,30}){0,2})\s+(?:ka|ki|ke|ko)\s+(?:mobile|phone|contact|salary|pagar|tankha|vetan|ctc|address|pata|designation|post|pad|doj|dob|joining|attendance|haziri|leave|details?|profile|pan|aadhaar|bank)\b/i) ||
+      txt.match(/\b(?:named|with\s+(?:the\s+)?name|whose\s+name\s+is|name\s+is|name\s+of)\s*[:=]?\s*([A-Za-z]{2,30}(?:\s+[A-Za-z]{2,30})?)\b/i) ||
+      txt.match(/\b(?:name|naam)\s*[:=]\s*([A-Za-z]{2,30}(?:\s+[A-Za-z]{2,30})?)\b/i) ||
+      txt.match(/\b([A-Za-z]{2,30})\s+(?:named|naam\s+wale|name\s+wale)\b/i);
+    if (namePatternMatch) break;
+  }
+
+  if (namePatternMatch) {
+    let candidateName = namePatternMatch[1].trim();
+    // Clean trailing stop words or conjunctions (e.g. "Atendra and" -> "Atendra")
+    candidateName = candidateName.replace(/\s+(along|with|and|aur|their|unka|unki|unke|iska|iski|iske|ke|ki|ka|ko|se|me|mein|par|pe|whose|who|which|that|is|are|the|ye|yeh|wo|woh|bhi|na|ne|his|her|tell|give|show|batao|do|together|including|also|plus|as|having|details?|info|data|records?)\b.*$/i, "").trim();
+
+    const lowerCand = candidateName.toLowerCase();
+    if (candidateName && !SEARCH_STOP_WORDS.has(lowerCand) &&
+        !/^(employee|employees|karmchari|total|count|salary|attendance|branch|active|inactive|highest|lowest|list|all|kitne|sankhya|data)$/i.test(lowerCand)) {
+      entities.employeeName = candidateName;
+      entities.nameFilter = candidateName;
+    }
+  }
+
+  // Month Names Map
   const monthsMap = {
     january: 1, jan: 1,
     february: 2, feb: 2, farwari: 2,
@@ -575,14 +723,40 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     november: 11, nov: 11, navambar: 11,
     december: 12, dec: 12, disambar: 12
   };
-  for (const [mName, mNum] of Object.entries(monthsMap)) {
-    if (new RegExp(`\\b${mName}\\b`, "i").test(normalized)) {
-      entities.month = mNum;
-      break;
+
+  // 1. Day + Month Name Pattern (e.g. "19 sept", "19th sept", "22 september", "22 sept ko", "19 sitambar")
+  const dayMonthNameMatch = message.match(/\b(\d{1,2})\s*(?:st|nd|rd|th)?\s*(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|farwari|agast|sitambar|aktubar|navambar|disambar)\b/i);
+  if (dayMonthNameMatch) {
+    const d = parseInt(dayMonthNameMatch[1], 10);
+    const m = monthsMap[dayMonthNameMatch[2].toLowerCase()];
+    if (d >= 1 && d <= 31 && m) {
+      entities.day = d;
+      entities.month = m;
     }
   }
 
-  // Explicit Specific Date (e.g. 21/10/2025, 21-10-2025, 2025-10-21, 21.10.2025)
+  // 2. Month Name + Day Pattern (e.g. "sept 19", "september 22", "sep 22nd")
+  const monthNameDayMatch = message.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|farwari|agast|sitambar|aktubar|navambar|disambar)\s*(\d{1,2})\s*(?:st|nd|rd|th)?\b/i);
+  if (monthNameDayMatch && !entities.day) {
+    const m = monthsMap[monthNameDayMatch[1].toLowerCase()];
+    const d = parseInt(monthNameDayMatch[2], 10);
+    if (d >= 1 && d <= 31 && m) {
+      entities.day = d;
+      entities.month = m;
+    }
+  }
+
+  // 3. Fallback Month Name match if not already set
+  if (!entities.month) {
+    for (const [mName, mNum] of Object.entries(monthsMap)) {
+      if (new RegExp(`\\b${mName}\\b`, "i").test(normalized)) {
+        entities.month = mNum;
+        break;
+      }
+    }
+  }
+
+  // 4. Explicit Specific Full Date (e.g. 21/10/2025, 21-10-2025, 2025-10-21, 21.10.2025)
   const dmyMatch = message.match(/\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})\b/);
   if (dmyMatch) {
     const d = parseInt(dmyMatch[1], 10);
@@ -609,25 +783,38 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     }
   }
 
-  // Relative Dates
-  if (/\b(last month|pichhle mahine|pichhla month|previous month)\b/i.test(normalized)) {
+  // 5. Day/Month without Year (e.g. "22/09", "22/9", "22-09", "22.09", "19/09")
+  const dmMatch = message.match(/\b(\d{1,2})[\/\-\.](\d{1,2})\b/);
+  if (dmMatch && !entities.specificDate && !entities.day) {
+    const d = parseInt(dmMatch[1], 10);
+    const m = parseInt(dmMatch[2], 10);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+      entities.day = d;
+      entities.month = m;
+    }
+  }
+
+  // 6. Relative Dates (today, yesterday, etc.)
+  if (/\b(today|aaj)\b/i.test(normalized)) {
+    const now = new Date();
+    entities.isToday = true;
+    if (!entities.day) entities.day = now.getDate();
+    if (!entities.month) entities.month = now.getMonth() + 1;
+    if (!entities.year) entities.year = now.getFullYear();
+    if (!entities.specificDate) entities.specificDate = `${entities.year}-${String(entities.month).padStart(2, "0")}-${String(entities.day).padStart(2, "0")}`;
+  } else if (/\b(yesterday|kal|bita hua kal)\b/i.test(normalized)) {
+    const yest = new Date(Date.now() - 86400000);
+    entities.isYesterday = true;
+    if (!entities.day) entities.day = yest.getDate();
+    if (!entities.month) entities.month = yest.getMonth() + 1;
+    if (!entities.year) entities.year = yest.getFullYear();
+    if (!entities.specificDate) entities.specificDate = `${entities.year}-${String(entities.month).padStart(2, "0")}-${String(entities.day).padStart(2, "0")}`;
+  } else if (/\b(last month|pichhle mahine|pichhla month|previous month)\b/i.test(normalized)) {
     entities.month = currentMonth === 1 ? 12 : currentMonth - 1;
     entities.year = currentMonth === 1 ? currentYear - 1 : currentYear;
   } else if (/\b(this month|is mahine|current month)\b/i.test(normalized)) {
     entities.month = currentMonth;
     entities.year = currentYear;
-  } else if (/\b(today|aaj)\b/i.test(normalized)) {
-    const now = new Date();
-    entities.day = now.getDate();
-    entities.month = now.getMonth() + 1;
-    entities.year = now.getFullYear();
-    entities.specificDate = `${entities.year}-${String(entities.month).padStart(2, "0")}-${String(entities.day).padStart(2, "0")}`;
-  } else if (/\b(yesterday|kal|bita hua kal)\b/i.test(normalized)) {
-    const yest = new Date(Date.now() - 86400000);
-    entities.day = yest.getDate();
-    entities.month = yest.getMonth() + 1;
-    entities.year = yest.getFullYear();
-    entities.specificDate = `${entities.year}-${String(entities.month).padStart(2, "0")}-${String(entities.day).padStart(2, "0")}`;
   }
 
   // Year (e.g. 2024, 2025, 2026)
@@ -638,7 +825,7 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
 
   // Indian Financial Year (FY) Intelligence (e.g. FY 24-25, FY 2024-25, FY24, FY 2023-2024)
   const fyMatch = message.match(/\bFY\s*[-_]?\s*(20\d{2}|\d{2})(?:\s*[-/]\s*(20\d{2}|\d{2}))?\b/i) ||
-                  message.match(/\bfinancial\s*year\s*(20\d{2}|\d{2})(?:\s*[-/]\s*(20\d{2}|\d{2}))?\b/i);
+    message.match(/\bfinancial\s*year\s*(20\d{2}|\d{2})(?:\s*[-/]\s*(20\d{2}|\d{2}))?\b/i);
   if (fyMatch) {
     const rawStart = fyMatch[1];
     const startY = rawStart.length === 2 ? parseInt("20" + rawStart, 10) : parseInt(rawStart, 10);
@@ -688,21 +875,79 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     entities.rollingMonths = numMonths;
   }
 
-  // Branches (numeric codes e.g. branch 1, location 1, loc 1, branch one, or name strings)
+  // Branches (numeric codes e.g. branch 1, location 1, multi-branch, negative branch, or city name mapping)
   const numWordMap = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
-  const branchNumMatch = message.match(/\b(?:branch|location|loc|godw|godown|br|loc_code|branch_code|location_code)\s*(?:code\s*|no\s*|number\s*|:\s*|#\s*)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i);
-  if (branchNumMatch) {
-    const rawVal = branchNumMatch[1].toLowerCase();
-    entities.branch = numWordMap[rawVal] !== undefined ? numWordMap[rawVal] : rawVal;
-    entities.locCode = entities.branch;
-  } else {
-    const knownBranches = ["jaipur", "ajmer", "kota", "udaipur", "jodhpur", "bikaner", "alwar", "bhilwara", "delhi", "noida", "gurgaon"];
-    for (const b of knownBranches) {
-      if (normalized.includes(b)) {
-        entities.branch = b.charAt(0).toUpperCase() + b.slice(1);
-        break;
+  const cityBranchMap = {
+    jaipur: "1",
+    delhi: "2",
+    gurgaon: "3",
+    gurugram: "3",
+    noida: "4"
+  };
+
+  // 1. Negative Branch Filtering (e.g. "jo branch 1 me nahi hai", "branch 1 ko chhodkar", "excluding branch 1", "branch 1 ke alawa")
+  const negBranchMatch = message.match(/(?:jo\s*bhi\s*|jo\s*)?branch\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten|[a-zA-Z]+)\s*(?:me|par|se)?\s*(?:nahi|not|excluding|chhodkar|ko\s*chhodkar)/i) ||
+    message.match(/(?:excluding|except|chhodkar|ko\s*chhodkar|ke\s*alawa)\s*branch\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten|[a-zA-Z]+)/i) ||
+    message.match(/(?:not\s*in\s*branch|other\s*than\s*branch)\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten|[a-zA-Z]+)/i);
+
+  if (negBranchMatch) {
+    const rawNeg = negBranchMatch[1].toLowerCase();
+    const resolvedNeg = numWordMap[rawNeg] || cityBranchMap[rawNeg] || rawNeg;
+    entities.excludeBranch = resolvedNeg;
+  }
+
+  // 2. Multi-Branch Extraction (e.g. "branch 1 aur 2 dono", "branch 1, 2 aur 3", "branch 1 and 2", "branch 1 ya 2")
+  const multiBranchMatch = message.match(/\b(?:branch|location|loc)\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten|[a-zA-Z]+)(?:\s*(?:,|aur|and|ya|or|\+)\s*(?:(?:branch|location|loc)\s*)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten|[a-zA-Z]+))+/i);
+  if (multiBranchMatch) {
+    const matchedSegment = multiBranchMatch[0];
+    const branchTokens = matchedSegment.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|jaipur|delhi|gurgaon|gurugram|noida)\b/gi) || [];
+    const uniqueBranches = [];
+    for (const bt of branchTokens) {
+      const lower = bt.toLowerCase();
+      if (/^(branch|location|loc)$/i.test(lower)) continue;
+      const code = numWordMap[lower] || cityBranchMap[lower] || lower;
+      if (!uniqueBranches.includes(code)) {
+        uniqueBranches.push(code);
       }
     }
+    if (uniqueBranches.length > 1) {
+      entities.branches = uniqueBranches;
+      entities.branch = uniqueBranches[0];
+      entities.locCode = entities.branch;
+    }
+  }
+
+  // 3. Single Branch Extraction (if not negative or multi)
+  if (!entities.excludeBranch && !entities.branches) {
+    const branchNumMatch = message.match(/\b(?:branch|location|loc|godw|godown|br|loc_code|branch_code|location_code)\s*(?:code\s*|no\s*|number\s*|:\s*|#\s*)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i);
+    if (branchNumMatch) {
+      const rawVal = branchNumMatch[1].toLowerCase();
+      entities.branch = numWordMap[rawVal] !== undefined ? numWordMap[rawVal] : rawVal;
+      entities.locCode = entities.branch;
+    } else {
+      const knownCities = ["jaipur", "delhi", "gurgaon", "gurugram", "noida", "ajmer", "kota", "udaipur", "jodhpur", "bikaner", "alwar", "bhilwara"];
+      for (const c of knownCities) {
+        if (normalized.includes(c)) {
+          entities.branch = cityBranchMap[c] || (c.charAt(0).toUpperCase() + c.slice(1));
+          entities.branchName = c.charAt(0).toUpperCase() + c.slice(1);
+          entities.locCode = entities.branch;
+          break;
+        }
+      }
+    }
+  }
+
+  // Common Job Titles & Designations (in EMPLOYEEDESIGNATION)
+  const desigMatch = normalized.match(/\b(accountant|cashier|driver|manager|clerk|mechanic|sales\s*executive|sales|security\s*guard|guard|peon|engineer|supervisor|telecaller|counselor|operator|technician|advisor|helper)\b/i);
+  if (desigMatch && !/\b(leave|salary|attendance|profile|detail)\b/i.test(desigMatch[1])) {
+    entities.designation = desigMatch[1].trim();
+  }
+
+  // Separation / Resignation Event Detection (e.g. "is mahine kitne employee chhod ke gaye", "march 2026 me kitne ne resign kiya")
+  const isSeparationEvent = /\b(chhod\s*diya|chhod\s*kar|chhod\s*ke|chhod\s*gaye|chhodi|left|resigned|resignation|nikala|nikale|separated|relieved)\b/i.test(normalized) &&
+    Boolean(entities.month || entities.year || entities.specificDate || /\b(is\s*mahine|pichle\s*mahine|last\s*month|this\s*month|in\s*month)\b/i.test(normalized));
+  if (isSeparationEvent) {
+    entities.isSeparationEvent = true;
   }
 
   // Salary Metric / Specific Field targets
@@ -763,35 +1008,43 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     /\b(aadhaar|aadhar|uidai|aadhar_no|adhar)\b/i.test(normalized);
 
   // PF (Provident Fund) / UAN / ESI Queries
+  const isPFDeduction = /\b(pf|provident\s*fund)\b/i.test(normalized) &&
+    /\b(deduct\w*|kata|katoti|kat\s*gaya|jama|contribution|salmnth|salyear|salary|payslip|slip|vetan|pagar|tankha|pension|eps)\b/i.test(normalized);
+
   const isPFQuery = /\b(pf|provident\s*fund|pf\s*number|pf\s*no|pfnumber|uan|esi)\b/i.test(normalized);
-  const isPFCount = isPFQuery && (
+  const isPFDeductionCount = isPFDeduction && (
     /\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized) ||
     entities.aggregation === "COUNT"
   );
-  const isPFList = isPFQuery && (
+  const isPFCount = isPFQuery && !isPFDeduction && (
+    /\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized) ||
+    entities.aggregation === "COUNT"
+  );
+  const isPFList = isPFQuery && !isPFDeduction && (
     /\b(kiske kiske|kiske pass|kaun kaun|list|all|employees|karmchari|details|detail|nikalo|batao|walo|wale|records)\b/i.test(normalized) ||
     !entities.employeeCode
   );
 
   const isAadhaarOwnerLookup = Boolean(entities.aadharNumber) &&
-    /\b(kiska|kiske|who|owner|employee|emp|naam|name|detail|kiska h|kiska hai|kiski|batao|nikalo)\b/i.test(normalized) &&
-    !/\b(count|list|all|verified|kiske kiske)\b/i.test(normalized);
+    (/\b(kiska|kiske|who|owner|employee|emp|naam|name|detail|details|kiska h|kiska hai|kiski|batao|nikalo|kon kon|kaun kaun|pass|hai|records|list|all)\b/i.test(normalized) ||
+      /\b(aadhaar|aadhar|uidai|uid)\b/i.test(normalized));
 
   const isPanOwnerLookup = Boolean(entities.panNumber) &&
-    /\b(kiska|kiske|who|owner|employee|emp|naam|name|detail|kiska h|kiska hai|kiski|batao)\b/i.test(normalized) &&
-    !/\b(count|list|all|verified|kiske kiske)\b/i.test(normalized);
+    (/\b(kiska|kiske|who|owner|employee|emp|naam|name|detail|details|kiska h|kiska hai|kiski|batao|kon kon|kaun kaun|pass|hai|records|list|all)\b/i.test(normalized) ||
+      /\b(pan|panno)\b/i.test(normalized));
 
   const isMobileOwnerLookup = Boolean(entities.mobileNumber) &&
-    /\b(kiska|kiske|who|owner|employee|emp|naam|name|detail|kiska h|kiska hai|kiski|batao)\b/i.test(normalized) &&
-    !/\b(count|list|all|verified|kiske kiske)\b/i.test(normalized);
+    (/\b(kiska|kiske|who|owner|employee|emp|naam|name|detail|details|kiska h|kiska hai|kiski|batao|kon kon|kaun kaun|pass|hai|records|list|all)\b/i.test(normalized) ||
+      /\b(mobile|phone|mob|cell|number|contact)\b/i.test(normalized));
 
   const isAccountOwnerLookup = (Boolean(entities.accountNumber) || (isBankContext && entities.employeeCode)) &&
-    /\b(kiska|kiske|who|owner|employee|emp|naam|name|detail|kiska h|kiska hai|kiski|batao|nikalo)\b/i.test(normalized) &&
-    !/\b(duplicate|dublicat|count|list|all|verified|kiske kiske)\b/i.test(normalized);
+    (/\b(kiska|kiske|who|owner|employee|emp|naam|name|detail|details|kiska h|kiska hai|kiski|batao|nikalo|kon kon|kaun kaun|pass|hai|records|list|all)\b/i.test(normalized) ||
+      /\b(bank|account|khata|bankaccountno)\b/i.test(normalized)) &&
+    !/\b(duplicate|dublicat)\b/i.test(normalized);
 
   const isTopSalaryRanking = !entities.employeeCode && !entities.isSelf &&
-    /\b(top\s*\d*|highest|maximum|sabse\s*jyada|sabse\s*badi|max|lowest|minimum|sabse\s*kam|min|ranking|highest\s*earning)\b/i.test(normalized) &&
-    /\b(salary|ctc|pagar|tankha|vetan|earning|package|pay)\b/i.test(normalized);
+    /\b(top\s*\d*|highest|maximum|sabse\s*jyada|sabse\s*adhik|sabse\s*badi|max|lowest|minimum|sabse\s*kam|min|ranking|highest\s*earning|topper)\b/i.test(normalized) &&
+    /\b(salary|ctc|pagar|tankha|tankhwa|vetan|earning|package|pay|payment|payout)\b/i.test(normalized);
 
   const isEmpSalaryHistory = (Boolean(entities.employeeCode) || entities.isSelf) &&
     /\b(salary|pagar|tankha|vetan|payslip|slip|earning|payout|rupaye|rupay)\b/i.test(normalized) &&
@@ -799,6 +1052,19 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
 
   const isBirthdayQuery = /\b(birthday|b'day|bday|janamdin|janam\s*din|dob|date\s*of\s*birth|kab\s*aata\s*hai|kab\s*h|kab\s*hota\s*hai)\b/i.test(normalized) &&
     !/\b(leave|salary|attendance|attandance|aattendance)\b/i.test(normalized);
+
+  const ANNIVERSARY_REGEX = /\b(annivers\w*|anivers\w*|anvers\w*|anivars\w*|saalgir\w*|salgir\w*|anniv\b)/i;
+  const MARRIAGE_KEYWORD_REGEX = /\b(marriage|marrige|marraige|merriage|shadi|shaadi|sadi|saadi|wedding|patni|wife|husband|pati|dom|doma|vivah|byah)\b/i;
+  const WORK_KEYWORD_REGEX = /\b(work|service|joining|join|job|kaam|nokri)\b/i;
+
+  const isMarriageAnniversary = (MARRIAGE_KEYWORD_REGEX.test(normalized) && ANNIVERSARY_REGEX.test(normalized)) ||
+    (MARRIAGE_KEYWORD_REGEX.test(normalized) && /\b(aaj|today|salgirah|saalgirah|kab|tarikh|date)\b/i.test(normalized));
+
+  const isWorkAnniversary = !isMarriageAnniversary && (
+    (WORK_KEYWORD_REGEX.test(normalized) && ANNIVERSARY_REGEX.test(normalized)) ||
+    ANNIVERSARY_REGEX.test(normalized) ||
+    /\b(joining\s*annivers\w*|service\s*annivers\w*|work\s*annivers\w*|work\s*anivers\w*|work\s*anvers\w*)\b/i.test(normalized)
+  );
 
   const isAttendancePattern = /\b(attendance|aattendance|attandance|atendance|attendence|atendence|haziri|hazri|upsthiti|punch|in\s*out|present|absent|attendance\s*detail|attandance\s*detail|aattendance\s*detail|punch\s*detail)\b/i.test(normalized);
 
@@ -862,6 +1128,12 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     intent = "DUPLICATE_PAN_NUMBERS";
   } else if (isDuplicateAadhaar) {
     intent = "DUPLICATE_AADHAAR_NUMBERS";
+  } else if (isPFDeduction) {
+    if (isPFDeductionCount) {
+      intent = "PF_DEDUCTION_COUNT";
+    } else {
+      intent = "SALARY_PF_DEDUCTION";
+    }
   } else if (isPFQuery) {
     if (isPFCount && !/\b(kiske kiske|list|all)\b/i.test(normalized)) {
       intent = "PF_COUNT";
@@ -870,13 +1142,21 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     } else {
       intent = "PF_EMPLOYEE_LIST";
     }
+  } else if (isWorkAnniversary) {
+    intent = "WORK_ANNIVERSARY";
+  } else if (isMarriageAnniversary) {
+    intent = "MARRIAGE_ANNIVERSARY";
   } else if (isBirthdayQuery) {
-    if (/\b(aaj|today)\b/i.test(normalized)) {
+    if (entities.day && entities.month && !entities.isToday) {
+      intent = "BIRTHDAY_BY_DATE";
+    } else if (entities.isToday || /\b(aaj|today)\b/i.test(normalized)) {
       intent = "BIRTHDAY_TODAY";
-    } else if (/\b(this month|is mahine|current month)\b/i.test(normalized) || (entities.month && !entities.employeeCode)) {
+    } else if (entities.month && !entities.employeeCode && !entities.day) {
       intent = "BIRTHDAYS_MONTH";
-    } else {
+    } else if (entities.employeeCode || entities.searchToken) {
       intent = "BIRTHDAY_LOOKUP";
+    } else {
+      intent = "BIRTHDAY_TODAY";
     }
   } else if (isAadhaarOwnerLookup) {
     intent = "EMPLOYEE_BY_AADHAAR_NO";
@@ -890,9 +1170,9 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     intent = "HIGHEST_SALARY_RANKING";
   } else if (isEmpSalaryHistory) {
     intent = "EMPLOYEE_SALARY_HISTORY";
-  } else if (/\b(salary|pagar|tankha|payslip|slip)\b/i.test(normalized) && isAttendancePattern) {
+  } else if (/\b(salary|pagar|tankha|payslip|slip|basic|basic_earn|ctc)\b/i.test(normalized) && isAttendancePattern) {
     intent = "ATTENDANCE_AND_SALARY_REPORT";
-  } else if (/\b(salary|pagar|tankha|vetan|payslip|slip)\b/i.test(normalized)) {
+  } else if (/\b(salary|pagar|tankha|vetan|payslip|slip|basic|basic_earn|gross|gross_earn|net_pay|in\s*hand|ctc)\b/i.test(normalized)) {
     intent = entities.isSelf ? "SELF_SALARY" : "SALARY_REPORT";
   } else if (isLeaveAppliedQuery && !isLeavePolicyQuery) {
     if (entities.employeeCode && !/\b(kitne|count|all|sabka|total)\b/i.test(normalized)) {
@@ -916,6 +1196,8 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     intent = "ATTENDANCE_REPORT";
   } else if (/\b(asset|laptop|desktop|phone)\b/i.test(normalized)) {
     intent = "ASSET_SEARCH";
+  } else if (/\b(detail|details|profile|designation|post|pad|kya\s*kaam|mobile|phone|contact|address|pata|joining|doj|kab\s*join|joining\s*date)\b/i.test(normalized)) {
+    intent = "EMPLOYEE_LOOKUP";
   } else if (/\b(bank verify|account verify|penny drop|account_no_api)\b/i.test(normalized)) {
     if (entities.aggregation === "COUNT" || /\b(kitne|total|count)\b/i.test(normalized)) {
       intent = "BANK_ACCOUNT_VERIFY_COUNT";
@@ -946,6 +1228,33 @@ const classifyIntentAndExtractEntities = async ({ message, history = [], userCon
     } else {
       intent = "KYC_LOOKUP";
     }
+  } else if (/\b(service\s*reminder|service\s*reminders|service\s*due|srv_reminder|srv_reminder_tbl|reminder\s*due|reminders\s*due)\b/i.test(normalized) ||
+    (/\b(service|services)\b/i.test(normalized) && /\b(reminder|reminders|due|pending|list)\b/i.test(normalized))) {
+    intent = "SERVICE_REMINDERS_DUE";
+  } else {
+    // Employee Count Queries (Active / Inactive / Total Count / Separation Events / Designation Counts / Name Counts)
+    const isEmployeeCountQuery = (
+      /\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized) &&
+      (/\b(employee|employees|karmchari|karmachari|log|staff|worker|workers|bande|person)\b/i.test(normalized) || Boolean(entities.designation) || Boolean(entities.employeeName))
+    ) || /\b(active\s*employee|inactive\s*employee|active\s*employees|inactive\s*employees)\b/i.test(normalized) || entities.isSeparationEvent;
+
+    const isInactiveStatus = entities.isSeparationEvent || /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(normalized);
+    const isActiveStatus = !isInactiveStatus && /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(normalized);
+
+    if (isInactiveStatus) {
+      entities.employeeStatus = "INACTIVE";
+    } else if (isActiveStatus) {
+      entities.employeeStatus = "ACTIVE";
+    }
+
+    const isEllipticalStatusQuery = /^(aur|and|then|also|ab|fir|what\s*about)?\s*(inactive|active|total)\b/i.test(normalized.trim());
+
+    if ((isEmployeeCountQuery || isEllipticalStatusQuery) && !isAttendancePattern && !isPFQuery && !isSalaryTotalOrSum && !isSalaryCount && !isMispunchQuery && !isLeaveAppliedQuery) {
+      intent = "EMPLOYEE_COUNT";
+      if (!entities.employeeStatus) {
+        entities.employeeStatus = "ALL";
+      }
+    }
   }
 
   entities.rawMessage = message;
@@ -968,6 +1277,54 @@ const resolveEmployeeEntityViaDB = async ({ sequelize, message, normalized, enti
     return { resolved: false };
   }
 
+  // Do not perform employee lookup if the message is a pronoun reference (iska, uska, inka, unka, etc.)
+  const isPronounFollowup = /\b(iska|iski|iske|inhe|inhein|unka|unki|unke|same|vahi|uska|uski|uske|previous|above|wahi|this person|that person|isi|isi\s*employee|is\s*employee|is\s*bande|isi\s*bande|current\s*employee)\b/i.test(normalized);
+  if (isPronounFollowup) {
+    return { resolved: false };
+  }
+
+  // Do not perform employee name lookup if the query is an explicit identifier lookup (mobile, pan, aadhaar, account)
+  if (entities.mobileNumber || entities.panNumber || entities.aadharNumber || entities.accountNumber) {
+    return { resolved: false };
+  }
+
+  // Do not perform employee name lookup if the query is an employee count or designation query
+  if (entities.designation || entities.employeeStatus || entities.isSeparationEvent) {
+    return { resolved: false };
+  }
+
+  // Do not perform single employee name lookup if the message is asking for a list, count, or general aggregate
+  const isListOrAggregate = /\b(kon kon|kaun kaun|kiske kiske|list|all|sabka|total|kitne|kitna|sankhya|ginti|how many|records)\b/i.test(normalized);
+  if (isListOrAggregate) {
+    return { resolved: false };
+  }
+
+  // Do not perform single employee name lookup if the message is asking for ranking or extremum (highest/lowest/top/sabse jyada)
+  const isRankingOrExtremum = /\b(sabse\s*jyada|sabse\s*kam|sabse\s*adhik|sabse|highest|lowest|top\s*\d*|bottom\s*\d*|maximum|minimum|max|min|ranking|topper|rank|kiski\s*salary|kiska\s*salary|kisko\s*salary|sabse\s*badi|pay\s*hui|payment)\b/i.test(normalized);
+  if (isRankingOrExtremum) {
+    return { resolved: false };
+  }
+
+  // Do not perform employee lookup if the message is asking about non-employee business domains
+  const nonEmpDomain = /\b(service|services|reminder|reminders|due|vehicle|chassis|engine|jobcard|invoice|bill|bills|billing|voucher|ledger|account|accounts|stock|inventory|gatepass|ro|workshop|insurance|model|fuel|booking|bookings|lead|leads|enquiry|dms|profit|loss|trial|balance|pnl|asset|history|audit|report|reports|customer|party)\b/i.test(normalized);
+  if (nonEmpDomain) {
+    return { resolved: false };
+  }
+
+  // Do not perform employee lookup if the message is asking a "WHO / WHOSE" question or event query (anniversary, birthday, present, absent, leaves)
+  const isWhoQuestion = /\b(kiska|kiski|kiske|kisko|kaun|kon|kin|kinko|kinka|who|whose|whom)\b/i.test(normalized);
+  const isEventOrDomainKeyword = /\b(annivers\w*|anivers\w*|anvers\w*|saalgir\w*|salgir\w*|marriage|marrige|marraige|merriage|shadi|shaadi|wedding|birthday|bday|b'day|janamdin|present|absent|leave|leaves|mispunch|punch|salary|pagar|tankha|vetan|pf|esi|uan)\b/i.test(normalized);
+  if (isWhoQuestion && isEventOrDomainKeyword) {
+    return { resolved: false };
+  }
+
+  // Do not perform employee lookup if it is a general event query for today, date, or month
+  const isGeneralEventQuery = /\b(annivers\w*|anivers\w*|anvers\w*|saalgir\w*|salgir\w*|birthday|bday|b'day|janamdin|holiday|holidays)\b/i.test(normalized) &&
+    /\b(aaj|today|current|month|mahine|date|tarikh|din|saal|year)\b/i.test(normalized);
+  if (isGeneralEventQuery) {
+    return { resolved: false };
+  }
+
   // Extract clean candidate words from user message (excluding stop words and numbers)
   const cleanTokens = message
     .replace(/[^\w\s]/g, " ")
@@ -976,12 +1333,15 @@ const resolveEmployeeEntityViaDB = async ({ sequelize, message, normalized, enti
 
   if (cleanTokens.length === 0) return { resolved: false };
 
-  const candidateFirstName = cleanTokens[0];
-  const candidateFullName = cleanTokens.slice(0, 3).join(" ");
+  const tokenCount = cleanTokens.length;
+  const firstToken = cleanTokens[0];
+  const candidateFullName = cleanTokens.slice(0, 4).join(" ");
+  const likeFull = "%" + cleanTokens.join("%") + "%";
+  const likeFirstPrefix = firstToken + "%";
 
   try {
     const nameSearchSQL = `
-      SELECT TOP 10 
+      SELECT TOP 20 
         E.EMPCODE, 
         RTRIM(LTRIM(CONCAT(E.EMPFIRSTNAME, ' ', ISNULL(E.EMPLASTNAME, '')))) AS FullName,
         E.EMPFIRSTNAME,
@@ -990,28 +1350,71 @@ const resolveEmployeeEntityViaDB = async ({ sequelize, message, normalized, enti
         ISNULL(L.Misc_Name, E.LOCATION) AS LocationName,
         E.EMPLOYEEDESIGNATION AS DesignationName,
         E.MOBILENO,
-        E.PANNO
+        E.PANNO,
+        E.EMP_STATUS
       FROM dbo.EMPLOYEEMASTER E WITH (NOLOCK)
       LEFT JOIN dbo.Misc_Mst L WITH (NOLOCK) ON L.Misc_Type = 85 AND CONVERT(varchar(50), L.Misc_Code) = CONVERT(varchar(50), E.LOCATION)
       WHERE 
-        E.EMPFIRSTNAME = :firstToken
-        OR E.EMPFIRSTNAME LIKE :likeFirst
+        CONCAT(E.EMPFIRSTNAME, ' ', ISNULL(E.EMPLASTNAME, '')) = :candidateFullName
+        OR E.EMPFIRSTNAME = :candidateFullName
         OR CONCAT(E.EMPFIRSTNAME, ' ', ISNULL(E.EMPLASTNAME, '')) LIKE :likeFull
-        OR SOUNDEX(E.EMPFIRSTNAME) = SOUNDEX(:firstToken)
-      ORDER BY E.EMPCODE;
+        OR E.EMPFIRSTNAME LIKE :likeFull
+        OR (
+          (:tokenCount = 1) AND (
+            E.EMPFIRSTNAME = :firstToken
+            OR E.EMPFIRSTNAME LIKE :likeFirstPrefix
+            OR CONCAT(E.EMPFIRSTNAME, ' ', ISNULL(E.EMPLASTNAME, '')) LIKE :likeFirstPrefix
+            OR (LEN(:firstToken) >= 4 AND SOUNDEX(E.EMPFIRSTNAME) = SOUNDEX(:firstToken) AND E.EMPFIRSTNAME LIKE CONCAT(LEFT(:firstToken, 1), '%'))
+          )
+        )
+      ORDER BY 
+        CASE 
+          WHEN LTRIM(RTRIM(E.EMPFIRSTNAME)) = :candidateFullName THEN 1
+          WHEN LTRIM(RTRIM(CONCAT(E.EMPFIRSTNAME, ' ', ISNULL(E.EMPLASTNAME, '')))) = :candidateFullName THEN 1
+          WHEN E.EMPFIRSTNAME LIKE :likeFull THEN 2
+          WHEN CONCAT(E.EMPFIRSTNAME, ' ', ISNULL(E.EMPLASTNAME, '')) LIKE :likeFull THEN 2
+          WHEN LTRIM(RTRIM(E.EMPFIRSTNAME)) = :firstToken THEN 3
+          WHEN E.EMPFIRSTNAME LIKE :likeFirstPrefix THEN 4
+          ELSE 5
+        END,
+        CASE WHEN E.EMP_STATUS = 'A' OR E.EMP_STATUS = '1' THEN 0 ELSE 1 END,
+        E.EMPCODE DESC;
     `;
 
     const candidates = await sequelize.query(nameSearchSQL, {
       replacements: {
-        firstToken: candidateFirstName,
-        likeFirst: `%${candidateFirstName}%`,
-        likeFull: `%${candidateFullName}%`
+        candidateFullName,
+        likeFull,
+        firstToken,
+        likeFirstPrefix,
+        tokenCount
       },
       type: QueryTypes.SELECT
     });
 
     if (!candidates || candidates.length === 0) {
       return { resolved: false };
+    }
+
+    // 1. Direct exact full-name match check
+    const exactMatch = candidates.find(c =>
+      c.FullName.toLowerCase() === candidateFullName.toLowerCase() ||
+      c.EMPFIRSTNAME.toLowerCase() === candidateFullName.toLowerCase() ||
+      (tokenCount === 1 && c.EMPFIRSTNAME.toLowerCase() === firstToken.toLowerCase())
+    );
+
+    if (exactMatch) {
+      return {
+        resolved: true,
+        matched: true,
+        employeeCode: exactMatch.EMPCODE,
+        employeeName: exactMatch.FullName,
+        location: exactMatch.LOCATION,
+        locationName: exactMatch.LocationName,
+        dept: exactMatch.DEPT,
+        departmentName: exactMatch.DepartmentName,
+        designation: exactMatch.DesignationName
+      };
     }
 
     if (candidates.length === 1) {
@@ -1029,14 +1432,18 @@ const resolveEmployeeEntityViaDB = async ({ sequelize, message, normalized, enti
       };
     }
 
-    // Match multi-token names (e.g. "PULKIT TOTLA" matches "PULKIT KUMAR TOTLA")
-    const multiTokenMatch = candidates.filter(c => {
-      const full = String(c.FullName || "").toLowerCase();
-      return cleanTokens.length > 1 && cleanTokens.every(token => full.includes(token.toLowerCase()));
+    // 1. Match candidates where all significant tokens of candidate.FullName are present in the user message
+    const allTokensInMsg = candidates.filter(c => {
+      const nameTokens = String(c.FullName || "")
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(t => t.length >= 2);
+      if (nameTokens.length === 0) return false;
+      return nameTokens.every(t => normalized.includes(t));
     });
 
-    if (multiTokenMatch.length === 1) {
-      const match = multiTokenMatch[0];
+    if (allTokensInMsg.length === 1) {
+      const match = allTokensInMsg[0];
       return {
         resolved: true,
         matched: true,
@@ -1050,10 +1457,32 @@ const resolveEmployeeEntityViaDB = async ({ sequelize, message, normalized, enti
       };
     }
 
-    // Filter to exact full name matches if multiple soundex/like matches
-    const exactFull = candidates.filter(c => 
+    if (allTokensInMsg.length > 1) {
+      const exactFullInMsg = allTokensInMsg.filter(c =>
+        (c.FullName && c.FullName.toLowerCase() === candidateFullName.toLowerCase()) ||
+        (c.EMPFIRSTNAME && c.EMPFIRSTNAME.toLowerCase() === candidateFullName.toLowerCase())
+      );
+      if (exactFullInMsg.length === 1) {
+        const match = exactFullInMsg[0];
+        return {
+          resolved: true,
+          matched: true,
+          employeeCode: match.EMPCODE,
+          employeeName: match.FullName,
+          location: match.LOCATION,
+          locationName: match.LocationName,
+          dept: match.DEPT,
+          departmentName: match.DepartmentName,
+          designation: match.DesignationName
+        };
+      }
+    }
+
+    // 2. Filter to exact full name matches if multiple soundex/like matches
+    const exactFull = candidates.filter(c =>
       (c.FullName && c.FullName.toLowerCase() === candidateFullName.toLowerCase()) ||
-      (c.EMPFIRSTNAME && c.EMPFIRSTNAME.toLowerCase() === candidateFirstName.toLowerCase())
+      (c.EMPFIRSTNAME && c.EMPFIRSTNAME.toLowerCase() === candidateFullName.toLowerCase()) ||
+      (tokenCount === 1 && c.EMPFIRSTNAME && c.EMPFIRSTNAME.toLowerCase() === firstToken.toLowerCase())
     );
 
     if (exactFull.length === 1) {
@@ -1099,40 +1528,303 @@ class MemoryEngine {
     this.sessions = new Map();
   }
 
-  resolveContextualEntities(conversationId, currentEntities = {}, currentMessage = "") {
-    if (!conversationId) return currentEntities;
+  getLastTurn(conversationId) {
+    if (!conversationId) return null;
+    return this.sessions.get(conversationId) || null;
+  }
+
+  getContext(conversationId) {
+    return this.getLastTurn(conversationId);
+  }
+
+  async ensureContextFromDB(conversationId, sequelize) {
+    if (!conversationId || !sequelize?.query) return null;
+    let existing = this.sessions.get(conversationId);
+    // If in-memory context already has the latest turn details, never re-query DB to avoid stale turn bleeding
+    if (existing && (existing.lastEmployeeCode || existing.lastEmployeeName || existing.lastUserMessage)) {
+      return existing;
+    }
+
+    try {
+      const rows = await sequelize.query(`
+        SELECT TOP 4 [Role], [Message_Content], [Metadata]
+        FROM [dbo].[AI_Message_Tbl] WITH (NOLOCK)
+        WHERE [Conversation_Id] = :conversationId
+        ORDER BY [UTD] DESC
+      `, { replacements: { conversationId }, type: QueryTypes.SELECT });
+
+      if (Array.isArray(rows) && rows.length > 0) {
+        let lastUserMsg = null;
+        let empCode = null;
+        let empName = null;
+        let intent = null;
+
+        for (const row of rows) {
+          if (row.Role === 'user' && !lastUserMsg && row.Message_Content) {
+            lastUserMsg = row.Message_Content;
+          }
+          if (row.Metadata) {
+            try {
+              const meta = typeof row.Metadata === 'string' ? JSON.parse(row.Metadata) : row.Metadata;
+              if (!empCode) empCode = meta.lastEmployeeCode || meta.resolvedEntities?.employeeCode || meta.employeeCode;
+              if (!empName) empName = meta.lastEmployeeName || meta.resolvedEntities?.employeeName || meta.employeeName || meta.nameFilter;
+              if (!intent) intent = meta.intent || meta.effectiveIntent;
+            } catch (_) {}
+          }
+          if (!empCode && row.Message_Content) {
+            const codeMatch = String(row.Message_Content).match(/\b(?:Employee Code|Emp Code|Code|EMPCODE)[*\s:]+(\d{4,10})\b/i);
+            if (codeMatch) empCode = codeMatch[1];
+            const nameMatch = String(row.Message_Content).match(/(?:salary|karmchari|employee|hai)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+(?:ko|ki|ke|ka)\b/i);
+            if (nameMatch) empName = nameMatch[1];
+          }
+
+          // Strictly limit to the immediate latest turn (stop after first user message)
+          if (lastUserMsg) break;
+        }
+
+        if (empCode || empName) {
+          existing = {
+            ...(existing || {}),
+            lastEmployeeCode: empCode ? String(empCode) : null,
+            lastEmployeeName: empName || null,
+            lastIntent: intent || null,
+            lastUserMessage: lastUserMsg || null,
+            lastUpdated: Date.now()
+          };
+          this.sessions.set(conversationId, existing);
+          console.log(`🧠 [V6-MemoryEngine] Restored persistent context from DB: ${empName || ''} (${empCode || 'No Code'}) for ${conversationId}`);
+          return existing;
+        }
+      }
+    } catch (err) {
+      console.warn("[V6-MemoryEngine] DB context restore notice:", err?.message);
+    }
+    return existing || null;
+  }
+
+  resolveContextualEntities(conversationId, currentEntities = {}, currentMessage = "", intent = "") {
+    if (!conversationId) return { entities: currentEntities, intent, isFollowup: false, previousTurn: null };
     const history = this.sessions.get(conversationId) || {};
     const resolved = { ...currentEntities };
+    let resolvedIntent = intent;
 
-    const isExplicitFollowup = /\b(iska|iski|iske|inhe|inhein|unka|unki|unke|same|vahi|uska|uski|uske|previous|above|wahi|this person|that person|isi|isi\s*employee|is\s*employee|is\s*bande|isi\s*bande|current\s*employee)\b/i.test(currentMessage);
+    const norm = normalizeLower(currentMessage);
+    const isContinuationParticle = /^(aur|and|then|also|ab|fir|uske\s*baad|what\s*about|aur\s*bhi)\b/i.test(norm.trim());
 
-    // ONLY inherit last employee code if the user explicitly used a follow-up pronoun (iska, iski, unka, etc.)
-    if (isExplicitFollowup) {
-      if (!resolved.employeeCode && history.lastEmployeeCode) {
-        resolved.employeeCode = history.lastEmployeeCode;
+    // 1. Is this an independent/new question that should NOT inherit previous context?
+    const currentSubject = (resolved.employeeName || resolved.nameFilter || resolved.searchToken || "").trim().toLowerCase();
+    const historySubject = (history.lastEmployeeName || "").trim().toLowerCase();
+    const hasExplicitNewEmployee = Boolean(
+      (resolved.employeeCode && history.lastEmployeeCode && String(resolved.employeeCode) !== String(history.lastEmployeeCode)) ||
+      (resolved.employeeCode && !history.lastEmployeeCode) ||
+      (currentSubject && historySubject && currentSubject !== historySubject) ||
+      (currentSubject && !historySubject && !isPronounFollowup && !isListOrIdentityFollowup)
+    );
+    const isPronounFollowup = /\b(iska|iski|iske|inhe|inhein|unka|unki|unke|same|vahi|uska|uski|uske|previous|above|wahi|this person|that person|isi|isi\s*employee|is\s*employee|is\s*bande|isi\s*bande|current\s*employee)\b/i.test(norm);
+    const isListOrIdentityFollowup = /\b(kon\s*kon|kaun\s*kaun|kon\s*hai|kaun\s*hai|who\s*all|who\s*are\s*they|list|names|naam\s*kya|details?\s*nikalo|detail\s*do|details?\s*do|data\s*do|dikhao|batao)\b/i.test(norm);
+    const isGlobalAggregateOrRanking = /\b(top\s*\d+|bottom\s*\d+|sabse\s*jyada|sabse\s*kam|highest|lowest|all\s*employees|sabhi\s*karmchari|total\s*employees|kitne\s*log|kitne\s*employee|total\s*count)\b/i.test(norm);
+    const isGlobalEventQuery = /\b(aaj\s*kiska|aaj\s*kiski|kiska\s*birthday|kiski\s*anniversary|kiska\s*janamdin|kiski\s*saalgirah)\b/i.test(norm);
+
+    if (!isContinuationParticle && !isPronounFollowup && !isListOrIdentityFollowup && (hasExplicitNewEmployee || isGlobalAggregateOrRanking || isGlobalEventQuery)) {
+      // Independent query - start fresh context for this domain
+      return { entities: resolved, intent: resolvedIntent, isFollowup: false, previousTurn: history };
+    }
+
+    // 2. Aggregate & Count Follow-Up Resolution (e.g. "aur branch 2 par?", "aur inactive?", "aur accountant?")
+    const isAggregateIntent = ["EMPLOYEE_COUNT", "SALARY_TOTAL_AGGREGATE", "SALARY_COUNT_AGGREGATE", "PF_DEDUCTION_COUNT", "PF_COUNT"].includes(history.lastIntent);
+    const isShortQuery = norm.trim().split(/\s+/).length <= 8;
+    const isAggregateFollowup = Boolean(
+      isAggregateIntent && (
+        isContinuationParticle ||
+        (isShortQuery && (resolved.branch || resolved.branches || resolved.excludeBranch || resolved.employeeStatus || resolved.designation)) ||
+        (isContinuationParticle && (resolved.branch || resolved.employeeStatus || resolved.designation || isGlobalAggregateOrRanking))
+      )
+    );
+
+    if (isAggregateFollowup) {
+      resolvedIntent = history.lastIntent;
+
+      // Status inheritance (e.g. if user asks "aur branch 2 par?", inherit ACTIVE or INACTIVE)
+      if (!resolved.employeeStatus && history.lastEmployeeStatus) {
+        resolved.employeeStatus = history.lastEmployeeStatus;
       }
+
+      // Branch inheritance (e.g. if user asks "aur inactive?", inherit branch 2)
+      if (!resolved.branch && !resolved.branches && !resolved.excludeBranch && history.lastBranch) {
+        resolved.branch = history.lastBranch;
+        resolved.locCode = history.lastBranch;
+      }
+      if (!resolved.branches && history.lastBranches && !resolved.branch && !resolved.excludeBranch) {
+        resolved.branches = history.lastBranches;
+      }
+
+      // Designation inheritance
+      if (!resolved.designation && history.lastDesignation) {
+        resolved.designation = history.lastDesignation;
+      }
+
+      // Month/Year inheritance
       if (!resolved.month && history.lastMonth) {
         resolved.month = history.lastMonth;
       }
       if (!resolved.year && history.lastYear) {
         resolved.year = history.lastYear;
       }
+
+      return { entities: resolved, intent: resolvedIntent, isFollowup: true, previousTurn: history };
     }
 
-    return resolved;
+    // 3. Detect Elliptical / Follow-up Patterns for Individual Employees
+    // Attribute queries (asking for an attribute of a person without specifying a person)
+    const isAttributeQuery = /\b(basic|basic_earn|gross|net|salary|pagar|tankha|vetan|ctc|designation|post|pad|mobile|phone|contact|address|pata|joining|doj|birthday|dob|janamdin|anniversary|saalgirah|bank|account|khata|ifsc|pan|panno|aadhaar|aadhar|pf|pfnumber|uan|esi|leave|leaves|chhutti|asset|laptop|mispunch|punch|attendance|haziri|detail|details|info|information|data|biodata|profile)\b/i.test(norm);
+
+    // Temporal queries without subject (e.g. "aur November ki?", "October 2025 ki?", "pichle mahine ki?")
+    const isTemporalQuery = Boolean(resolved.month || resolved.year || resolved.specificDate || /\b(pichle\s*mahine|last\s*month|agle\s*mahine|next\s*month)\b/i.test(norm));
+
+    const hasSubjectInHistory = Boolean(history.lastEmployeeCode || history.lastEmployeeName);
+
+    const isContextualFollowup = Boolean(
+      hasSubjectInHistory && (
+        isPronounFollowup ||
+        isContinuationParticle ||
+        isListOrIdentityFollowup ||
+        (isAttributeQuery && !resolved.employeeCode && !resolved.employeeName && !resolved.searchToken) ||
+        (isTemporalQuery && !resolved.employeeCode && !resolved.employeeName && !resolved.searchToken) ||
+        history.isPendingClarification
+      )
+    );
+
+    if (isContextualFollowup) {
+      // Inherit employee from previous turn
+      if (!resolved.employeeCode && history.lastEmployeeCode) {
+        resolved.employeeCode = history.lastEmployeeCode;
+        if (history.lastEmployeeName) {
+          resolved.employeeName = history.lastEmployeeName;
+        }
+      } else if (!resolved.employeeCode && !resolved.employeeName && history.lastEmployeeName) {
+        // Inherit employeeName when no code is in history (e.g. previous turn was "Atendra name ke kitne employee hai")
+        resolved.employeeName = history.lastEmployeeName;
+        resolved.nameFilter = history.lastEmployeeName;
+      }
+
+      // If this is a temporal follow-up without an explicit attribute in current message, inherit the previous intent!
+      // (e.g. Turn 1 was ATTENDANCE_REPORT, Turn 2 is "aur November ki?")
+      if (isTemporalQuery && !isAttributeQuery && (intent === "GENERAL_DATABASE_QUERY" || !intent)) {
+        if (history.lastIntent && history.lastIntent !== "GENERAL_DATABASE_QUERY") {
+          resolvedIntent = history.lastIntent;
+        }
+      }
+
+      // If this is a detail/list or profile query
+      if (isListOrIdentityFollowup || isAttributeQuery || isPronounFollowup) {
+        if (!resolvedIntent || resolvedIntent === "GENERAL_DATABASE_QUERY" || resolvedIntent === "EMPLOYEE_COUNT") {
+          resolvedIntent = "EMPLOYEE_LOOKUP";
+        }
+      }
+
+      // If this is an attribute query for profile (designation, mobile, address, etc.)
+      const isProfileAttribute = /\b(designation|post|pad|mobile|phone|contact|address|pata|dob|birthday|joining|doj|bank|account|pan|aadhaar|pf)\b/i.test(norm);
+      if (isProfileAttribute && (!resolvedIntent || resolvedIntent === "GENERAL_DATABASE_QUERY")) {
+        resolvedIntent = "EMPLOYEE_LOOKUP";
+      }
+
+      // Inherit month/year if not specified in the current follow-up and not asking for basic profile attributes
+      if (!resolved.month && history.lastMonth && !isProfileAttribute) {
+        resolved.month = history.lastMonth;
+      }
+      if (!resolved.year && history.lastYear && !isProfileAttribute) {
+        resolved.year = history.lastYear;
+      }
+      if (!resolved.branch && history.lastBranch) {
+        resolved.branch = history.lastBranch;
+      }
+
+      return { entities: resolved, intent: resolvedIntent, isFollowup: true, previousTurn: history };
+    }
+
+    return { entities: resolved, intent: resolvedIntent, isFollowup: false, previousTurn: history };
   }
 
-  updateContext(conversationId, entities = {}, intent = "") {
+  updateContext(conversationId, entities = {}, intent = "", extra = {}) {
     if (!conversationId) return;
     const existing = this.sessions.get(conversationId) || {};
+
+    const hasCurrentEmpCode = Boolean(entities.employeeCode);
+    const currentName = (entities.employeeName || entities.nameFilter || "").trim();
+    const hasCurrentEmpName = Boolean(currentName);
+    const existingName = (existing.lastEmployeeName || "").trim();
+
+    const isNewEmployeeCode = Boolean(
+      hasCurrentEmpCode && existing.lastEmployeeCode && String(entities.employeeCode) !== String(existing.lastEmployeeCode)
+    );
+    const isNewEmployeeName = Boolean(
+      hasCurrentEmpName && existingName && currentName.toLowerCase() !== existingName.toLowerCase()
+    );
+    const isNameWithoutOldCode = Boolean(
+      hasCurrentEmpName && !hasCurrentEmpCode && existing.lastEmployeeCode
+    );
+
+    const isNewSubject = isNewEmployeeCode || isNewEmployeeName || isNameWithoutOldCode;
+
+    let newEmpCode = null;
+    let newEmpName = null;
+
+    if (hasCurrentEmpCode) {
+      newEmpCode = String(entities.employeeCode);
+      newEmpName = currentName || (isNewSubject ? null : existing.lastEmployeeName) || null;
+    } else if (hasCurrentEmpName) {
+      // Current turn specifically has an employee name (e.g. "Atendra")
+      newEmpCode = null; // Stale code must NEVER bleed into a name query!
+      newEmpName = currentName;
+    } else {
+      // Neither code nor name was explicitly requested:
+      // If current query was a general company-wide aggregate or summary, do NOT retain prior employee context
+      const isGeneralCompanyQuery = [
+        "EMPLOYEE_COUNT", "SALARY_TOTAL_AGGREGATE", "SALARY_COUNT_AGGREGATE",
+        "PF_COUNT", "COMPANY_SUMMARY", "DEPARTMENT_COUNT"
+      ].includes(intent) && !entities.branch && !entities.designation;
+
+      if (!isGeneralCompanyQuery) {
+        newEmpCode = existing.lastEmployeeCode || null;
+        newEmpName = existing.lastEmployeeName || null;
+      }
+    }
+
+    const newBranch = entities.branch || (isNewSubject ? null : existing.lastBranch) || null;
+    const newBranches = entities.branches || (isNewSubject ? null : existing.lastBranches) || null;
+    const newExcludeBranch = entities.excludeBranch || (isNewSubject ? null : existing.lastExcludeBranch) || null;
+    const newEmployeeStatus = entities.employeeStatus || (isNewSubject ? null : existing.lastEmployeeStatus) || null;
+    const newDesignation = entities.designation || (isNewSubject ? null : existing.lastDesignation) || null;
+
     this.sessions.set(conversationId, {
       ...existing,
-      lastEmployeeCode: entities.employeeCode || existing.lastEmployeeCode || null,
-      lastMonth: entities.month || existing.lastMonth || null,
-      lastYear: entities.year || existing.lastYear || null,
+      lastEmployeeCode: newEmpCode,
+      lastEmployeeName: newEmpName,
+      lastBranch: newBranch,
+      lastBranches: newBranches,
+      lastExcludeBranch: newExcludeBranch,
+      lastEmployeeStatus: newEmployeeStatus,
+      lastDesignation: newDesignation,
+      lastMonth: entities.month || (isNewSubject ? null : existing.lastMonth) || null,
+      lastYear: entities.year || (isNewSubject ? null : existing.lastYear) || null,
       lastIntent: intent || existing.lastIntent || null,
+      lastUserMessage: extra.userMessage !== undefined ? extra.userMessage : (existing.lastUserMessage || null),
+      lastSQL: extra.sql !== undefined ? extra.sql : (existing.lastSQL || null),
+      lastRowCount: extra.rowCount !== undefined ? extra.rowCount : (existing.lastRowCount || 0),
+      lastExecutionFailed: extra.failed !== undefined ? extra.failed : (existing.lastExecutionFailed || false),
+      isPendingClarification: extra.rowCount === 0 || extra.failed === true,
+      lastEntities: { ...(existing.lastEntities || {}), ...(entities || {}) },
+      tablesUsed: extra.tablesUsed || existing.tablesUsed || [],
       lastUpdated: Date.now()
     });
+  }
+
+  clearContext(conversationId) {
+    if (!conversationId) {
+      this.sessions.clear();
+      return;
+    }
+    this.sessions.delete(String(conversationId));
   }
 }
 
@@ -1260,6 +1952,24 @@ const getDeterministicSQLTemplate = ({ intent, entities = {}, userContext = {} }
   const branch = entities.branch;
 
   switch (intent) {
+    case "SERVICE_REMINDERS_DUE":
+      {
+        let sql = `SELECT TOP 100
+  CONVERT(varchar(10), Final_Due_Date, 120) AS [FinalDueDate],
+  *
+FROM [dbo].[Srv_Reminder_Tbl] WITH (NOLOCK)
+WHERE 1=1`;
+        if (entities.specificDate) {
+          sql += ` AND CAST(Final_Due_Date AS DATE) = '${entities.specificDate}'`;
+        } else if (entities.month && entities.year) {
+          sql += ` AND MONTH(Final_Due_Date) = ${entities.month} AND YEAR(Final_Due_Date) = ${entities.year}`;
+        } else if (/\b(today|aaj|current)\b/i.test(entities.rawMessage || "") || !entities.specificDate) {
+          sql += ` AND CAST(Final_Due_Date AS DATE) = CAST(GETDATE() AS DATE)`;
+        }
+        sql += ` ORDER BY Final_Due_Date ASC;`;
+        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "Srv_Reminder_Tbl" };
+      }
+
     case "ATTENDANCE_AND_SALARY_REPORT":
       if (emp) {
         const cleanEmp = emp.replace(/'/g, "''");
@@ -1286,6 +1996,59 @@ WHERE (LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = '${cleanEmp}' OR LTR
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99 };
       }
       break;
+
+    case "EMPLOYEE_COUNT":
+      {
+        let sql = "";
+        const isSeparation = entities.isSeparationEvent;
+        const status = entities.employeeStatus;
+
+        if (isSeparation) {
+          sql = `SELECT COUNT(*) AS [SeparatedEmployeeCount] FROM [dbo].[EMPLOYEEMASTER] WITH (NOLOCK) WHERE (LASTWOR_DATE IS NOT NULL)`;
+          if (month) sql += ` AND (MONTH(LASTWOR_DATE) = ${month})`;
+          if (year) sql += ` AND (YEAR(LASTWOR_DATE) = ${year})`;
+          if (entities.specificDate) sql += ` AND (CONVERT(varchar(10), LASTWOR_DATE, 120) = '${entities.specificDate}')`;
+        } else if (status === "INACTIVE") {
+          sql = `SELECT COUNT(*) AS [InactiveEmployeeCount] FROM [dbo].[EMPLOYEEMASTER] WITH (NOLOCK) WHERE 1=1 AND (LASTWOR_DATE IS NOT NULL)`;
+        } else if (status === "ACTIVE") {
+          sql = `SELECT COUNT(*) AS [ActiveEmployeeCount] FROM [dbo].[EMPLOYEEMASTER] WITH (NOLOCK) WHERE 1=1 AND (LASTWOR_DATE IS NULL)`;
+        } else {
+          sql = `SELECT COUNT(*) AS [TotalEmployeeCount] FROM [dbo].[EMPLOYEEMASTER] WITH (NOLOCK) WHERE 1=1`;
+        }
+
+        // Branch / Location Filtering
+        if (entities.branches && Array.isArray(entities.branches) && entities.branches.length > 0) {
+          const formattedBranches = entities.branches.map(b => {
+            const clean = String(b).replace(/'/g, "''");
+            return /^\d+$/.test(clean) ? clean : `'${clean}'`;
+          }).join(", ");
+          sql += ` AND LOCATION IN (${formattedBranches})`;
+        } else if (entities.excludeBranch) {
+          const cleanExclude = String(entities.excludeBranch).replace(/'/g, "''");
+          const isNum = /^\d+$/.test(cleanExclude);
+          sql += ` AND (LOCATION <> '${cleanExclude}' AND CONVERT(varchar(50), LOCATION) <> '${cleanExclude}'${isNum ? ` AND LOCATION <> ${cleanExclude}` : ""})`;
+        } else if (entities.branch || entities.locCode) {
+          const loc = entities.branch || entities.locCode;
+          const cleanLoc = String(loc).replace(/'/g, "''");
+          const isNum = /^\d+$/.test(cleanLoc);
+          sql += ` AND (LOCATION = '${cleanLoc}' OR CONVERT(varchar(50), LOCATION) = '${cleanLoc}'${isNum ? ` OR LOCATION = ${cleanLoc}` : ""})`;
+        }
+
+        // Designation Filtering
+        if (entities.designation) {
+          const cleanDesig = entities.designation.replace(/'/g, "''");
+          sql += ` AND EMPLOYEEDESIGNATION LIKE '%${cleanDesig}%'`;
+        }
+
+        // Name Filtering (e.g. "shantanu name ke kitne employee hai")
+        if (entities.employeeName || entities.nameFilter) {
+          const cleanName = (entities.employeeName || entities.nameFilter).replace(/'/g, "''");
+          sql += ` AND (EMPFIRSTNAME LIKE '%${cleanName}%' OR CONCAT(EMPFIRSTNAME, ' ', ISNULL(EMPLASTNAME, '')) LIKE '%${cleanName}%')`;
+        }
+
+        sql += `;`;
+        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+      }
 
     case "SALARY_TOTAL_AGGREGATE":
       {
@@ -1325,6 +2088,86 @@ WHERE (ISNULL([S].[Final_Payment], 0) > 0 OR ISNULL([S].[Gross_Earn], 0) > 0)`;
         return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
       }
 
+    case "PF_DEDUCTION_COUNT":
+      {
+        let sql = `SELECT 
+  COUNT(DISTINCT [S].[Emp_Code]) AS [TotalEmployeesWithPF],
+  SUM(ISNULL([S].[PF_Employee], 0)) AS [TotalEmployeePF],
+  SUM(ISNULL([S].[pf_employer], 0)) AS [TotalEmployerPF],
+  SUM(ISNULL([S].[pf_emplpension], 0)) AS [TotalPensionEPS],
+  AVG(ISNULL([S].[PF_Employee], 0)) AS [AvgPFDeduction],
+  COUNT(DISTINCT [S].[Emp_Code]) AS [RecordCount]
+FROM [dbo].[SALARYFILE] AS [S] WITH (NOLOCK)`;
+        if (branch) {
+          sql += `
+INNER JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+WHERE [S].[PF_Employee] IS NOT NULL AND ISNULL([S].[PF_Employee], 0) > 0
+  AND [E].[LOCATION] = '${branch.replace(/'/g, "''")}'`;
+        } else {
+          sql += `
+WHERE [S].[PF_Employee] IS NOT NULL AND ISNULL([S].[PF_Employee], 0) > 0`;
+        }
+        if (month) sql += ` AND [S].[SalMnth] = ${month}`;
+        if (year) sql += ` AND [S].[salyear] = ${year};`;
+        else sql += `;`;
+        return { sql, requiresJoin: Boolean(branch), isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
+      }
+
+    case "SALARY_PF_DEDUCTION":
+      if (emp || entities.searchToken) {
+        const cleanEmp = (emp || entities.searchToken).replace(/'/g, "''");
+        let sql = `SELECT TOP 50
+  LTRIM(RTRIM(CONVERT(varchar(50), ISNULL([E].[EMPCODE], [S].[Emp_Code])))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  [E].[PFNUMBER] AS [PFNUMBER],
+  [S].[SalMnth] AS [SalaryMonth],
+  [S].[salyear] AS [SalaryYear],
+  DATENAME(month, DATEFROMPARTS([S].[salyear], [S].[SalMnth], 1)) AS [MonthName],
+  ISNULL([S].[PF_Employee], 0) AS [PF_Employee],
+  ISNULL([S].[pf_employer], 0) AS [pf_employer],
+  ISNULL([S].[pf_emplpension], 0) AS [pf_emplpension],
+  ISNULL([S].[Deducation], 0) AS [TotalDeductions],
+  ISNULL([S].[Gross_Earn], 0) AS [GrossEarnings],
+  ISNULL([S].[Final_Payment], 0) AS [NetSalary],
+  [E].[LOCATION] AS [Location],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation]
+FROM [dbo].[SALARYFILE] AS [S] WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK) 
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+WHERE (LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = '${cleanEmp}' OR LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE]))) = '${cleanEmp}')`;
+        if (month) sql += ` AND [S].[SalMnth] = ${month}`;
+        if (year) sql += ` AND [S].[salyear] = ${year}`;
+        sql += ` ORDER BY [S].[salyear] DESC, [S].[SalMnth] DESC;`;
+        return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
+      } else if (month || year) {
+        let sql = `SELECT TOP 200
+  LTRIM(RTRIM(CONVERT(varchar(50), ISNULL([E].[EMPCODE], [S].[Emp_Code])))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  [E].[PFNUMBER] AS [PFNUMBER],
+  [S].[SalMnth] AS [SalaryMonth],
+  [S].[salyear] AS [SalaryYear],
+  DATENAME(month, DATEFROMPARTS([S].[salyear], [S].[SalMnth], 1)) AS [MonthName],
+  ISNULL([S].[PF_Employee], 0) AS [PF_Employee],
+  ISNULL([S].[pf_employer], 0) AS [pf_employer],
+  ISNULL([S].[pf_emplpension], 0) AS [pf_emplpension],
+  ISNULL([S].[Deducation], 0) AS [TotalDeductions],
+  ISNULL([S].[Gross_Earn], 0) AS [GrossEarnings],
+  ISNULL([S].[Final_Payment], 0) AS [NetSalary],
+  [E].[LOCATION] AS [Location],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation]
+FROM [dbo].[SALARYFILE] AS [S] WITH (NOLOCK)
+INNER JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+WHERE [S].[PF_Employee] IS NOT NULL AND ISNULL([S].[PF_Employee], 0) > 0`;
+        if (month) sql += ` AND [S].[SalMnth] = ${month}`;
+        if (year) sql += ` AND [S].[salyear] = ${year}`;
+        if (branch) sql += ` AND [E].[LOCATION] = '${branch.replace(/'/g, "''")}'`;
+        sql += ` ORDER BY ISNULL([S].[PF_Employee], 0) DESC, [E].[EMPCODE];`;
+        return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
+      }
+      break;
+
     case "EMPLOYEE_SALARY_HISTORY":
     case "SELF_SALARY":
     case "SALARY_REPORT":
@@ -1353,12 +2196,14 @@ LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
   ON LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
 WHERE (LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = '${cleanEmp}' OR LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE]))) = '${cleanEmp}')`;
         if (month) sql += ` AND [S].[SalMnth] = ${month}`;
-        if (year && !/\b(kab|history|all|sabse\s*jyada|highest|kis\s*mahine)\b/i.test(entities.rawMessage || "")) sql += ` AND [S].[salyear] = ${year}`;
-        if (intent === "EMPLOYEE_SALARY_HISTORY" || /\b(highest|maximum|sabse\s*jyada|sabse\s*badi|max|peak|kab|kis\s*mahine)\b/i.test(entities.rawMessage || "")) {
+        if (year) sql += ` AND [S].[salyear] = ${year}`;
+        const isAskingHighest = /\b(highest|maximum|sabse\s*jyada|sabse\s*badi|max|peak|kab|kis\s*mahine)\b/i.test(entities.rawMessage || "");
+        if (isAskingHighest) {
           sql += ` AND (ISNULL([S].[Final_Payment], 0) > 0 OR ISNULL([S].[Gross_Earn], 0) > 0)`;
           sql += ` ORDER BY ISNULL([S].[Final_Payment], 0) DESC, ISNULL([S].[Gross_Earn], 0) DESC, [S].[salyear] DESC, [S].[SalMnth] DESC;`;
         } else {
-          sql += ` ORDER BY [S].[salyear] DESC, [S].[SalMnth] DESC;`;
+          sql += ` AND (ISNULL([S].[Final_Payment], 0) > 0 OR ISNULL([S].[Gross_Earn], 0) > 0)`;
+          sql += ` ORDER BY [S].[salyear] ASC, [S].[SalMnth] ASC;`;
         }
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
       } else if (month || year) {
@@ -1427,6 +2272,125 @@ ORDER BY E.[EMPFIRSTNAME];`;
         return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99 };
       }
 
+    case "BIRTHDAY_BY_DATE":
+      {
+        const day = entities.day;
+        const month = entities.month;
+        let whereClause = `WHERE E.[DOB] IS NOT NULL`;
+        if (day && month) {
+          whereClause += ` AND MONTH(E.[DOB]) = ${month} AND DAY(E.[DOB]) = ${day}`;
+        } else if (month) {
+          whereClause += ` AND MONTH(E.[DOB]) = ${month}`;
+        } else {
+          whereClause += ` AND MONTH(E.[DOB]) = MONTH(GETDATE()) AND DAY(E.[DOB]) = DAY(GETDATE())`;
+        }
+        if (branch) {
+          whereClause += ` AND E.[LOCATION] = '${branch.replace(/'/g, "''")}'`;
+        }
+        let sql = `SELECT TOP 100
+  LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+  CONVERT(varchar(10), E.[DOB], 120) AS [DateOfBirth],
+  DATEDIFF(year, E.[DOB], GETDATE()) AS [Age],
+  E.[LOCATION] AS [Location],
+  E.[EMPLOYEEDESIGNATION] AS [Designation],
+  E.[MOBILENO] AS [MobileNo]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+${whereClause}
+ORDER BY E.[EMPFIRSTNAME];`;
+        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+      }
+
+    case "WORK_ANNIVERSARY":
+      {
+        const day = entities.day;
+        const month = entities.month;
+        const year = entities.year || (entities.specificDate ? parseInt(entities.specificDate.split("-")[0], 10) : null);
+        const isToday = entities.isToday || (/\b(today|aaj)\b/i.test(entities.rawMessage || "") && !day);
+        let whereClause = `WHERE [E].[CURRENTJOINDATE] IS NOT NULL`;
+
+        if (isToday) {
+          whereClause += ` AND MONTH([E].[CURRENTJOINDATE]) = MONTH(GETDATE()) AND DAY([E].[CURRENTJOINDATE]) = DAY(GETDATE())`;
+        } else if (day && month) {
+          whereClause += ` AND MONTH([E].[CURRENTJOINDATE]) = ${month} AND DAY([E].[CURRENTJOINDATE]) = ${day}`;
+        } else if (month) {
+          whereClause += ` AND MONTH([E].[CURRENTJOINDATE]) = ${month}`;
+        } else {
+          whereClause += ` AND MONTH([E].[CURRENTJOINDATE]) = MONTH(GETDATE()) AND DAY([E].[CURRENTJOINDATE]) = DAY(GETDATE())`;
+        }
+
+        if (year) {
+          whereClause += ` AND YEAR([E].[CURRENTJOINDATE]) <= ${year}`;
+        }
+
+        if (branch) {
+          whereClause += ` AND ([E].[LOCATION] = '${branch.replace(/'/g, "''")}' OR CONVERT(varchar(50), [E].[LOCATION]) = '${branch.replace(/'/g, "''")}')`;
+        }
+
+        const yearsExpr = year
+          ? `(${year} - YEAR([E].[CURRENTJOINDATE]))`
+          : `DATEDIFF(YEAR, [E].[CURRENTJOINDATE], GETDATE())`;
+
+        let sql = `SELECT TOP 500
+  DAY([E].[CURRENTJOINDATE]) AS [AnniversaryDay],
+  LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  CONVERT(varchar(10), [E].[CURRENTJOINDATE], 103) AS [JoiningDate],
+  ${yearsExpr} AS [YearsOfService],
+  [E].[LOCATION] AS [Location],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation],
+  [E].[MOBILENO] AS [MobileNo]
+FROM [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
+${whereClause}
+ORDER BY DAY([E].[CURRENTJOINDATE]) ASC, [E].[EMPFIRSTNAME] ASC, [E].[EMPCODE] ASC;`;
+        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+      }
+
+    case "MARRIAGE_ANNIVERSARY":
+      {
+        const day = entities.day;
+        const month = entities.month;
+        const year = entities.year || (entities.specificDate ? parseInt(entities.specificDate.split("-")[0], 10) : null);
+        const isToday = entities.isToday || (/\b(today|aaj)\b/i.test(entities.rawMessage || "") && !day);
+        let whereClause = `WHERE [E].[DOM] IS NOT NULL`;
+
+        if (isToday) {
+          whereClause += ` AND MONTH([E].[DOM]) = MONTH(GETDATE()) AND DAY([E].[DOM]) = DAY(GETDATE())`;
+        } else if (day && month) {
+          whereClause += ` AND MONTH([E].[DOM]) = ${month} AND DAY([E].[DOM]) = ${day}`;
+        } else if (month) {
+          whereClause += ` AND MONTH([E].[DOM]) = ${month}`;
+        } else {
+          whereClause += ` AND MONTH([E].[DOM]) = MONTH(GETDATE()) AND DAY([E].[DOM]) = DAY(GETDATE())`;
+        }
+
+        if (year) {
+          whereClause += ` AND YEAR([E].[DOM]) <= ${year}`;
+        }
+
+        if (branch) {
+          whereClause += ` AND ([E].[LOCATION] = '${branch.replace(/'/g, "''")}' OR CONVERT(varchar(50), [E].[LOCATION]) = '${branch.replace(/'/g, "''")}')`;
+        }
+
+        const yearsExpr = year
+          ? `(${year} - YEAR([E].[DOM]))`
+          : `DATEDIFF(YEAR, [E].[DOM], GETDATE())`;
+
+        let sql = `SELECT TOP 500
+  DAY([E].[DOM]) AS [AnniversaryDay],
+  LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  CONVERT(varchar(10), [E].[DOM], 103) AS [MarriageDate],
+  ${yearsExpr} AS [YearsOfMarriage],
+  [E].[LOCATION] AS [Location],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation],
+  [E].[MOBILENO] AS [MobileNo]
+FROM [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
+${whereClause}
+ORDER BY DAY([E].[DOM]) ASC, [E].[EMPFIRSTNAME] ASC, [E].[EMPCODE] ASC;`;
+        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+      }
+
     case "BIRTHDAYS_MONTH":
       {
         const mVal = month || "MONTH(GETDATE())";
@@ -1488,18 +2452,23 @@ WHERE (CONVERT(varchar(10), [S].[SalMnth]) = '${targetMonth}' OR [S].[SalMnth] =
         }
 
         let sql = `SELECT TOP ${limit}
-  LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE]))) AS [EmployeeCode],
-  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
-  [E].[LOCATION] AS [Location],
-  [E].[EMPLOYEEDESIGNATION] AS [Designation],
-  [E].[MOBILENO] AS [MobileNo],
-  ISNULL([E].[MONTHLY_CTC], 0) AS [MonthlyCTC],
-  ISNULL([E].[ANNUAL_CTC], 0) AS [AnnualCTC],
-  CONVERT(varchar(10), [E].[CURRENTJOINDATE], 120) AS [DateOfJoining]
-FROM [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
-WHERE (ISNULL([E].[ANNUAL_CTC], 0) > 0 OR ISNULL([E].[MONTHLY_CTC], 0) > 0)
-ORDER BY ISNULL([E].[ANNUAL_CTC], 0) ${orderDir}, ISNULL([E].[MONTHLY_CTC], 0) ${orderDir};`;
-        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+  LTRIM(RTRIM(CONVERT(varchar(50), ISNULL(E.[EMPCODE], S.[Emp_Code])))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+  E.[LOCATION] AS [Location],
+  E.[EMPLOYEEDESIGNATION] AS [Designation],
+  E.[MOBILENO] AS [MobileNo],
+  ISNULL(S.[Final_Payment], ISNULL(S.[Gross_Earn], ISNULL(E.[MONTHLY_CTC], 0))) AS [SalaryOrCTC],
+  ISNULL(E.[MONTHLY_CTC], 0) AS [MonthlyCTC],
+  ISNULL(E.[ANNUAL_CTC], 0) AS [AnnualCTC],
+  ISNULL(S.[Gross_Earn], 0) AS [GrossEarnings],
+  ISNULL(S.[Final_Payment], 0) AS [NetSalary],
+  CONVERT(varchar(10), E.[CURRENTJOINDATE], 120) AS [DateOfJoining]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+LEFT JOIN [dbo].[SALARYFILE] AS S WITH (NOLOCK)
+  ON LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) = LTRIM(RTRIM(CONVERT(varchar(50), S.[Emp_Code])))
+WHERE (ISNULL(E.[ANNUAL_CTC], 0) > 0 OR ISNULL(E.[MONTHLY_CTC], 0) > 0 OR ISNULL(S.[Final_Payment], 0) > 0 OR ISNULL(S.[Gross_Earn], 0) > 0)
+ORDER BY ISNULL(S.[Final_Payment], ISNULL(S.[Gross_Earn], ISNULL(E.[MONTHLY_CTC], 0))) ${orderDir}, ISNULL(E.[ANNUAL_CTC], 0) ${orderDir};`;
+        return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER, SALARYFILE" };
       }
 
     case "PRESENT_COUNT":
@@ -2052,6 +3021,73 @@ ORDER BY D.[DuplicateCount] DESC, D.[CleanAadhaar], E.[EMPCODE];`;
         return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99 };
       }
 
+    case "EMPLOYEE_LOOKUP":
+    case "EMPLOYEE_PROFILE":
+      {
+        const targetName = (entities.employeeName || entities.nameFilter || "").replace(/'/g, "''");
+        if (emp || entities.searchToken) {
+          const cleanEmp = (emp || entities.searchToken).replace(/'/g, "''");
+          let sql = `SELECT TOP 1
+  LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+  E.[LOCATION] AS [Location],
+  E.[EMPLOYEEDESIGNATION] AS [Designation],
+  NULL AS [Department],
+  E.[MOBILENO] AS [MobileNo],
+  E.[CORPORATEMAILID] AS [Email],
+  CONVERT(varchar(10), E.[CURRENTJOINDATE], 120) AS [JoiningDate],
+  CONVERT(varchar(10), E.[DOB], 120) AS [DateOfBirth],
+  CONVERT(varchar(10), E.[DOM], 120) AS [MarriageDate],
+  E.[PANNO] AS [PAN],
+  ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[ADHARNO]))), ''), ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[UID_NO]))), ''), E.[uidno])) AS [AadharNo],
+  E.[PFNUMBER] AS [PFNumber],
+  E.[UAN_No] AS [UANNumber],
+  E.[BANKACCOUNTNO] AS [BankAccountNo],
+  E.[BANKNAME] AS [BankName],
+  E.[ifsc_code] AS [IFSC],
+  ISNULL(E.[MONTHLY_CTC], 0) AS [MonthlyCTC],
+  ISNULL(E.[ANNUAL_CTC], 0) AS [AnnualCTC],
+  E.[FATHERNAME] AS [FatherName],
+  E.[PERMANENTADDRESS1] AS [PermanentAddress],
+  E.[CURRENTADDRESS1] AS [CurrentAddress],
+  CASE WHEN E.[EMP_STATUS] = 'A' OR E.[EMP_STATUS] = '1' THEN 'Active' ELSE 'Inactive' END AS [EmploymentStatus]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) = '${cleanEmp}'
+   OR (LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) LIKE '%${cleanEmp}%');`;
+          return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+        } else if (targetName) {
+          let sql = `SELECT TOP 50
+  LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+  E.[LOCATION] AS [Location],
+  E.[EMPLOYEEDESIGNATION] AS [Designation],
+  NULL AS [Department],
+  E.[MOBILENO] AS [MobileNo],
+  E.[CORPORATEMAILID] AS [Email],
+  CONVERT(varchar(10), E.[CURRENTJOINDATE], 120) AS [JoiningDate],
+  CONVERT(varchar(10), E.[DOB], 120) AS [DateOfBirth],
+  CONVERT(varchar(10), E.[DOM], 120) AS [MarriageDate],
+  E.[PANNO] AS [PAN],
+  ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[ADHARNO]))), ''), ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[UID_NO]))), ''), E.[uidno])) AS [AadharNo],
+  E.[PFNUMBER] AS [PFNumber],
+  E.[UAN_No] AS [UANNumber],
+  E.[BANKACCOUNTNO] AS [BankAccountNo],
+  E.[BANKNAME] AS [BankName],
+  E.[ifsc_code] AS [IFSC],
+  ISNULL(E.[MONTHLY_CTC], 0) AS [MonthlyCTC],
+  ISNULL(E.[ANNUAL_CTC], 0) AS [AnnualCTC],
+  E.[FATHERNAME] AS [FatherName],
+  E.[PERMANENTADDRESS1] AS [PermanentAddress],
+  E.[CURRENTADDRESS1] AS [CurrentAddress],
+  CASE WHEN E.[EMP_STATUS] = 'A' OR E.[EMP_STATUS] = '1' THEN 'Active' ELSE 'Inactive' END AS [EmploymentStatus]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+WHERE (E.[EMPFIRSTNAME] LIKE '%${targetName}%' OR CONCAT(E.[EMPFIRSTNAME], ' ', ISNULL(E.[EMPLASTNAME], '')) LIKE '%${targetName}%')
+ORDER BY E.[EMPCODE];`;
+          return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+        }
+      }
+      break;
+
     case "PF_COUNT":
       {
         let sql = `SELECT COUNT_BIG(1) AS [TotalPFCount] FROM [dbo].[EMPLOYEEMASTER] WITH (NOLOCK) WHERE [PFNUMBER] IS NOT NULL AND LTRIM(RTRIM([PFNUMBER])) <> '' AND LTRIM(RTRIM([PFNUMBER])) NOT IN ('-', '--', '---', '0', 'NA', 'N/A', 'N.A.', 'null', 'NULL', 'None', 'none')`;
@@ -2098,6 +3134,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), [EMPCODE]))) = '${cleanEmp}'
         return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
       }
       break;
+
 
     case "EMPLOYEE_BY_AADHAAR_NO":
       if (entities.aadharNumber || emp) {
@@ -2157,16 +3194,22 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[PANNO]))) = '${cleanPan}';`;
     case "EMPLOYEE_BY_MOBILE_NO":
       if (entities.mobileNumber || emp) {
         const cleanMob = (entities.mobileNumber || emp).replace(/'/g, "''");
-        let sql = `SELECT TOP 10
+        let sql = `SELECT TOP 100
   LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
   E.[MOBILENO] AS [MobileNo],
+  E.[MOBILE_NO] AS [AltMobileNo],
+  E.[Father_Mob] AS [FatherMobile],
+  E.[Mother_Mob] AS [MotherMobile],
+  E.[Spouse_Mob] AS [SpouseMobile],
+  E.[EMERGENCYNO] AS [EmergencyNo],
   E.[PANNO] AS [PAN],
   ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[ADHARNO]))), ''), ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[UID_NO]))), ''), E.[uidno])) AS [AadharNo],
   E.[BANKACCOUNTNO] AS [BankAccountNo],
   E.[BANKNAME] AS [BankName],
   E.[LOCATION] AS [Location],
-  E.[EMPLOYEEDESIGNATION] AS [Designation]
+  E.[EMPLOYEEDESIGNATION] AS [Designation],
+  CONVERT(varchar(10), E.[CURRENTJOINDATE], 120) AS [JoiningDate]
 FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
 WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[MOBILENO]))) = '${cleanMob}'
    OR LTRIM(RTRIM(CONVERT(varchar(50), E.[MOBILE_NO]))) = '${cleanMob}'
@@ -2174,7 +3217,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[MOBILENO]))) = '${cleanMob}'
    OR LTRIM(RTRIM(CONVERT(varchar(50), E.[Mother_Mob]))) = '${cleanMob}'
    OR LTRIM(RTRIM(CONVERT(varchar(50), E.[Spouse_Mob]))) = '${cleanMob}'
    OR LTRIM(RTRIM(CONVERT(varchar(50), E.[EMERGENCYNO]))) = '${cleanMob}';`;
-        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99 };
+        return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
       }
       break;
 
@@ -2403,85 +3446,649 @@ const fetchLearnedGoldenExamplesAndRules = async ({ sequelize, intent, message }
   return result;
 };
 
-const matchLearnedSimilarQuery = async ({ sequelize, message, intent, entities = {} }) => {
+const LEARNED_STOP_WORDS = new Set([
+  "ka", "ki", "ke", "ko", "se", "me", "mein", "par", "pe", "hai", "hain", "tha", "the", "thi", "h", "kya",
+  "kiska", "kiske", "kiski", "batao", "bataiye", "detail", "details", "record", "records",
+  "what", "who", "whom", "whose", "find", "show", "query", "tell", "about", "list", "please",
+  "iski", "iska", "inke", "unka", "unki", "mera", "meri", "apna", "apni", "is", "ye", "yeh", "ok"
+]);
+
+// Normalizes tokens by abstracting entity parameters (<EMP_CODE>, <MONTH>, <YEAR>) and common typos
+const canonicalizeQueryPattern = (text) => {
+  let norm = (text || "").toLowerCase().trim();
+  // 1. Common spelling typos in Hinglish ERP queries
+  norm = norm.replace(/\b(attandace|attendence|attandance|attedance|atendance)\b/g, "attendance");
+  norm = norm.replace(/\b(permament|permanant|parmanent|permenent)\b/g, "permanent");
+  norm = norm.replace(/\b(sallary|salery|selary|tankha|vetan)\b/g, "salary");
+  norm = norm.replace(/\b(presant|persent)\b/g, "present");
+  norm = norm.replace(/\b(absant)\b/g, "absent");
+  norm = norm.replace(/\b(itne|itna)\b/g, "kitne");
+  norm = norm.replace(/\b(karmchari|karmachari)\b/g, "employee");
+
+  // 1.5. Normalize branch/location designations (e.g. branch 1, branch 2, location 1, loc 1, branch one)
+  norm = norm.replace(/\b(?:branch|location|loc|godw|godown|br)\s*(?:code\s*|no\s*|number\s*|:\s*|#\s*)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/gi, "branch <BRANCH>");
+
+  // 1.8. Normalize employee name queries (e.g. "shantanu name ke", "rakesh naam ke")
+  norm = norm.replace(/\b[a-zA-Z]{2,30}\s+(?:name|naam)\s+ke\b/gi, "<NAME> name ke");
+  norm = norm.replace(/\b(?:named|with\s+(?:the\s+)?name|whose\s+name\s+is|name\s+is|name\s+of)\s+[a-zA-Z]{2,30}\b/gi, "named <NAME>");
+
+  // 2. Normalize 4-digit years (2020-2030)
+  norm = norm.replace(/\b(202[0-9])\b/g, "<YEAR>");
+
+  // 3. Normalize months
+  const monthRegex = /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\b/g;
+  norm = norm.replace(monthRegex, "<MONTH>");
+
+  // 4. Normalize 4-10 digit employee codes (ignore already replaced <YEAR>)
+  norm = norm.replace(/\b\d{4,10}\b/g, "<EMP_CODE>");
+
+  // 5. Clean punctuation
+  norm = norm.replace(/[^\w\s<>]/g, " ").replace(/\s+/g, " ").trim();
+  return norm;
+};
+
+const getPatternTokens = (text) => {
+  const canon = canonicalizeQueryPattern(text);
+  return new Set(canon.split(/\s+/).filter(t => t.length >= 2 && !LEARNED_STOP_WORDS.has(t)));
+};
+
+const matchLearnedSimilarQuery = async ({ sequelize, message, originalMessage, intent, entities = {}, exactOnly = false }) => {
   if (!sequelize?.query || !message) return null;
   const normQuery = normalizeLower(message);
-  const queryTokens = new Set(normQuery.split(/\s+/).filter(t => t.length > 2 && !SEARCH_STOP_WORDS.has(t)));
+  const normOriginal = originalMessage ? normalizeLower(originalMessage) : "";
+  const cleanQuery = normQuery.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+  const queryTokens = new Set(cleanQuery.split(/\s+/).filter(t => t.length >= 2 && !LEARNED_STOP_WORDS.has(t)));
+  if (normOriginal && normOriginal !== normQuery) {
+    const cleanOrig = normOriginal.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+    cleanOrig.split(/\s+/).filter(t => t.length >= 2 && !LEARNED_STOP_WORDS.has(t)).forEach(t => queryTokens.add(t));
+  }
+
+  // Canonical representations for parameter-invariant matching
+  const canonQuery = canonicalizeQueryPattern(normOriginal || normQuery);
+  const canonQueryTokens = getPatternTokens(normOriginal || normQuery);
 
   try {
     const fetchSql = `
-      SELECT TOP 30 Normalized_Question, Intent, SQL_Query, Tables_Used, Success_Count
+      SELECT TOP 200 
+        CONVERT(NVARCHAR(500), Normalized_Question) AS Normalized_Question,
+        Intent,
+        CONVERT(NVARCHAR(MAX), SQL_Query) AS SQL_Query,
+        Tables_Used,
+        ISNULL(Success_Count, 0) AS Success_Count
       FROM [dbo].[AI_SQL_Learning_Tbl] WITH (NOLOCK)
-      WHERE Success_Count >= 2 AND SQL_Query IS NOT NULL AND LTRIM(RTRIM(SQL_Query)) <> ''
+      WHERE SQL_Query IS NOT NULL 
+        AND LTRIM(RTRIM(CONVERT(VARCHAR(MAX), SQL_Query))) <> ''
+        AND ISNULL(Success_Count, 0) > 0
       ORDER BY Success_Count DESC, Created_At DESC;
     `;
     const rows = await sequelize.query(fetchSql, { type: QueryTypes.SELECT }).catch(() => []);
-    if (!rows || rows.length === 0) return null;
 
-    let bestMatch = null;
-    let highestScore = 0;
+    // Helper for entity & date adaptation into SQL
+    const adaptSQLForEntities = (rawSQL, sourceRule = null) => {
+      let adaptedSQL = rawSQL;
+      const ruleQ = sourceRule?.Normalized_Question || sourceRule?.User_Message || sourceRule?.Rule_Description || "";
+      const currQ = originalMessage || message || "";
 
-    for (const r of rows) {
-      const hasEmpWhereFilter = /WHERE\s+.*?\b(Emp_Code|EMPCODE)\s*=/is.test(r.SQL_Query || "");
+      // 0. Question-Diff Analysis: Compare learned question with current question
+      const cleanRuleQ = (ruleQ || "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+      const cleanCurrQ = (currQ || "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
 
-      // If query specifies a particular employee code, do NOT match company-wide rankings/aggregates or queries without WHERE emp filter
-      if (entities.employeeCode && (!hasEmpWhereFilter || r.Intent === "HIGHEST_SALARY_RANKING" || r.Intent === "EMPLOYEE_AUDIT_HISTORY_DIFF" || r.Intent === "SALARY_TOTAL_AGGREGATE")) {
-        continue;
+      const ruleWords = cleanRuleQ.split(/\s+/).filter(Boolean);
+      const currWords = cleanCurrQ.split(/\s+/).filter(Boolean);
+
+      const QUESTION_DIFF_STOP_WORDS = new Set([
+        "hai", "hain", "he", "h", "ke", "ka", "ki", "ko", "me", "mein", "mai", "se", "par", "pe",
+        "kya", "kyu", "kyun", "kitne", "kitna", "kitni", "kiske", "kiska", "kiski", "kaun", "konsa", "konsi",
+        "batao", "dikhao", "nikalo", "bolo", "do", "de", "dein", "chahiye", "tha", "thi", "the",
+        "is", "are", "was", "were", "the", "a", "an", "in", "on", "at", "of", "for", "to", "from",
+        "with", "by", "how", "many", "much", "what", "who", "which", "where", "when", "total", "count",
+        "show", "tell", "give", "list", "details", "detail", "data", "record", "records",
+        "karmchari", "employee", "employees", "all", "sabhi", "pura", "pure", "sirf", "only",
+        "aur", "and", "or", "ya", "bhi", "na", "ne", "ab", "abhi", "please", "ok", "yes", "no",
+        "name", "naam", "named", "wale", "wali", "walon", "waliyan"
+      ]);
+
+      const currWordsSet = new Set(currWords);
+      const ruleWordsSet = new Set(ruleWords);
+
+      const removedWords = ruleWords.filter(w => !currWordsSet.has(w) && !QUESTION_DIFF_STOP_WORDS.has(w));
+      const addedWords = currWords.filter(w => !ruleWordsSet.has(w) && !QUESTION_DIFF_STOP_WORDS.has(w));
+
+      // Extract Name Slots from Questions
+      const ruleNameMatch = ruleQ.match(/\b([A-Za-z]{2,30})\s+(?:name|naam)\s+ke\b/i) ||
+        ruleQ.match(/\b(?:named|name|naam)\s*[:=]?\s*([A-Za-z]{2,30})\b/i);
+      const currNameMatch = currQ.match(/\b([A-Za-z]{2,30})\s+(?:name|naam)\s+ke\b/i) ||
+        currQ.match(/\b(?:named|name|naam)\s*[:=]?\s*([A-Za-z]{2,30})\b/i);
+
+      const oldName = ruleNameMatch ? ruleNameMatch[1].trim() : (removedWords.length > 0 ? removedWords[0] : null);
+      let newName = entities.employeeName || (currNameMatch ? currNameMatch[1].trim() : (addedWords.length > 0 ? addedWords[0] : null));
+      if (newName) {
+        newName = newName.replace(/\s+(along|with|and|aur|their|unka|unki|unke|iska|iski|iske|ke|ki|ka|ko|se|me|mein|par|pe|whose|who|which|that|is|are|the|ye|yeh|wo|woh|bhi|na|ne|his|her|tell|give|show|batao|do|together|including|also|plus|as|having|details?|info|data|records?)\b.*$/i, "").trim();
       }
-      // If query is company-wide (no empCode), do NOT match individual employee lookups that filter by a single employee
-      if (!entities.employeeCode && !entities.isSelf && hasEmpWhereFilter) {
-        continue;
+
+      if (oldName && newName && oldName.toLowerCase() !== newName.toLowerCase()) {
+        const cleanOld = oldName.replace(/'/g, "''");
+        const cleanNew = newName.replace(/'/g, "''");
+
+        // 1. Replace inside SQL string literals containing oldName (e.g. '%rakesh%', 'rakesh')
+        adaptedSQL = adaptedSQL.replace(new RegExp(`('%[^']*?)${cleanOld}([^']*?%')`, 'gi'), `$1${cleanNew}$2`);
+        adaptedSQL = adaptedSQL.replace(new RegExp(`'${cleanOld}'`, 'gi'), `'${cleanNew}'`);
+
+        // 2. Replace in any EMPFIRSTNAME / EMPLASTNAME / EMPNAME conditions
+        adaptedSQL = adaptedSQL.replace(/((?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:EMPFIRSTNAME|EMPLASTNAME|EMPNAME)\]?\s+LIKE\s+'%)[^%]+(%')/gi, `$1${cleanNew}$2`);
+        adaptedSQL = adaptedSQL.replace(/((?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:EMPFIRSTNAME|EMPLASTNAME|EMPNAME)\]?\s*=\s*')[^']+(')/gi, `$1${cleanNew}$2`);
+        adaptedSQL = adaptedSQL.replace(/(CONCAT\([^)]*(?:EMPFIRSTNAME|EMPLASTNAME)[^)]*\)\s+LIKE\s+'%)[^%]+(%')/gi, `$1${cleanNew}$2`);
+      } else if (entities.employeeName) {
+        const cleanNew = entities.employeeName.replace(/'/g, "''");
+        adaptedSQL = adaptedSQL.replace(/((?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:EMPFIRSTNAME|EMPLASTNAME|EMPNAME)\]?\s+LIKE\s+'%)[^%]+(%')/gi, `$1${cleanNew}$2`);
+        adaptedSQL = adaptedSQL.replace(/((?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:EMPFIRSTNAME|EMPLASTNAME|EMPNAME)\]?\s*=\s*')[^']+(')/gi, `$1${cleanNew}$2`);
+        adaptedSQL = adaptedSQL.replace(/(CONCAT\([^)]*(?:EMPFIRSTNAME|EMPLASTNAME)[^)]*\)\s+LIKE\s+'%)[^%]+(%')/gi, `$1${cleanNew}$2`);
       }
 
-      const learnedNorm = normalizeLower(r.Normalized_Question || "");
-      if (learnedNorm === normQuery) {
-        return {
-          sql: r.SQL_Query,
-          intent: r.Intent || intent,
-          source: "EXACT_LEARNED_GOLDEN_MATCH",
-          confidence: 0.99
-        };
+      // 1. Multiple branches (e.g. ['1', '2'])
+      if (entities.branches && Array.isArray(entities.branches) && entities.branches.length > 0) {
+        const formattedBranches = entities.branches.map(b => {
+          const clean = String(b).replace(/'/g, "''");
+          return /^\d+$/.test(clean) ? clean : `'${clean}'`;
+        }).join(", ");
+
+        if (/(?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:LOCATION|BRANCH|Loc_Code|Location_Code)\]?\s*=/i.test(adaptedSQL)) {
+          adaptedSQL = adaptedSQL.replace(
+            /(?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:LOCATION|BRANCH|Loc_Code|Location_Code)\]?\s*=\s*'?[^'\s;,\)]+'?/gi,
+            `LOCATION IN (${formattedBranches})`
+          );
+        } else if (!/LOCATION\s+IN/i.test(adaptedSQL)) {
+          if (/(?:FROM|JOIN)\s+\[?dbo\]?\.\[?EMPLOYEEMASTER\]?/i.test(adaptedSQL)) {
+            if (/\bWHERE\b/i.test(adaptedSQL)) {
+              adaptedSQL = adaptedSQL.replace(/\bWHERE\b/i, `WHERE LOCATION IN (${formattedBranches}) AND`);
+            } else {
+              adaptedSQL += ` WHERE LOCATION IN (${formattedBranches})`;
+            }
+          }
+        }
+      }
+      // 2. Exclude branch (e.g. '1')
+      else if (entities.excludeBranch) {
+        const cleanExclude = String(entities.excludeBranch).replace(/'/g, "''");
+        const isNum = /^\d+$/.test(cleanExclude);
+        const notCond = `LOCATION <> ${isNum ? cleanExclude : `'${cleanExclude}'`}`;
+        if (/(?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:LOCATION|BRANCH|Loc_Code|Location_Code)\]?\s*=/i.test(adaptedSQL)) {
+          adaptedSQL = adaptedSQL.replace(
+            /(?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:LOCATION|BRANCH|Loc_Code|Location_Code)\]?\s*=\s*'?[^'\s;,\)]+'?/gi,
+            notCond
+          );
+        } else if (!/LOCATION\s*<>/i.test(adaptedSQL)) {
+          if (/(?:FROM|JOIN)\s+\[?dbo\]?\.\[?EMPLOYEEMASTER\]?/i.test(adaptedSQL)) {
+            if (/\bWHERE\b/i.test(adaptedSQL)) {
+              adaptedSQL = adaptedSQL.replace(/\bWHERE\b/i, `WHERE ${notCond} AND`);
+            } else {
+              adaptedSQL += ` WHERE ${notCond}`;
+            }
+          }
+        }
+      }
+      // 3. Single branch
+      else if (entities.branch) {
+        const cleanBranch = String(entities.branch).replace(/'/g, "''");
+        const isNumericBranch = /^\d+$/.test(cleanBranch);
+
+        // 1. Universal regex for any location/branch assignment in SQL (quoted or unquoted)
+        adaptedSQL = adaptedSQL.replace(
+          /((?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:LOCATION|BRANCH|Loc_Code|Location_Code)\]?\s*=\s*)('?[^'\s;,\)]+'?)/gi,
+          (match, prefix, oldVal) => {
+            const isQuoted = oldVal.startsWith("'") && oldVal.endsWith("'");
+            if (isQuoted) {
+              return `${prefix}'${cleanBranch}'`;
+            } else if (isNumericBranch) {
+              return `${prefix}${cleanBranch}`;
+            } else {
+              return `${prefix}'${cleanBranch}'`;
+            }
+          }
+        );
+
+        // 2. Handle CONVERT(varchar(50), [S].[Loc_Code]) = '...' or similar CONVERT patterns
+        adaptedSQL = adaptedSQL.replace(
+          /(CONVERT\s*\([^=]+\[?(?:LOCATION|BRANCH|Loc_Code|Location_Code)\]?\)\s*=\s*)'?[^'\s;,\)]+'?/gi,
+          `$1'${cleanBranch}'`
+        );
+
+        // 3. If query has EMPLOYEEMASTER or SALARYFILE, but has NO location/branch filter, inject it
+        if (!/(?:\[?[A-Za-z0-9_]+\]?\.)?\[?(?:LOCATION|BRANCH|Loc_Code|Location_Code)\]?\s*=/i.test(adaptedSQL)) {
+          if (/(?:FROM|JOIN)\s+\[?dbo\]?\.\[?EMPLOYEEMASTER\]?/i.test(adaptedSQL)) {
+            if (/\bWHERE\b/i.test(adaptedSQL)) {
+              adaptedSQL = adaptedSQL.replace(/\bWHERE\b/i, `WHERE LOCATION = ${isNumericBranch ? cleanBranch : `'${cleanBranch}'`} AND`);
+            } else {
+              adaptedSQL += ` WHERE LOCATION = ${isNumericBranch ? cleanBranch : `'${cleanBranch}'`}`;
+            }
+          } else if (/(?:FROM|JOIN)\s+\[?dbo\]?\.\[?SALARYFILE\]?/i.test(adaptedSQL)) {
+            if (/\bWHERE\b/i.test(adaptedSQL)) {
+              adaptedSQL = adaptedSQL.replace(/\bWHERE\b/i, `WHERE Loc_Code = '${cleanBranch}' AND`);
+            } else {
+              adaptedSQL += ` WHERE Loc_Code = '${cleanBranch}'`;
+            }
+          }
+        }
       }
 
-      const learnedTokens = new Set(learnedNorm.split(/\s+/).filter(t => t.length > 2 && !SEARCH_STOP_WORDS.has(t)));
-      let intersection = 0;
-      for (const t of queryTokens) {
-        if (learnedTokens.has(t)) intersection++;
-      }
-      const union = new Set([...queryTokens, ...learnedTokens]).size;
-      const jaccard = union > 0 ? intersection / union : 0;
-
-      let score = jaccard;
-      if (r.Intent && r.Intent === intent && intent !== "GENERAL_DATABASE_QUERY") {
-        score += 0.35;
-      }
-      if (score > highestScore && score >= 0.45) {
-        highestScore = score;
-        bestMatch = r;
-      }
-    }
-
-    if (bestMatch && highestScore >= 0.45) {
-      console.log(`🧠 [V6-RLHF-LearnedMatch] Found learned golden pattern (Score: ${highestScore.toFixed(2)}): "${bestMatch.Normalized_Question}"`);
-      
-      let adaptedSQL = bestMatch.SQL_Query;
-      if (entities.branch && !adaptedSQL.includes(entities.branch)) {
-        adaptedSQL = adaptedSQL.replace(/LOCATION\s*=\s*'[^']*'/gi, `LOCATION = '${entities.branch.replace(/'/g, "''")}'`);
+      // 4. Designation
+      if (entities.designation) {
+        const cleanDesig = entities.designation.replace(/'/g, "''");
+        if (!/EMPLOYEEDESIGNATION/i.test(adaptedSQL) && /(?:FROM|JOIN)\s+\[?dbo\]?\.\[?EMPLOYEEMASTER\]?/i.test(adaptedSQL)) {
+          if (/\bWHERE\b/i.test(adaptedSQL)) {
+            adaptedSQL = adaptedSQL.replace(/\bWHERE\b/i, `WHERE EMPLOYEEDESIGNATION LIKE '%${cleanDesig}%' AND`);
+          } else {
+            adaptedSQL += ` WHERE EMPLOYEEDESIGNATION LIKE '%${cleanDesig}%'`;
+          }
+        }
       }
       if (entities.specificDate && !adaptedSQL.includes(entities.specificDate)) {
         adaptedSQL = adaptedSQL.replace(/dateoffice\s*=\s*'\d{4}-\d{2}-\d{2}'/gi, `dateoffice = '${entities.specificDate}'`);
       }
-      if (entities.employeeCode && !adaptedSQL.includes(entities.employeeCode)) {
-        adaptedSQL = adaptedSQL.replace(/EMPCODE\s*=\s*'[^']*'/gi, `EMPCODE = '${entities.employeeCode.replace(/'/g, "''")}'`);
-        adaptedSQL = adaptedSQL.replace(/Emp_Code\s*=\s*'[^']*'/gi, `Emp_Code = '${entities.employeeCode.replace(/'/g, "''")}'`);
+      // Limit Adapter: If query asks for "top 5", "top 10", "top 3", adapt "TOP \d+" in SQL
+      const topMatch = (message || "").match(/\btop\s*(\d+)\b/i);
+      if (topMatch) {
+        const reqLimit = parseInt(topMatch[1], 10);
+        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+TOP\s+\d+\b/i, `SELECT TOP ${reqLimit}`);
+      } else if (/\b(sabse\s*jyada\s*kiski|kiski\s*salary\s*sabse\s*jyada|who\s*has\s*the\s*highest|kiski\s*salary\s*pay\s*hui|highest\s*earner)\b/i.test(message || "")) {
+        // Singular highest query
+        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+TOP\s+\d+\b/i, `SELECT TOP 1`);
       }
 
-      return {
-        sql: adaptedSQL,
-        intent: bestMatch.Intent || intent,
-        source: "SIMILAR_LEARNED_GOLDEN_MATCH",
-        confidence: 0.95
-      };
+      if (entities.employeeCode && entities.employeeCode !== "2024" && entities.employeeCode !== "2025" && entities.employeeCode !== "2026" && entities.employeeCode !== String(entities.year)) {
+        const cleanEmp = entities.employeeCode.replace(/'/g, "''");
+
+        // 1. If learned rule had a specific employee code in its question, replace that exact code in the SQL
+        const oldEmpInRule = ruleQ.match(/\b(\d{4,10})\b/)?.[1];
+        if (oldEmpInRule && oldEmpInRule !== cleanEmp && oldEmpInRule !== "2024" && oldEmpInRule !== "2025" && oldEmpInRule !== "2026") {
+          adaptedSQL = adaptedSQL.replace(new RegExp(`'${oldEmpInRule}'`, 'g'), `'${cleanEmp}'`);
+          adaptedSQL = adaptedSQL.replace(new RegExp(`=\\s*${oldEmpInRule}\\b`, 'g'), `= '${cleanEmp}'`);
+        }
+
+        // 2. Universal column-based regex replacements (handles LTRIM(RTRIM(CONVERT(... [Emp_Code]))) = '...', A.[Emp_Code] = '...', etc.)
+        adaptedSQL = adaptedSQL.replace(/((?:Emp_Code|EMPCODE|Emp_Id|EMPID)[^=]*=\s*')[^']+(')/gi, `$1${cleanEmp}$2`);
+        adaptedSQL = adaptedSQL.replace(/((?:Emp_Code|EMPCODE|Emp_Id|EMPID)[^=]*=\s*)(\d+)(?!\.)/gi, `$1'${cleanEmp}'`);
+        adaptedSQL = adaptedSQL.replace(/((?:Emp_Code|EMPCODE|Emp_Id|EMPID)[^=]*LIKE\s*'%)[^%]+(%')/gi, `$1${cleanEmp}$2`);
+      }
+
+      // Date Adapters: Adapt day & month in SQL to match query entities
+      if (entities.day && entities.month) {
+        adaptedSQL = adaptedSQL.replace(/(MONTH\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:MONTH\s*\([^)]*\)\s*\)?|\d+)/gi, `$1${entities.month}`);
+        adaptedSQL = adaptedSQL.replace(/(DAY\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:DAY\s*\([^)]*\)\s*\)?|\d+)/gi, `$1${entities.day}`);
+      } else if (entities.isToday) {
+        adaptedSQL = adaptedSQL.replace(/(MONTH\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:MONTH\s*\([^)]*\)\s*\)?|\d+)/gi, "$1MONTH(GETDATE())");
+        adaptedSQL = adaptedSQL.replace(/(DAY\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:DAY\s*\([^)]*\)\s*\)?|\d+)/gi, "$1DAY(GETDATE())");
+      } else if (entities.month && entities.month >= 1 && entities.month <= 12) {
+        adaptedSQL = adaptedSQL.replace(/(SalMnth\s*=\s*'?)\d+('?)/gi, `$1${entities.month}$2`);
+        adaptedSQL = adaptedSQL.replace(/(MONTH\s*\([A-Za-z0-9_.\[\]\s]+\)\s*=\s*)(?:MONTH\s*\([^)]*\)\s*\)?|\d+)/gi, `$1${entities.month}`);
+      }
+
+      if (entities.year && entities.year >= 2000) {
+        adaptedSQL = adaptedSQL.replace(/(salyear\s*=\s*'?)\d{4}('?)/gi, `$1${entities.year}$2`);
+        adaptedSQL = adaptedSQL.replace(/(YEAR\s*\([^)]+\)\s*=\s*)\d{4}/gi, `$1${entities.year}`);
+      }
+
+      // STALE LITERAL GUARD: Check if adaptedSQL still contains literal filters from removed words in oldQ
+      if (removedWords.length > 0) {
+        const currentLiterals = (adaptedSQL.match(/'(?:[^']|'')*'/g) || [])
+          .map(lit => lit.slice(1, -1).replace(/%/g, "").trim().toLowerCase());
+
+        for (const removed of removedWords) {
+          const rLower = removed.toLowerCase();
+          if (rLower.length < 3 || /^\d+$/.test(rLower)) continue;
+          if (currWordsSet.has(rLower)) continue;
+
+          const isStaleLiteralPresent = currentLiterals.some(lit => lit === rLower || lit.includes(rLower));
+          if (isStaleLiteralPresent) {
+            console.warn(`⚠️ [V6-RLHF-Guard] Learned query from '${ruleQ}' contains stale literal '${removed}' that does not exist in current question '${currQ}'. Rejecting golden match to prevent incorrect parameter execution.`);
+            return null;
+          }
+        }
+      }
+
+      return adaptedSQL;
+    };
+
+    if (rows && rows.length > 0) {
+      // STEP 1: Direct Exact / Canonical Pattern / Substring Match
+      for (const r of rows) {
+        const learnedNorm = normalizeLower(r.Normalized_Question || "");
+        if (!learnedNorm || /^\?+$/.test(learnedNorm)) continue;
+        const cleanLearned = learnedNorm.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+        if (!cleanLearned || cleanLearned.length < 3) continue;
+        const learnedTokens = new Set(cleanLearned.split(/\s+/).filter(t => t.length >= 2 && !LEARNED_STOP_WORDS.has(t)));
+        if (learnedTokens.size === 0) continue;
+
+        const canonLearned = canonicalizeQueryPattern(r.Normalized_Question);
+        const canonLearnedTokens = getPatternTokens(r.Normalized_Question);
+
+        const isExact = (learnedNorm === normQuery || cleanLearned === cleanQuery);
+        const isExactCanonical = (canonQuery === canonLearned);
+        const isCanonicalSubset = !exactOnly && (
+          (canonQuery.includes(canonLearned) && canonLearned.length >= 4) ||
+          (canonLearned.includes(canonQuery) && canonQuery.length >= 4)
+        );
+        const isCanonicalTokenSubset = !exactOnly && (
+          canonLearnedTokens.size >= 2 && [...canonLearnedTokens].every(t => canonQueryTokens.has(t))
+        );
+        const isSubset = !exactOnly && (
+          (cleanQuery.includes(cleanLearned) && cleanLearned.length >= 4) ||
+          (cleanLearned.includes(cleanQuery) && cleanQuery.length >= 4) ||
+          (learnedTokens.size >= 2 && [...learnedTokens].every(t => queryTokens.has(t)))
+        );
+
+        if (isExact || isExactCanonical || isCanonicalSubset || isCanonicalTokenSubset || isSubset) {
+          // Guard: Do not allow non-salary queries to serve salary intents
+          const isSalaryIntent = ["HIGHEST_SALARY_RANKING", "SALARY_REPORT", "EMPLOYEE_SALARY_HISTORY", "SELF_SALARY"].includes(intent) ||
+            /\b(salary|pagar|tankha|vetan|basic|basic_earn|gross_earn|net|ctc)\b/i.test(normQuery);
+          if (isSalaryIntent) {
+            const isSalarySQL = /SALARYFILE|MONTHLY_CTC|ANNUAL_CTC|Basic_Earn|Gross_Earn|Final_Payment|Total_Earn|BasicSalary/i.test(r.SQL_Query);
+            if (!isSalarySQL) {
+              continue;
+            }
+          }
+
+          const isEmployeeOrDateContext = ["WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY", "BIRTHDAY_BY_DATE", "BIRTHDAY_TODAY", "BIRTHDAYS_MONTH", "EMPLOYEE_LOOKUP"].includes(intent) ||
+            /\b(annivers\w*|anivers\w*|saalgir\w*|salgir\w*|birthday|dob|employee|salary)\b/i.test(normQuery);
+          if (isEmployeeOrDateContext && (r.Tables_Used === "Misc_Mst" || /FROM\s+\[dbo\]\.\[Misc_Mst\]/i.test(r.SQL_Query))) {
+            continue;
+          }
+          if (isEmployeeOrDateContext && /CURRENTJOINDATE.*BETWEEN/i.test(r.SQL_Query)) {
+            continue;
+          }
+          // Guard: Do not allow SALARYFILE queries to serve Anniversary or Birthday intents
+          if (["WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY", "BIRTHDAY_BY_DATE", "BIRTHDAY_TODAY", "BIRTHDAYS_MONTH"].includes(intent) &&
+              (r.Tables_Used === "SALARYFILE" || /FROM\s+\[dbo\]\.\[SALARYFILE\]/i.test(r.SQL_Query))) {
+            continue;
+          }
+          // Guard: Do not allow non-salary queries to serve salary ranking intents
+          if (["HIGHEST_SALARY_RANKING", "SALARY_REPORT", "EMPLOYEE_SALARY_HISTORY"].includes(intent) &&
+              (r.Tables_Used === "attendancetable" || /FROM\s+\[dbo\]\.\[attendancetable\]/i.test(r.SQL_Query))) {
+            continue;
+          }
+
+          // Guard: Do not allow non-PF queries to match PF intents or queries, and vice-versa
+          const isPFQuery = ["PF_DEDUCTION_COUNT", "SALARY_PF_DEDUCTION", "PF_COUNT", "PF_LOOKUP_BY_EMP", "PF_EMPLOYEE_LIST"].includes(intent) ||
+            /\b(pf|provident|pension|uan|eps)\b/i.test(normQuery);
+          const isLearnedPF = ["PF_DEDUCTION_COUNT", "SALARY_PF_DEDUCTION", "PF_COUNT", "PF_LOOKUP_BY_EMP", "PF_EMPLOYEE_LIST"].includes(r.Intent) ||
+            /pf_employee|pfnumber|totalemployeeswithpf/i.test(r.SQL_Query);
+
+          if (isPFQuery && !isLearnedPF) {
+            continue;
+          }
+          if (!isPFQuery && isLearnedPF) {
+            continue;
+          }
+
+          // Guard: Active vs Inactive vs Total Status Alignment
+          const isInactiveQuery = /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(normQuery) ||
+            /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(normOriginal);
+          const isActiveQuery = !isInactiveQuery && (
+            /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(normQuery) ||
+            /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(normOriginal)
+          );
+
+          const isLearnedInactive = /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(r.Normalized_Question) ||
+            /LASTWOR_DATE\s+IS\s+NOT\s+NULL|EMP_STATUS\s*=\s*'I'|EMP_STATUS\s*=\s*'Inactive'/i.test(r.SQL_Query);
+          const isLearnedActive = !isLearnedInactive && (
+            /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(r.Normalized_Question) ||
+            /LASTWOR_DATE\s+IS\s+NULL|EMP_STATUS\s*=\s*'A'|EMP_STATUS\s*=\s*'Active'/i.test(r.SQL_Query)
+          );
+
+          // If query specifies Inactive, learned rule MUST be Inactive
+          if (isInactiveQuery && !isLearnedInactive) continue;
+          // If query specifies Active, learned rule MUST be Active
+          if (isActiveQuery && !isLearnedActive) continue;
+          // If query is for Total (neither active nor inactive), learned rule must NOT be specifically active or inactive
+          if (!isActiveQuery && !isInactiveQuery && (isLearnedActive || isLearnedInactive)) continue;
+
+          // Guard: Present vs Absent Mutual Exclusion
+          const isPresentQuery = /\b(present|upasthit|aaye|aaya)\b/i.test(normQuery) || /\b(present|upasthit|aaye|aaya)\b/i.test(normOriginal);
+          const isAbsentQuery = /\b(absent|anupasthit|chhutti|nahi\s*aaya)\b/i.test(normQuery) || /\b(absent|anupasthit|chhutti|nahi\s*aaya)\b/i.test(normOriginal);
+          const isLearnedPresent = /\b(present|upasthit|aaye|aaya)\b/i.test(r.Normalized_Question) || /status\s*=\s*'P'/i.test(r.SQL_Query);
+          const isLearnedAbsent = /\b(absent|anupasthit|chhutti|nahi\s*aaya)\b/i.test(r.Normalized_Question) || /status\s*=\s*'A'/i.test(r.SQL_Query);
+
+          if (isPresentQuery && !isAbsentQuery && isLearnedAbsent) continue;
+          if (isAbsentQuery && !isPresentQuery && isLearnedPresent) continue;
+
+          // Guard: Highest / Top vs Lowest / Bottom Mutual Exclusion
+          const isHighestQuery = /\b(highest|top\b|max\b|maximum|sabse\s*jyada|sabse\s*adhik)\b/i.test(normQuery);
+          const isLowestQuery = /\b(lowest|bottom\b|min\b|minimum|sabse\s*kam)\b/i.test(normQuery);
+          const isLearnedHighest = /\b(highest|top\b|max\b|maximum|sabse\s*jyada|sabse\s*adhik)\b/i.test(r.Normalized_Question) || /ORDER\s+BY.+DESC/i.test(r.SQL_Query);
+          const isLearnedLowest = /\b(lowest|bottom\b|min\b|minimum|sabse\s*kam)\b/i.test(r.Normalized_Question) || /ORDER\s+BY.+ASC/i.test(r.SQL_Query);
+
+          if (isHighestQuery && !isLowestQuery && isLearnedLowest && !isLearnedHighest) continue;
+          if (isLowestQuery && !isHighestQuery && isLearnedHighest && !isLearnedLowest) continue;
+
+          // Guard: Branch-specific learned rule must not match a company-wide query that explicitly has no branch
+          const queryHasBranch = Boolean(entities.branch || /\b(branch|location|loc|godown)\b/i.test(normQuery) || /\b(branch|location|loc|godown)\b/i.test(normOriginal));
+          const learnedHasBranch = /\b(branch|location|loc|godown)\b/i.test(r.Normalized_Question) || /(?:LOCATION|BRANCH|Loc_Code)\s*=/i.test(r.SQL_Query);
+          if (!queryHasBranch && learnedHasBranch && !isExact) continue;
+
+          // Guard: If user query asks for employee details/data/records/profile/list, do not match a count-only learned rule (unless exact)
+          const isAskingDetails = /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|who\s*all|who\s*are\s*they)\b/i.test(normQuery) ||
+            /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun)\b/i.test(normOriginal);
+          const isLearnedCountOnly = /\bCOUNT\s*\(/i.test(r.SQL_Query) && !/\b(SELECT\s+TOP\s+\d+\s+[^,]+,\s*[^,]+)/i.test(r.SQL_Query);
+          if (isAskingDetails && isLearnedCountOnly && !isExact) continue;
+
+          const matchLabel = isExact ? "EXACT_LEARNED_GOLDEN_MATCH" : (isExactCanonical ? "CANONICAL_PATTERN_MATCH" : "SUBSET_LEARNED_GOLDEN_MATCH");
+          console.log(`🏆 [V6-RLHF-LearnedGoldenQuery] ${matchLabel} for: "${normQuery}" on learned rule: "${learnedNorm}"`);
+          const adaptedSQL = adaptSQLForEntities(r.SQL_Query, r);
+          if (!adaptedSQL) {
+            console.log(`⚠️ [V6-RLHF-LearnedGoldenQuery] Adapted SQL rejected due to parameter mismatch / stale literal in rule "${learnedNorm}". Skipping.`);
+            continue;
+          }
+
+          return {
+            sql: adaptedSQL,
+            intent: r.Intent || intent,
+            targetTable: r.Tables_Used || "AI_SQL_Learning_Tbl",
+            source: matchLabel,
+            confidence: 0.99
+          };
+        }
+      }
+
+      if (!exactOnly) {
+        // STEP 2: Normalized Semantic / Token / Entity Jaccard Match (Threshold >= 0.55 on canonical tokens)
+        let bestMatch = null;
+        let highestScore = 0;
+
+        for (const r of rows) {
+          const learnedNorm = normalizeLower(r.Normalized_Question || "");
+          if (!learnedNorm) continue;
+          const cleanLearned = learnedNorm.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+          const learnedTokens = new Set(cleanLearned.split(/\s+/).filter(t => t.length >= 2 && !LEARNED_STOP_WORDS.has(t)));
+          const canonLearnedTokens = getPatternTokens(r.Normalized_Question);
+
+          // Standard token jaccard
+          let intersection = 0;
+          for (const t of queryTokens) {
+            if (learnedTokens.has(t)) intersection++;
+          }
+          const union = new Set([...queryTokens, ...learnedTokens]).size;
+          const jaccard = union > 0 ? intersection / union : 0;
+
+          // Canonical token jaccard (entity parameter invariant)
+          let canonInter = 0;
+          for (const t of canonQueryTokens) {
+            if (canonLearnedTokens.has(t)) canonInter++;
+          }
+          const canonUnion = new Set([...canonQueryTokens, ...canonLearnedTokens]).size;
+          const canonJaccard = canonUnion > 0 ? canonInter / canonUnion : 0;
+
+          const effectiveJaccard = Math.max(jaccard, canonJaccard);
+
+          // Guard: Do not allow non-PF queries to match PF intents or queries, and vice-versa
+          const isPFQuery = ["PF_DEDUCTION_COUNT", "SALARY_PF_DEDUCTION", "PF_COUNT", "PF_LOOKUP_BY_EMP", "PF_EMPLOYEE_LIST"].includes(intent) ||
+            /\b(pf|provident|pension|uan|eps)\b/i.test(normQuery);
+          const isLearnedPF = ["PF_DEDUCTION_COUNT", "SALARY_PF_DEDUCTION", "PF_COUNT", "PF_LOOKUP_BY_EMP", "PF_EMPLOYEE_LIST"].includes(r.Intent) ||
+            /pf_employee|pfnumber|totalemployeeswithpf/i.test(r.SQL_Query);
+
+          if (isPFQuery && !isLearnedPF) {
+            continue;
+          }
+          if (!isPFQuery && isLearnedPF) {
+            continue;
+          }
+
+          // Guard: Active vs Inactive vs Total Status Alignment
+          const isInactiveQuery = /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(normQuery) ||
+            /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(normOriginal);
+          const isActiveQuery = !isInactiveQuery && (
+            /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(normQuery) ||
+            /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(normOriginal)
+          );
+
+          const isLearnedInactive = /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(r.Normalized_Question) ||
+            /LASTWOR_DATE\s+IS\s+NOT\s+NULL|EMP_STATUS\s*=\s*'I'|EMP_STATUS\s*=\s*'Inactive'/i.test(r.SQL_Query);
+          const isLearnedActive = !isLearnedInactive && (
+            /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(r.Normalized_Question) ||
+            /LASTWOR_DATE\s+IS\s+NULL|EMP_STATUS\s*=\s*'A'|EMP_STATUS\s*=\s*'Active'/i.test(r.SQL_Query)
+          );
+
+          // If query specifies Inactive, learned rule MUST be Inactive
+          if (isInactiveQuery && !isLearnedInactive) continue;
+          // If query specifies Active, learned rule MUST be Active
+          if (isActiveQuery && !isLearnedActive) continue;
+          // If query is for Total (neither active nor inactive), learned rule must NOT be specifically active or inactive
+          if (!isActiveQuery && !isInactiveQuery && (isLearnedActive || isLearnedInactive)) continue;
+
+          // Guard: Present vs Absent Mutual Exclusion
+          const isPresentQuery = /\b(present|upasthit|aaye|aaya)\b/i.test(normQuery) || /\b(present|upasthit|aaye|aaya)\b/i.test(normOriginal);
+          const isAbsentQuery = /\b(absent|anupasthit|chhutti|nahi\s*aaya)\b/i.test(normQuery) || /\b(absent|anupasthit|chhutti|nahi\s*aaya)\b/i.test(normOriginal);
+          const isLearnedPresent = /\b(present|upasthit|aaye|aaya)\b/i.test(r.Normalized_Question) || /status\s*=\s*'P'/i.test(r.SQL_Query);
+          const isLearnedAbsent = /\b(absent|anupasthit|chhutti|nahi\s*aaya)\b/i.test(r.Normalized_Question) || /status\s*=\s*'A'/i.test(r.SQL_Query);
+
+          if (isPresentQuery && !isAbsentQuery && isLearnedAbsent) continue;
+          if (isAbsentQuery && !isPresentQuery && isLearnedPresent) continue;
+
+          // Guard: Highest / Top vs Lowest / Bottom Mutual Exclusion
+          const isHighestQuery = /\b(highest|top\b|max\b|maximum|sabse\s*jyada|sabse\s*adhik)\b/i.test(normQuery);
+          const isLowestQuery = /\b(lowest|bottom\b|min\b|minimum|sabse\s*kam)\b/i.test(normQuery);
+          const isLearnedHighest = /\b(highest|top\b|max\b|maximum|sabse\s*jyada|sabse\s*adhik)\b/i.test(r.Normalized_Question) || /ORDER\s+BY.+DESC/i.test(r.SQL_Query);
+          const isLearnedLowest = /\b(lowest|bottom\b|min\b|minimum|sabse\s*kam)\b/i.test(r.Normalized_Question) || /ORDER\s+BY.+ASC/i.test(r.SQL_Query);
+
+          if (isHighestQuery && !isLowestQuery && isLearnedLowest && !isLearnedHighest) continue;
+          if (isLowestQuery && !isHighestQuery && isLearnedHighest && !isLearnedLowest) continue;
+
+          // Guard: Branch-specific learned rule must not match a company-wide query that explicitly has no branch
+          const queryHasBranch = Boolean(entities.branch || /\b(branch|location|loc|godown)\b/i.test(normQuery) || /\b(branch|location|loc|godown)\b/i.test(normOriginal));
+          const learnedHasBranch = /\b(branch|location|loc|godown)\b/i.test(r.Normalized_Question) || /(?:LOCATION|BRANCH|Loc_Code)\s*=/i.test(r.SQL_Query);
+          if (!queryHasBranch && learnedHasBranch) continue;
+
+          // Guard: If user query asks for employee details/data/records/profile/list, do not match a count-only learned rule
+          const isAskingDetails = /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|who\s*all|who\s*are\s*they)\b/i.test(normQuery) ||
+            /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun)\b/i.test(normOriginal);
+          const isLearnedCountOnly = /\bCOUNT\s*\(/i.test(r.SQL_Query) && !/\b(SELECT\s+TOP\s+\d+\s+[^,]+,\s*[^,]+)/i.test(r.SQL_Query);
+          if (isAskingDetails && isLearnedCountOnly) continue;
+
+          let score = effectiveJaccard;
+          if (r.Intent && r.Intent === intent && intent !== "GENERAL_DATABASE_QUERY") {
+            score += 0.20;
+          }
+          if (score > highestScore && score >= 0.55) {
+            highestScore = score;
+            bestMatch = r;
+          }
+        }
+
+        if (bestMatch && highestScore >= 0.55) {
+          console.log(`🧠 [V6-RLHF-LearnedMatch] Found learned golden pattern (Score: ${highestScore.toFixed(2)}): "${bestMatch.Normalized_Question}"`);
+          const adaptedSQL = adaptSQLForEntities(bestMatch.SQL_Query, bestMatch);
+          if (adaptedSQL) {
+            return {
+              sql: adaptedSQL,
+              intent: bestMatch.Intent || intent,
+              targetTable: bestMatch.Tables_Used || "AI_SQL_Learning_Tbl",
+              source: "SIMILAR_LEARNED_GOLDEN_MATCH",
+              confidence: 0.95
+            };
+          } else {
+            console.log(`⚠️ [V6-RLHF-LearnedMatch] Adapted SQL rejected due to parameter mismatch / stale literal in rule "${bestMatch.Normalized_Question}". Falling back to planner.`);
+          }
+        }
+      }
+    }
+
+    // STEP 3: Check Active AI_SQL_Corrections for Direct Rule Match
+    if (!exactOnly) {
+      const corrSql = `
+        IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NOT NULL
+        BEGIN
+          SELECT TOP 20 Target_Table, Correct_SQL_Pattern, Rule_Description, User_Message
+          FROM [dbo].[AI_SQL_Corrections] WITH (NOLOCK)
+          WHERE Is_Active = 1 AND Correct_SQL_Pattern IS NOT NULL AND LTRIM(RTRIM(CONVERT(VARCHAR(MAX), Correct_SQL_Pattern))) <> ''
+          ORDER BY UTD DESC;
+        END
+      `;
+      const corrRows = await sequelize.query(corrSql, { type: QueryTypes.SELECT }).catch(() => []);
+      for (const cr of corrRows) {
+        // Domain / Intent Compatibility Guard:
+        const targetTable = (cr.Target_Table || "").toLowerCase();
+        const isAttendanceCorrection = targetTable.includes("attendance") || /attendancetable/i.test(cr.Correct_SQL_Pattern || "");
+        const isSalaryCorrection = targetTable.includes("salary") || /salaryfile/i.test(cr.Correct_SQL_Pattern || "");
+        const isProfileLookup = ["EMPLOYEE_LOOKUP", "EMPLOYEE_PROFILE", "EMPLOYEE_BY_MOBILE_NO", "EMPLOYEE_BY_PAN_NO", "EMPLOYEE_BY_AADHAAR_NO", "EMPLOYEE_BY_ACCOUNT_NO"].includes(intent) ||
+          /\b(designation|post|pad|mobile|phone|contact|address|pata|joining|doj|profile)\b/i.test(normQuery);
+
+        if (isProfileLookup && (isAttendanceCorrection || isSalaryCorrection)) {
+          continue; // Profile queries should not execute attendance or salary table corrections!
+        }
+        if (isAttendanceCorrection && !["ATTENDANCE_REPORT", "ATTENDANCE_AND_SALARY_REPORT", "MISPUNCH_REPORT", "MISPUNCH_LOOKUP_BY_EMP"].includes(intent) && !/\b(attendance|attandance|haziri|punch|mispunch)\b/i.test(normQuery)) {
+          continue; // Attendance correction should only match attendance queries!
+        }
+        if (isSalaryCorrection && !["SALARY_REPORT", "EMPLOYEE_SALARY_HISTORY", "SELF_SALARY", "SALARY_TOTAL_AGGREGATE", "SALARY_COUNT_AGGREGATE"].includes(intent) && !/\b(salary|pagar|tankha|vetan|basic|gross|net|ctc)\b/i.test(normQuery)) {
+          continue; // Salary correction should only match salary queries!
+        }
+
+        // Extract the original question from Rule_Description if possible (e.g. data for "..." is in table)
+        const origMatch = (cr.Rule_Description || "").match(/data for "(.*?)" is in table/i);
+        const matchTargetText = origMatch ? origMatch[1] : (cr.User_Message || cr.Rule_Description || "");
+        const cleanMatchNorm = normalizeLower(matchTargetText).replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+        const descTokens = new Set(cleanMatchNorm.split(/\s+/).filter(t => t.length >= 3 && !LEARNED_STOP_WORDS.has(t)));
+
+        // Guard: Active vs Inactive vs Total Status Alignment
+        const isInactiveQuery = /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(normQuery) ||
+          /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(normOriginal);
+        const isActiveQuery = !isInactiveQuery && (
+          /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(normQuery) ||
+          /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(normOriginal)
+        );
+
+        const isCorrectionInactive = /\b(inactive|in-active|left|resign|resigned|chhod\s*diya|chhod\s*chuke|purane|separated|relieved|deactive|deactivated|not\s*active|nikale\s*gaye|hata\s*diye)\b/i.test(cr.Rule_Description || "") ||
+          /LASTWOR_DATE\s+IS\s+NOT\s+NULL|EMP_STATUS\s*=\s*'I'|EMP_STATUS\s*=\s*'Inactive'/i.test(cr.Correct_SQL_Pattern || "");
+        const isCorrectionActive = !isCorrectionInactive && (
+          /\b(active|working|current|present|abhi\s*ke|kaam\s*kar\s*rahe|karyarat)\b/i.test(cr.Rule_Description || "") ||
+          /LASTWOR_DATE\s+IS\s+NULL|EMP_STATUS\s*=\s*'A'|EMP_STATUS\s*=\s*'Active'/i.test(cr.Correct_SQL_Pattern || "")
+        );
+
+        if (isInactiveQuery && !isCorrectionInactive) continue;
+        if (isActiveQuery && !isCorrectionActive) continue;
+        if (!isActiveQuery && !isInactiveQuery && (isCorrectionActive || isCorrectionInactive)) continue;
+
+        // Guard: Specific employee name in correction SQL
+        const nameMatch = (cr.Correct_SQL_Pattern || "").match(/EMPFIRSTNAME\s+LIKE\s+'%([^%]+)%'/i);
+        if (nameMatch && !normQuery.includes(nameMatch[1].toLowerCase()) && !normOriginal.includes(nameMatch[1].toLowerCase())) {
+          continue;
+        }
+
+        let overlap = 0;
+        for (const qt of queryTokens) {
+          if (descTokens.has(qt)) overlap++;
+        }
+        const requiredOverlap = Math.max(2, Math.ceil(descTokens.size * 0.7));
+        if (overlap >= requiredOverlap && cr.Correct_SQL_Pattern) {
+          console.log(`🎯 [V6-RLHF-CorrectionRule] Matched active correction rule for query "${normQuery}" on table: ${cr.Target_Table}`);
+          const adaptedSQL = adaptSQLForEntities(cr.Correct_SQL_Pattern, cr);
+          return {
+            sql: adaptedSQL,
+            intent: intent || "DYNAMIC_CUSTOM",
+            targetTable: cr.Target_Table || "AI_SQL_Corrections",
+            source: "CORRECTION_RULE_MATCH",
+            confidence: 0.98
+          };
+        }
+      }
     }
   } catch (err) {
     console.warn("[V6-RLHF-LearnedMatch] Warning:", err?.message);
@@ -2490,94 +4097,655 @@ const matchLearnedSimilarQuery = async ({ sequelize, message, intent, entities =
   return null;
 };
 
-const detectAndStoreUserCorrection = async ({ sequelize, rawMessage, userContext = {} }) => {
-  if (!sequelize?.query || !rawMessage) return null;
+// ============================================================================
+// CONTINUOUS SELF-LEARNING & USER DATA-LOCATION GUIDANCE SUBSYSTEM
+// ============================================================================
 
-  const isCorrection =
-    /\b(ye galat hai|galat answer|wrong answer|galat bata raha|galat kyu|iske liye select|iske liye ye query|ye query karo|query bana kar diya|repeat question puchh|ye sahi hai ok|sahi karo ok|sahi nahi|galat answer kyu)\b/i.test(rawMessage) ||
-    /^\s*(ye galat|ye dekho|dekho aur sahi karo|sahi karo|SELECT\s+)/i.test(rawMessage);
+/**
+ * Detects if a message is providing data location guidance, correction, or SQL
+ */
+const isCorrectionOrDataLocation = (rawMessage = "", hasPreviousTurn = false) => {
+  const norm = normalizeLower(rawMessage);
 
-  if (!isCorrection) return null;
+  // 1. Direct SQL query provided by user
+  if (/^\s*(SELECT\s+[\s\S]+)/i.test(rawMessage)) return true;
 
-  console.log("📝 [V6-RLHF] User Correction / Rule Pattern Detected:", rawMessage);
+  // 2. Explicit correction / feedback phrases in Hindi, English, Hinglish
+  if (/\b(ye galat hai|galat answer|wrong answer|galat bata raha|galat kyu|sahi karo|ye sahi nahi|ye galat|galat hai|galat kyu hai|ye result galat|wrong result)\b/i.test(norm)) return true;
+
+  // 3. User specifying where data lives (table/column/location)
+  if (/\b(ye data|data|record|records|ye detail|ye information|ye|iska|ye wala|inka|unka)\s+([a-zA-Z0-9_]{3,40})\s*(table)?\s*(me|se)\s*(milega|milegi|hai|h|dekho|check|nikalo|aayega|hota hai)/i.test(norm)) return true;
+  if (/\b([a-zA-Z0-9_]{3,40})\s*(table)\s*(me|se)\s*(milega|milegi|hai|h|dekho|check|nikalo|aayega)/i.test(norm)) return true;
+  if (/\b(table|table\s*name|table\s*hai|from\s*table|in\s*table)\s*[:=]?\s*\[?([a-zA-Z0-9_]{3,40})\]?/i.test(norm)) return true;
+  if (/\b(column|column\s*name|field|field\s*name)\s*[:=]?\s*\[?([a-zA-Z0-9_]{3,40})\]?/i.test(norm)) return true;
+  if (/\b(is table me|is table se|yaha se milega|yaha milega|yaha se lo|yaha dekho|yaha check karo|isme dekho|isme check karo|is table me hai)\b/i.test(norm)) return true;
+
+  // 4. Known ERP table names mentioned directly
+  const knownTablesRegex = /\b(attendancetable|attendance table|salaryfile|salary file|salary fil\w*|employeemaster|employee master|emp_varify|account_no_api|misc_mst|asset_issue|srv_reminder|srv_reminder_tbl|jobcard|job_card|ledger|voucher)\b/i;
+  if (knownTablesRegex.test(norm)) {
+    if (hasPreviousTurn || /\b(me|se|table|flag|status|empcode|emp_code)\b/i.test(norm)) {
+      return true;
+    }
+  }
+
+  // 5. Condition or filter pointers like flag='MP' or status='A'
+  if (/\b(flag\s*=\s*'[^']+'|status\s*=\s*'[^']+'|jisme\s+[a-zA-Z0-9_]+\s*=)/i.test(rawMessage)) {
+    return true;
+  }
+
+  return false;
+};
+
+/**
+ * Extracts target table, filter condition, and embedded SQL from user guidance
+ */
+const extractGuidanceComponents = (rawMessage = "") => {
+  const norm = normalizeLower(rawMessage);
+  let targetTable = null;
+  let filterClause = null;
+  let extractedSQL = null;
+
+  // 1. Direct SQL
+  const sqlMatch = rawMessage.match(/\b(SELECT\s+[\s\S]+?\bFROM\s+[\w\.\[\]]+(?:\s+WHERE\s+[\s\S]+?)?)(?=\s+(?:ye\b|use\b|bhi\b|query\b|batao\b|kar\b|ko\b|se\b|me\b|hai\b|h\b|ok\b|$)|;|\bORDER\s+BY)/i) ||
+    rawMessage.match(/\b(SELECT\s+[\s\S]+?(?:;|\bORDER\s+BY\s+[\w\s\.,_\[\]]+(?:\s+DESC|\s+ASC)?))/i);
+  if (sqlMatch) {
+    extractedSQL = (sqlMatch[1] || sqlMatch[0]).replace(/;+$/, "").trim();
+  }
+
+  // 2. Target Table Extraction
+  if (/srv_reminder|service reminder|final_due_date/i.test(norm)) {
+    targetTable = "Srv_Reminder_Tbl";
+  } else if (/salary\s*fil\w*|salaryfile|salary_file|total_earn|basic_earn/i.test(norm)) {
+    targetTable = "SALARYFILE";
+  } else if (/account_no_api/i.test(norm)) {
+    targetTable = "Account_No_Api";
+  } else if (/attendancetable|attendance table|mispunch|punch|haziri/i.test(norm)) {
+    targetTable = "attendancetable";
+  } else if (/employeemaster|employee master|emp master/i.test(norm)) {
+    targetTable = "EMPLOYEEMASTER";
+  } else if (/emp_varify|emp verify/i.test(norm)) {
+    targetTable = "emp_varify";
+  } else if (/misc_mst|misc master/i.test(norm)) {
+    targetTable = "Misc_Mst";
+  } else if (/asset_issue|asset/i.test(norm)) {
+    targetTable = "Asset_Issue";
+  } else if (/jobcard|job_card/i.test(norm)) {
+    targetTable = "JobCard";
+  } else {
+    // Dynamic match against SchemaKnowledgeGraph
+    const tableMatch = rawMessage.match(/\b(?:table|table\s*name|from|in)\s*[:=]?\s*\[?([a-zA-Z0-9_]{3,40})\]?/i) ||
+      rawMessage.match(/\b([a-zA-Z0-9_]{3,40})\s+(?:table\s*)(?:me|se)\b/i);
+    if (tableMatch) {
+      const candidate = tableMatch[1].trim();
+      if (SchemaEngineInstance.tableIndex.has(candidate.toLowerCase())) {
+        targetTable = SchemaEngineInstance.tableIndex.get(candidate.toLowerCase()).tableName;
+      }
+    }
+  }
+
+  // 3. Filter Condition (e.g. flag = 'MP', status = 'A')
+  const conditionMatch = rawMessage.match(/\b([a-zA-Z0-9_]+)\s*(=|LIKE|IS|IN|>|<|>=|<=)\s*('[^']*'|"[^"]*"|\d+|NULL)/i);
+  if (conditionMatch) {
+    filterClause = `${conditionMatch[1]} ${conditionMatch[2]} ${conditionMatch[3]}`;
+  } else if (/\bmispunch|mis-punch|miss punch\b/i.test(norm)) {
+    filterClause = "flag = 'MP'";
+  }
+
+  // 4. Explicit trigger detection (e.g. "jab koi highest payment puchhe to SELECT...")
+  let explicitTrigger = null;
+  const triggerMatch = rawMessage.match(/\bjab\s*(?:bhi|koi)?\s*(.+?)\s*(?:puchhe|puche|bole|kahe|aaye|kare|mange)\s*(?:to|tab|tabhi|use|ye query|SELECT)\b/i);
+  if (triggerMatch) {
+    explicitTrigger = triggerMatch[1].trim();
+  }
+
+  return { targetTable, filterClause, extractedSQL, explicitTrigger };
+};
+
+/**
+ * Permanently learns user correction / data-location rule into:
+ * 1. AI_SQL_Learning_Tbl (Golden queries with variations)
+ * 2. AI_SQL_Corrections (Active rule)
+ * 3. AI_Business_Rule_Tbl (MSSQL constraint)
+ * 4. In-Memory Runtime Graph & Synonyms
+ * 5. Semantic Vector Cache
+ */
+const persistLearnedDataRule = async ({
+  sequelize,
+  originalQuestion,
+  validatedSQL,
+  targetTable,
+  filterClause,
+  intent = "DYNAMIC_CUSTOM",
+  rawMessage = "",
+  entities = {}
+}) => {
+  if (!sequelize?.query || !validatedSQL) return;
 
   try {
-    // 1. Purge in-memory caches immediately so old responses aren't served
-    CacheEngineInstance.l1ExactCache.clear();
-    CacheEngineInstance.l3VectorCache = [];
+    const escapedOrig = (originalQuestion || "").replace(/'/g, "''");
+    const escapedSQL = validatedSQL.replace(/'/g, "''");
+    const escapedMsg = (rawMessage || "").replace(/'/g, "''");
+    const escapedTable = (targetTable || "ERP_MASTER").replace(/'/g, "''");
+    const escapedDesc = `User instructed that data for "${escapedOrig}" is in table ${escapedTable} ${filterClause ? 'where ' + filterClause.replace(/'/g, "''") : ''}`.replace(/'/g, "''");
 
-    const escapedMsg = rawMessage.replace(/'/g, "''");
+    // 1. Ensure Learning Tables Exist
+    await ensureLearningTablesExist(sequelize);
 
-    // 2. Extract embedded SQL query if present in user message
-    const sqlMatch = rawMessage.match(/\b(SELECT\s+[\s\S]+?(?:;|\bORDER\s+BY\s+[\w\s\.,_\[\]]+(?:\s+DESC|\s+ASC)?))/i);
-    let extractedSQL = sqlMatch ? sqlMatch[0].replace(/;+$/, "").trim() : null;
+    // Purge any mis-learned cross-domain entries (e.g. SALARYFILE tagged as WORK_ANNIVERSARY)
+    await sequelize.query(`
+      IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
+      BEGIN
+        DELETE FROM [dbo].[AI_SQL_Learning_Tbl]
+        WHERE (Tables_Used = 'SALARYFILE' AND (Normalized_Question LIKE '%annivers%' OR Normalized_Question LIKE '%salgir%'))
+           OR (Intent = 'WORK_ANNIVERSARY' AND Tables_Used = 'SALARYFILE');
+      END
+    `, { type: QueryTypes.RAW }).catch(() => { });
 
-    let targetTable = null;
-    if (/salaryfile|salary file|total_earn/i.test(rawMessage)) targetTable = "SALARYFILE";
-    else if (/account_no_api/i.test(rawMessage)) targetTable = "Account_No_Api";
-    else if (/attendancetable|attendance table/i.test(rawMessage)) targetTable = "attendancetable";
-    else if (/employeemaster|employee master/i.test(rawMessage)) targetTable = "EMPLOYEEMASTER";
-    else if (/emp_varify|emp verify/i.test(rawMessage)) targetTable = "emp_varify";
-    else if (/misc_mst|misc master/i.test(rawMessage)) targetTable = "Misc_Mst";
+    // 2. Generate Question Variations for Maximum Generalization
+    const questionVariations = new Set();
+    if (originalQuestion) {
+      questionVariations.add(normalizeLower(originalQuestion));
+    }
 
-    // 3. Store in AI_SQL_Corrections
-    const insertSql = `
+    // Keyword & Intent-based generalized variations
+    const normOrig = normalizeLower(originalQuestion || rawMessage);
+    if (/\bmispunch|mis-punch|miss punch\b/i.test(normOrig)) {
+      questionVariations.add("mispunch");
+      questionVariations.add("mispunch batao");
+      questionVariations.add("mispunch report");
+      questionVariations.add("mispunch count");
+      questionVariations.add("aaj ka mispunch");
+      questionVariations.add("kiska mispunch hai");
+      questionVariations.add("employee mispunch list");
+      questionVariations.add("miss punch report");
+    } else if (/srv_reminder|service reminder|service due/i.test(normOrig)) {
+      questionVariations.add("service reminder list");
+      questionVariations.add("today service reminders due list");
+      questionVariations.add("service reminders due list");
+      questionVariations.add("service due list");
+      questionVariations.add("aaj ke service reminder");
+    } else if (/pf\s*deduct|provident\s*fund\s*deduct|pf\s*katoti|kitne\s*employee\s*ka\s*pf/i.test(normOrig) || intent === "SALARY_PF_DEDUCTION" || intent === "PF_DEDUCTION_COUNT") {
+      questionVariations.add("pf deduction");
+      questionVariations.add("pf deduction list");
+      questionVariations.add("pf deduction report");
+      questionVariations.add("pf deduction count");
+      questionVariations.add("kitne employee ka pf deduction hua hai");
+      questionVariations.add("kiska kiska pf kata hai");
+      questionVariations.add("march 2026 me kitne employee ka pf deduction hua hai");
+      questionVariations.add("march 2026 me pf deduction");
+    } else if (/salary|pagar|tankha|tankhwa|highest payment|payment/i.test(normOrig) || intent === "HIGHEST_SALARY_RANKING") {
+      questionVariations.add("highest salary");
+      questionVariations.add("highest payment");
+      questionVariations.add("salary report");
+      questionVariations.add("salary ranking");
+      questionVariations.add("sabse jyada salary");
+      questionVariations.add("sabse jyada payment");
+      questionVariations.add("sabse jyada salary kiski hai");
+      questionVariations.add("highest salary kiski hai");
+      questionVariations.add("march 2026 me sabse jyada kiski salary pay hui hai");
+      questionVariations.add("sabse jyada kiski salary pay hui hai");
+    } else if (/asset|laptop|desktop|sim/i.test(normOrig)) {
+      questionVariations.add("asset issue");
+      questionVariations.add("asset list");
+      questionVariations.add("laptop issue report");
+    }
+
+    // Generalized template SQL without specific employee code for generic queries
+    let generalizedSQL = validatedSQL;
+    if (entities.employeeCode) {
+      generalizedSQL = generalizedSQL.replace(new RegExp(`(A\\.\\[Emp_Code\\]\\s*=\\s*')${entities.employeeCode}(')`, 'gi'), "$1{EMPCODE}$2");
+      generalizedSQL = generalizedSQL.replace(new RegExp(`(E\\.\\[EMPCODE\\]\\s*=\\s*')${entities.employeeCode}(')`, 'gi'), "$1{EMPCODE}$2");
+    }
+
+    // 3. Save into AI_SQL_Learning_Tbl
+    for (const q of questionVariations) {
+      const escapedQ = q.replace(/'/g, "''");
+      const isSpecific = (q === normalizeLower(originalQuestion));
+      const sqlToSave = isSpecific ? escapedSQL : generalizedSQL.replace(/'/g, "''");
+
+      const mergeSql = `
+        IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
+        BEGIN
+          MERGE INTO [dbo].[AI_SQL_Learning_Tbl] AS target
+          USING (SELECT '${escapedQ}' AS Question, '${intent}' AS Intent) AS source
+          ON (CONVERT(NVARCHAR(500), target.Normalized_Question) = source.Question)
+          WHEN MATCHED THEN
+            UPDATE SET 
+              target.Success_Count = target.Success_Count + 100,
+              target.SQL_Query = '${sqlToSave}',
+              target.Tables_Used = '${escapedTable}',
+              target.Updated_At = GETDATE(),
+              target.Last_Verified_At = GETDATE()
+          WHEN NOT MATCHED THEN
+            INSERT (Normalized_Question, Intent, SQL_Query, Tables_Used, Success_Count, Last_Execution_Time_Ms, Created_At, Last_Verified_At)
+            VALUES (source.Question, source.Intent, '${sqlToSave}', '${escapedTable}', 100, 35, GETDATE(), GETDATE());
+        END
+      `;
+      await sequelize.query(mergeSql, { type: QueryTypes.RAW }).catch(() => { });
+    }
+
+    // 4. Save into AI_SQL_Corrections
+    const corrInsertSql = `
       IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NOT NULL
       BEGIN
         INSERT INTO [dbo].[AI_SQL_Corrections] (Correction_Type, User_Message, Target_Table, Correct_SQL_Pattern, Rule_Description, Is_Active, Created_At)
-        VALUES ('USER_FEEDBACK', '${escapedMsg}', ${targetTable ? `'${targetTable}'` : 'NULL'}, ${extractedSQL ? `'${extractedSQL.replace(/'/g, "''")}'` : 'NULL'}, '${escapedMsg}', 1, GETDATE());
+        VALUES ('USER_DATA_LOCATION', '${escapedMsg}', '${escapedTable}', '${escapedSQL}', '${escapedDesc}', 1, GETDATE());
       END
     `;
-    await sequelize.query(insertSql, { type: QueryTypes.RAW }).catch(() => {});
+    await sequelize.query(corrInsertSql, { type: QueryTypes.RAW }).catch(() => { });
 
-    // 4. If an extracted SQL query is found, also learn it into AI_SQL_Learning_Tbl with top priority
-    if (extractedSQL) {
-      const questionPhrases = [
-        "April 2026 me kis employee ko sabse jyada salary pay hui",
-        "April 2026 me kisko sabse jyada salary mili",
-        "Top earners in April 2026",
-        "Highest salary in April 2026"
-      ];
+    // 5. Save into AI_Business_Rule_Tbl if table exists
+    const ruleCode = `LEARNED_${escapedTable.toUpperCase()}_${Date.now()}`;
+    const ruleInsertSql = `
+      IF OBJECT_ID('dbo.AI_Business_Rule_Tbl', 'U') IS NOT NULL
+      BEGIN
+        INSERT INTO [dbo].[AI_Business_Rule_Tbl] (Rule_Code, Rule_Name, Target_Table, SQL_Expression, Description, Module_Name, Is_Active, Created_At)
+        VALUES ('${ruleCode}', 'Learned ${escapedTable} Rule', '${escapedTable}', '${(filterClause || '1=1').replace(/'/g, "''")}', '${escapedDesc}', 'AUTO_LEARNED', 1, GETDATE());
+      END
+    `;
+    await sequelize.query(ruleInsertSql, { type: QueryTypes.RAW }).catch(() => { });
 
-      for (const q of questionPhrases) {
-        const norm = normalizeLower(q);
-        const insertLearnSql = `
-          IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
-          BEGIN
-            MERGE INTO [dbo].[AI_SQL_Learning_Tbl] AS target
-            USING (SELECT '${norm.replace(/'/g, "''")}' AS Question, 'HIGHEST_SALARY_RANKING' AS Intent) AS source
-            ON (target.Normalized_Question = source.Question)
-            WHEN MATCHED THEN
-              UPDATE SET 
-                target.Success_Count = target.Success_Count + 50,
-                target.SQL_Query = '${extractedSQL.replace(/'/g, "''")}',
-                target.Updated_At = GETDATE(),
-                target.Last_Verified_At = GETDATE()
-            WHEN NOT MATCHED THEN
-              INSERT (Normalized_Question, Intent, SQL_Query, Tables_Used, Success_Count, Last_Execution_Time_Ms, Created_At, Last_Verified_At)
-              VALUES (source.Question, source.Intent, '${extractedSQL.replace(/'/g, "''")}', 'SALARYFILE, EMPLOYEEMASTER', 50, 45, GETDATE(), GETDATE());
-          END
-        `;
-        await sequelize.query(insertLearnSql, { type: QueryTypes.RAW }).catch(() => {});
+    // 6. In-Memory Dynamic Knowledge Registration (Takes effect instantly on live process)
+    if (targetTable) {
+      for (const q of questionVariations) {
+        if (!ERP_SYNONYM_DICTIONARY[q]) {
+          ERP_SYNONYM_DICTIONARY[q] = {
+            targetTable,
+            synonyms: [q],
+            defaultColumns: ["*"],
+            businessMeaning: `Auto-trained rule learned from user data location feedback for ${q}`
+          };
+        } else {
+          if (!ERP_SYNONYM_DICTIONARY[q].synonyms.includes(q)) {
+            ERP_SYNONYM_DICTIONARY[q].synonyms.push(q);
+          }
+        }
       }
     }
 
-    console.log("✅ [V6-RLHF] Correction stored and learned into AI models successfully.");
-    return { stored: true, message: rawMessage, extractedSQL };
-  } catch (e) {
-    console.warn("[V6-RLHF] Failed to store correction:", e?.message);
+    // 7. Purge Stale Caches & Ingest into Semantic L3 Vector Cache
+    CacheEngineInstance.l1ExactCache.clear();
+    const queryEmbedding = await generateEmbedding(normalizeLower(originalQuestion || rawMessage)).catch(() => []);
+    if (Array.isArray(queryEmbedding) && queryEmbedding.length > 0) {
+      CacheEngineInstance.l3VectorCache.push({
+        embedding: queryEmbedding,
+        sql: validatedSQL,
+        compcode: "GLOBAL",
+        role: "GLOBAL",
+        targetTable,
+        intent
+      });
+    }
+
+    console.log(`🧠 [V6-SelfLearning] Successfully trained & permanently persisted golden rule for "${originalQuestion}" on table [${targetTable}] with ${questionVariations.size} variations!`);
+  } catch (err) {
+    console.warn("[V6-SelfLearning] Notice while saving learned rule:", err?.message);
   }
-  return null;
+};
+
+/**
+ * Primary Follow-Up Data Location & User Correction Handler
+ */
+const handleUserCorrectionAndDataLocation = async ({
+  sequelize,
+  rawMessage,
+  conversationId,
+  userContext = {},
+  startedAt = Date.now()
+}) => {
+  if (!sequelize?.query || !rawMessage) return null;
+
+  // 1. Check if there is an active previous turn in memory or DB
+  const prevTurn = MemoryEngineInstance.getLastTurn(conversationId);
+  const hasPreviousTurn = Boolean(prevTurn?.lastUserMessage || prevTurn?.isPendingClarification);
+
+  // 2. Check if the message is a data-location guidance or correction
+  if (!isCorrectionOrDataLocation(rawMessage, hasPreviousTurn)) {
+    return null;
+  }
+
+  console.log("🎯 [V6-RLHF] Active User Data-Location / Correction Guidance Detected:", rawMessage);
+
+  // 3. Extract guidance components (targetTable, filterClause, extractedSQL, explicitTrigger)
+  const { targetTable, filterClause, extractedSQL, explicitTrigger } = extractGuidanceComponents(rawMessage);
+
+  // 4. Resolve Context: Retrieve original question and previous entities
+  let originalQuestion = explicitTrigger || prevTurn?.lastUserMessage || null;
+  let resolvedEntities = { ...(prevTurn?.lastEntities || {}) };
+  let originalIntent = prevTurn?.lastIntent || "DYNAMIC_CUSTOM";
+
+  // Fallback to database AI_Message_Tbl if memory had no previous message or held disambiguation
+  if ((!originalQuestion || prevTurn?.lastIntent === "ENTITY_DISAMBIGUATION") && conversationId) {
+    try {
+      const pastMsgs = await sequelize.query(`
+        SELECT TOP 5 Role, Message_Content, Metadata, Created_At 
+        FROM [dbo].[AI_Message_Tbl] WITH (NOLOCK)
+        WHERE Conversation_Id = :conversationId
+        ORDER BY UTD DESC
+      `, { replacements: { conversationId }, type: QueryTypes.SELECT }).catch(() => []);
+
+      if (pastMsgs && pastMsgs.length > 0) {
+        const userMsgs = pastMsgs.filter(m => String(m.Role).toLowerCase() === "user" && m.Message_Content !== rawMessage);
+        if (userMsgs.length > 0) {
+          originalQuestion = userMsgs[0].Message_Content;
+        }
+      }
+    } catch (_) { }
+  }
+
+  // If still no previous question, the user gave a direct standalone SQL or table command
+  if (!originalQuestion) {
+    originalQuestion = rawMessage;
+  }
+
+  // Detect domain/intent from extractedSQL or targetTable if user gave direct SQL
+  if (extractedSQL && (/PF_Employee|pf_employer|pf_emplpension|PFNUMBER/i.test(extractedSQL))) {
+    if (/COUNT\s*\(/i.test(extractedSQL)) {
+      originalIntent = "PF_DEDUCTION_COUNT";
+    } else {
+      originalIntent = "SALARY_PF_DEDUCTION";
+    }
+  } else if (extractedSQL && (/SALARYFILE/i.test(extractedSQL) || /Final_Payment|Gross_Earn|Basic_Earn/i.test(extractedSQL))) {
+    if (/ORDER\s+BY.+?(?:DESC|ASC)/i.test(extractedSQL) || (/TOP\s+\d+/i.test(extractedSQL) && !/Emp_Code\s*=/i.test(extractedSQL))) {
+      originalIntent = "HIGHEST_SALARY_RANKING";
+    } else {
+      originalIntent = "EMPLOYEE_SALARY_HISTORY";
+    }
+  } else if (extractedSQL && (/attendancetable/i.test(extractedSQL) || /mipunch|dateoffice/i.test(extractedSQL))) {
+    originalIntent = "MISPUNCH_REPORT";
+  }
+
+  // Classify entities from original question if not already in context
+  const origClassification = await classifyIntentAndExtractEntities({
+    message: originalQuestion,
+    userContext
+  });
+  resolvedEntities = { ...origClassification.entities, ...resolvedEntities };
+  if (origClassification.intent && origClassification.intent !== "GENERAL_DATABASE_QUERY") {
+    originalIntent = origClassification.intent;
+  }
+  if (extractedSQL && (/PF_Employee|pf_employer|pf_emplpension|PFNUMBER/i.test(extractedSQL))) {
+    if (/COUNT\s*\(/i.test(extractedSQL)) {
+      originalIntent = "PF_DEDUCTION_COUNT";
+    } else {
+      originalIntent = "SALARY_PF_DEDUCTION";
+    }
+  } else if (extractedSQL && (/SALARYFILE/i.test(extractedSQL) || /Final_Payment|Gross_Earn|Basic_Earn/i.test(extractedSQL))) {
+    if (/ORDER\s+BY.+?(?:DESC|ASC)/i.test(extractedSQL) || (/TOP\s+\d+/i.test(extractedSQL) && !/Emp_Code\s*=/i.test(extractedSQL))) {
+      originalIntent = "HIGHEST_SALARY_RANKING";
+    } else {
+      originalIntent = "EMPLOYEE_SALARY_HISTORY";
+    }
+  }
+
+  // If user provided direct SQL with an Emp_Code, extract it into resolvedEntities
+  if (extractedSQL && !resolvedEntities.employeeCode) {
+    const empMatch = extractedSQL.match(/Emp_Code\s*=\s*['"]?(\d+)['"]?/i);
+    if (empMatch) {
+      resolvedEntities.employeeCode = empMatch[1];
+    }
+  }
+
+  // Resolve employee name if mentioned in original question
+  if (!resolvedEntities.employeeCode && !resolvedEntities.isSelf) {
+    const dbEntity = await resolveEmployeeEntityViaDB({
+      sequelize,
+      message: originalQuestion,
+      normalized: normalizeLower(originalQuestion),
+      entities: resolvedEntities,
+      userContext
+    });
+    if (dbEntity.matched && dbEntity.employeeCode) {
+      resolvedEntities.employeeCode = dbEntity.employeeCode;
+      resolvedEntities.employeeName = dbEntity.employeeName;
+    }
+  }
+
+  // 5. Synthesize the Target SQL Statement
+  let generatedSQL = null;
+
+  if (extractedSQL) {
+    // User provided direct SQL
+    generatedSQL = extractedSQL;
+  } else if (targetTable === "attendancetable" && (filterClause?.includes("flag") || /mispunch/i.test(originalQuestion))) {
+    // Specialized attendancetable mispunch query
+    let whereParts = ["A.[flag] = 'MP'"];
+    if (resolvedEntities.employeeCode) {
+      whereParts.push(`A.[Emp_Code] = '${resolvedEntities.employeeCode.replace(/'/g, "''")}'`);
+    } else if (resolvedEntities.employeeName) {
+      whereParts.push(`(E.[EMPFIRSTNAME] LIKE '%${resolvedEntities.employeeName.replace(/'/g, "''")}%' OR A.[Emp_Code] LIKE '%${resolvedEntities.employeeName.replace(/'/g, "''")}%')`);
+    }
+    if (resolvedEntities.month) {
+      whereParts.push(`MONTH(A.[dateoffice]) = ${resolvedEntities.month}`);
+    }
+    if (resolvedEntities.year) {
+      whereParts.push(`YEAR(A.[dateoffice]) = ${resolvedEntities.year}`);
+    }
+
+    generatedSQL = `
+      SELECT TOP 500
+        A.[Emp_Code],
+        LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+        E.[LOCATION] AS [Branch],
+        A.[dateoffice] AS [Date],
+        A.[flag] AS [PunchFlag],
+        A.[status] AS [Status],
+        A.[in1] AS [InTime],
+        A.[out1] AS [OutTime],
+        A.[hoursworked] AS [HoursWorked]
+      FROM [dbo].[attendancetable] A WITH (NOLOCK)
+      LEFT JOIN [dbo].[EMPLOYEEMASTER] E WITH (NOLOCK) ON A.[Emp_Code] = E.[EMPCODE]
+      WHERE ${whereParts.join(" AND ")}
+      ORDER BY A.[dateoffice] DESC
+    `.trim();
+  } else if (targetTable === "SALARYFILE") {
+    // Specialized SALARYFILE query
+    let whereParts = ["1=1"];
+    if (resolvedEntities.employeeCode) {
+      whereParts.push(`S.[Emp_Code] = '${resolvedEntities.employeeCode.replace(/'/g, "''")}'`);
+    } else if (resolvedEntities.employeeName) {
+      whereParts.push(`(E.[EMPFIRSTNAME] LIKE '%${resolvedEntities.employeeName.replace(/'/g, "''")}%' OR S.[Emp_Code] LIKE '%${resolvedEntities.employeeName.replace(/'/g, "''")}%')`);
+    }
+    if (resolvedEntities.month) {
+      whereParts.push(`S.[SalMnth] = ${resolvedEntities.month}`);
+    }
+    if (resolvedEntities.year) {
+      whereParts.push(`S.[salyear] = ${resolvedEntities.year}`);
+    }
+
+    generatedSQL = `
+      SELECT TOP 500
+        S.[Emp_Code],
+        LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+        E.[LOCATION] AS [Branch],
+        S.[SalMnth] AS [Month],
+        S.[salyear] AS [Year],
+        S.[Basic_Earn],
+        S.[HRA_Earn],
+        S.[Gross_Earn],
+        S.[Deducation] AS [TotalDeduction],
+        S.[Final_Payment] AS [NetSalary]
+      FROM [dbo].[SALARYFILE] S WITH (NOLOCK)
+      LEFT JOIN [dbo].[EMPLOYEEMASTER] E WITH (NOLOCK) ON S.[Emp_Code] = E.[EMPCODE]
+      WHERE ${whereParts.join(" AND ")}
+      ORDER BY S.[Gross_Earn] DESC
+    `.trim();
+  } else {
+    // Dynamic Planner with strict user guidance
+    const relevantTables = SchemaEngineInstance.searchRelevantTables(
+      `${originalQuestion} ${targetTable || ''}`,
+      originalIntent
+    );
+    if (targetTable && !relevantTables.some(t => t.tableName.toLowerCase() === targetTable.toLowerCase())) {
+      relevantTables.unshift({
+        tableName: targetTable,
+        confidence: 1.0,
+        reason: "User explicitly specified target table in follow-up prompt",
+        meta: SchemaEngineInstance.tableIndex.get(targetTable.toLowerCase()) || { tableName: targetTable, columns: {} }
+      });
+    }
+
+    const dynamicPlan = await planDynamicSQL({
+      sequelize,
+      message: `${originalQuestion} [MANDATORY USER CONSTRAINT: Data is located in table '${targetTable || 'ERP_MASTER'}' ${filterClause ? 'with condition: ' + filterClause : ''}]`,
+      intent: originalIntent,
+      entities: resolvedEntities,
+      relevantTables,
+      userContext
+    });
+    generatedSQL = dynamicPlan?.sql;
+  }
+
+  if (!generatedSQL) {
+    console.warn("⚠️ [V6-RLHF] Could not synthesize SQL query from user guidance.");
+    return null;
+  }
+
+  // 6. Validate and Repair SQL
+  const validatedSQL = validateAndRepairSQL(generatedSQL, userContext);
+  console.log("⚙️ [V6-RLHF-Execute-Guidance]:\n", validatedSQL);
+
+  // 7. Execute on Live MSSQL Server
+  const sqlStartTime = Date.now();
+  const execResult = await executeSQLWithSelfCorrection({
+    sequelize,
+    initialSQL: validatedSQL,
+    userContext,
+    rawMessage: originalQuestion,
+    intent: originalIntent,
+    tablesUsed: [targetTable || "ERP_MASTER"]
+  });
+
+  const dbRows = execResult.rows || [];
+  const finalSQL = execResult.sql || validatedSQL;
+  const sqlExecutionTimeMs = Date.now() - sqlStartTime;
+
+  // 8. Format Human Business Response (AI Formatter with Deterministic Fallback)
+  let formatted = null;
+  if (dbRows.length > 0) {
+    formatted = await formatResponseViaAI({
+      message: originalQuestion,
+      intent: originalIntent,
+      sql: finalSQL,
+      rows: dbRows,
+      userContext,
+      entities: resolvedEntities
+    });
+  }
+
+  if (!formatted || !formatted.answer) {
+    formatted = await formatHumanBusinessAnswer({
+      message: originalQuestion,
+      intent: originalIntent,
+      entities: resolvedEntities,
+      sql: finalSQL,
+      rows: dbRows,
+      userContext,
+      sequelize
+    });
+  }
+
+  // Prepend acknowledgment of user guidance
+  let finalAnswer = formatted.answer;
+  if (targetTable) {
+    if (dbRows.length > 0) {
+      finalAnswer = `Aapke bataye anusar **\`${targetTable}\`** se data fetch kiya gaya hai:\n\n${finalAnswer}`;
+    } else {
+      finalAnswer = `Aapke bataye anusar **\`${targetTable}\`** table par query run ki gayi:\n\`\`\`sql\n${finalSQL}\n\`\`\`\n\n${finalAnswer}`;
+    }
+  }
+
+  const criticResult = verifyAnswerAgainstEvidence({
+    answer: finalAnswer,
+    rows: dbRows
+  });
+
+  const responseTimeMs = Date.now() - startedAt;
+
+  // 9. PERMANENT AUTONOMOUS SELF-LEARNING (Auto-train golden rule)
+  await persistLearnedDataRule({
+    sequelize,
+    originalQuestion,
+    validatedSQL: finalSQL,
+    targetTable,
+    filterClause,
+    intent: originalIntent,
+    rawMessage,
+    entities: resolvedEntities
+  });
+
+  // 10. Update Conversation Memory Turn
+  MemoryEngineInstance.updateContext(
+    conversationId,
+    resolvedEntities,
+    originalIntent,
+    {
+      userMessage: originalQuestion,
+      sql: finalSQL,
+      rowCount: dbRows.length,
+      failed: false,
+      tablesUsed: [targetTable || "ERP_MASTER"]
+    }
+  );
+
+  console.log(`✅ [V6-RLHF] Follow-up query executed & rule permanently learned in ${responseTimeMs}ms!`);
+
+  return {
+    handled: true,
+    result: {
+      success: true,
+      data: dbRows,
+      conversationId,
+      answer: finalAnswer,
+      mode: "DATABASE_QUERY",
+      intent: originalIntent,
+      isSelfQuery: resolvedEntities.isSelf || false,
+      sources: [`AutoVyn ERP [${targetTable || 'Live Database'}] (Self-Learned Golden Rule)`],
+      query: {
+        sql: finalSQL,
+        tablesUsed: [targetTable || "ERP_MASTER"],
+        rowCount: dbRows.length,
+        executionTimeMs: sqlExecutionTimeMs
+      },
+      confidence: { level: "HIGH", score: 0.99 },
+      evidence: {
+        canAnswer: true,
+        rows: dbRows.slice(0, 15),
+        rowCount: dbRows.length,
+        totalRowsReturned: dbRows.length,
+        truncated: dbRows.length > 15
+      },
+      sqlValidation: { valid: true, sanitized: true },
+      critic: criticResult,
+      isAmbiguous: false,
+      resolvedEntities,
+      cached: false,
+      cacheTier: "SELF_LEARNED_GOLDEN",
+      model: "AutoVyn-V6-RLHF-AutonomousLearner",
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      responseTimeMs
+    }
+  };
+};
+
+const detectAndStoreUserCorrection = async ({ sequelize, rawMessage, userContext = {}, conversationId = null }) => {
+  return handleUserCorrectionAndDataLocation({
+    sequelize,
+    rawMessage,
+    conversationId,
+    userContext,
+    startedAt: Date.now()
+  });
 };
 
 // GPT-5 SQL Planner for complex non-templated queries with Autonomous Dynamic Prompt Injection
-const planDynamicSQL = async ({ sequelize, message, intent, entities, relevantTables, userContext }) => {
+const planDynamicSQL = async ({ sequelize, message, originalMessage, intent, entities, relevantTables, userContext }) => {
   const client = getOpenAIClient();
   const config = getModelConfig();
   const schemaContext = SchemaEngineInstance.generatePrunedSchemaPrompt(relevantTables);
 
   // Dynamic Few-Shot Golden Examples & Learned Rules Retrieval
-  const { goldenExamples, learnedRules } = await fetchLearnedGoldenExamplesAndRules({ sequelize, intent, message });
+  const { goldenExamples, learnedRules } = await fetchLearnedGoldenExamplesAndRules({ sequelize, intent, message: originalMessage || message });
 
   let dynamicLearningSection = "";
   if (goldenExamples && goldenExamples.length > 0) {
@@ -2654,7 +4822,7 @@ ${dynamicLearningSection}
 
 ${schemaContext}`;
 
-  const userPrompt = `User Question: "${message}"
+  const userPrompt = `User Question (Standard English): "${message}"${originalMessage && originalMessage !== message ? `\nOriginal User Question (Vernacular): "${originalMessage}"` : ""}
 Detected Intent: ${intent}
 Extracted Entities: ${JSON.stringify(entities)}
 Logged In User Role: ${userContext.role}, EmpCode: ${userContext.employeeCode || "N/A"}`;
@@ -2743,8 +4911,12 @@ const validateAndRepairSQL = (rawSql, userContext) => {
   sql = sql.replace(/\[?([a-zA-Z0-9_]+)\]?\.\s*\[?(CTC|ANNUALCTC)\]?/gi, (match, p1) => /^dbo$/i.test(p1) ? match : `[${p1}].[ANNUAL_CTC]`);
   sql = sql.replace(/\[?([a-zA-Z0-9_]+)\]?\.\s*\[?(MONTHLYCTC)\]?/gi, (match, p1) => /^dbo$/i.test(p1) ? match : `[${p1}].[MONTHLY_CTC]`);
   sql = sql.replace(/\[?([a-zA-Z0-9_]+)\]?\.\s*\[?(DESIGNATION|DESIG)\]?/gi, (match, p1) => /^dbo$/i.test(p1) ? match : `[${p1}].[EMPLOYEEDESIGNATION]`);
-  sql = sql.replace(/\[?([a-zA-Z0-9_]+)\]?\.\s*\[?(DEPARTMENT|DEPT)\]?/gi, (match, p1) => {
-    if (/^(E|em|emp|employeemaster)$/i.test(p1)) return `NULL AS [Department]`;
+  sql = sql.replace(/\[?([a-zA-Z0-9_]+)\]?\.\s*\[?(DEPARTMENT|DEPT)\]?(\s+AS\s+\[?[a-zA-Z0-9_]+\]?)?/gi, (match, p1, p2, p3, offset) => {
+    if (/^(E|em|emp|employeemaster)$/i.test(p1)) {
+      const beforeStr = sql.slice(0, offset);
+      const isBeforeFrom = !/\bFROM\b/i.test(beforeStr);
+      return isBeforeFrom ? `NULL AS [Department]` : `NULL`;
+    }
     return match;
   });
 
@@ -2789,7 +4961,7 @@ const validateAndRepairSQL = (rawSql, userContext) => {
         let expr = asMatch[2].trim();
         const asClause = asMatch[3];
         const rest = asMatch[4];
-        
+
         let openParen = (expr.match(/\(/g) || []).length;
         let closeParen = (expr.match(/\)/g) || []).length;
         while (openParen > closeParen) {
@@ -2893,7 +5065,7 @@ Return ONLY the repaired raw SQL statement without markdown fences or text.
 
 const executeAdaptiveCrossTableSearch = async ({ sequelize, rawMessage, resolvedEntities = {}, userContext = {}, intent = "" }) => {
   console.log("🔍 [V6-AdaptiveFallback] Initiating Deep Autonomous Cross-Table Search...");
-  
+
   // 1. Gather all candidate search tokens
   const candidateTokens = new Set();
 
@@ -3037,7 +5209,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) = '${cleanToken}'
           tablesUsed: ["EMPLOYEEMASTER"]
         };
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // ── Phase 2: Check Relative Table: Account_No_Api (Bank Penny-Drop Gateway) ──
     const bankApiSql = `SELECT TOP 10
@@ -3074,7 +5246,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(100), A.[account_number]))) = '${cleanToken}'
           intent: "EMPLOYEE_BY_ACCOUNT_NO"
         };
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // ── Phase 3: Check Relative Table: emp_varify (KYC & Government ID Verifications) ──
     const kycSql = `SELECT TOP 10
@@ -3112,7 +5284,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) = '${cleanToken}'`;
           intent: "KYC_LOOKUP"
         };
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // ── Phase 4: Check Relative Table: attendancetable (Punch & Attendance Records) ──
     const atnSql = `SELECT TOP 31
@@ -3148,7 +5320,7 @@ ORDER BY [A].[dateoffice] DESC`;
           intent: "ATTENDANCE_REPORT"
         };
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // ── Phase 5: Check Relative Table: SALARYFILE (Payroll History) ──
     const salSql = `SELECT TOP 12
@@ -3184,7 +5356,7 @@ ORDER BY [S].[salyear] DESC, [S].[SalMnth] DESC`;
           intent: "SALARY_REPORT"
         };
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // ── Phase 6: Check Relative Table: Asset_Issue (Company Assigned Assets) ──
     const assetSql = `SELECT TOP 20
@@ -3216,7 +5388,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), A.[Emp_Code]))) = '${cleanToken}'
           intent: "ASSET_SEARCH"
         };
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // ── Phase 7: Check Relative Table: Approval_Matrix (Hierarchy & Approvers) ──
     const aprvlSql = `SELECT TOP 20
@@ -3246,7 +5418,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), M.[empcode]))) = '${cleanToken}'
           intent: "GENERAL_DATABASE_QUERY"
         };
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // ── Phase 8: Check Relative Table: Misc_Mst (Universal Master Dropdowns) ──
     const miscSql = `SELECT TOP 20
@@ -3270,21 +5442,236 @@ WHERE [Misc_Name] LIKE '%${cleanToken}%'
           intent: "GENERAL_DATABASE_QUERY"
         };
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   return { found: false };
 };
 
 // ============================================================================
-// ENGINE 10: HUMAN RESPONSE FORMATTER ENGINE
+// ENGINE 10: HUMAN RESPONSE FORMATTER (AI SYNTHESIZER & DETERMINISTIC ENGINE)
 // ============================================================================
 
-const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], userContext, entities = {} }) => {
+/**
+ * AI-Powered Response Formatter (LLM Synthesizer)
+ * Formats database rows into accurate, professional, conversational business answers.
+ */
+const formatResponseViaAI = async ({ message, englishQuery, intent, sql, rows = [], userContext = {}, entities = {}, previousContext = null }) => {
   if (!rows || rows.length === 0) {
+    return null;
+  }
+
+  try {
+    const client = getOpenAIClient();
+    const config = getModelConfig();
+
+    const sampleRows = rows.slice(0, 30);
+    const rowCount = rows.length;
+
+    let contextNote = "";
+    if (previousContext?.lastUserMessage) {
+      contextNote = `\nPrevious Conversation Context: The user previously asked: "${previousContext.lastUserMessage}" (Active Subject: ${previousContext.lastEmployeeName || ''} ${previousContext.lastEmployeeCode ? `[${previousContext.lastEmployeeCode}]` : ''}). This current question is a follow-up continuing that discussion. Formulate a smooth, natural follow-up response acknowledging the context.`;
+    }
+
+    const prompt = `User Question: "${message}"${englishQuery && englishQuery !== message ? ` (Standard English: "${englishQuery}")` : ""}${contextNote}
+Detected Intent: ${intent}
+Executed SQL: ${sql}
+Total Rows Returned: ${rowCount}
+Data (first ${sampleRows.length} of ${rowCount} records):
+${JSON.stringify(sampleRows, null, 2)}
+
+Instructions:
+1. Provide a clear, polite, and direct business answer in clean Hinglish / Hindi (matching the user's conversational tone).
+2. If this is a follow-up question (e.g., 'aur basic salary?', 'aur November ki?', 'aur designation kya hai?'), directly answer the specific question in relation to the active employee and timeframe, maintaining conversational continuity like ChatGPT or Gemini.
+3. CRITICAL COUNT RULE: NEVER confuse an Employee Code (e.g. 1600159, 1924108) with a count of employees.
+   - If the user asked "kitne employee" (how many employees), state the exact count from the aggregate count or the total number of records (${rowCount}).
+4. If multiple records are returned, format a clean Markdown table with relevant columns from the data (e.g. Employee Code, Name, Designation, Dates, Amounts, Status).
+5. State currency amounts clearly with Indian Rupee formatting (e.g. ₹1,800).
+6. Be concise, professional, and 100% faithful to the data.
+7. ATTRIBUTE & ADDRESS RULE: If the user asks for a specific attribute (e.g. permanent address, current address, mobile, email, designation), directly answer that specific attribute first. If PermanentAddress or CurrentAddress is null, blank, or empty string in the database row, explicitly and politely clarify that this field is currently not updated / blank in the ERP database (EMPLOYEEMASTER) for this employee.`;
+
+    const response = await client.chat.completions.create({
+      model: config.fastModel || "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are AutoVyn ERP's official AI assistant. Format database query results into clear, accurate, professional business responses. Always state exact counts and never confuse an ID or code with a count."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 1000
+    });
+
+    const aiAnswer = response?.choices?.[0]?.message?.content?.trim();
+    if (aiAnswer) {
+      return {
+        answer: aiAnswer,
+        summary: `${rowCount} records formatted via AI`,
+        usage: response.usage
+      };
+    }
+  } catch (err) {
+    console.warn("[V6-AIFormatter] AI formatting notice, falling back to deterministic formatter:", err?.message);
+  }
+
+  return null;
+};
+
+const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], userContext, entities = {}, sequelize = null }) => {
+  if (!rows || rows.length === 0) {
+    const isToday = entities.isToday || /\b(aaj|today)\b/i.test(message || "");
+    const dateStr = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : "aaj"));
+    if (intent === "MARRIAGE_ANNIVERSARY" || /\b(marrige|marriage|shadi|shaadi|wedding)\b/i.test(message || "")) {
+      return {
+        answer: `AutoVyn ERP ke record ke anusar, ${dateStr} kisi bhi employee ki **Marriage Anniversary** nahi hai.`,
+        summary: `No marriage anniversary ${dateStr}`
+      };
+    }
+    if (intent === "WORK_ANNIVERSARY") {
+      return {
+        answer: `AutoVyn ERP ke record ke anusar, ${dateStr} kisi bhi employee ki **Work Anniversary** nahi hai.`,
+        summary: `No work anniversary ${dateStr}`
+      };
+    }
+    if (intent === "BIRTHDAY_TODAY" || intent === "BIRTHDAY_BY_DATE" || intent === "BIRTHDAYS_MONTH" || /\b(birthday|bday|b'day|janamdin)\b/i.test(message || "")) {
+      return {
+        answer: `AutoVyn ERP ke record ke anusar, ${dateStr} kisi bhi employee ka **Birthday** nahi hai.`,
+        summary: `No birthday ${dateStr}`
+      };
+    }
+
+    // Check if user is asking for an employee's salary / basic salary
+    const isSalaryQuery = intent === "SALARY_REPORT" || intent === "EMPLOYEE_SALARY_HISTORY" || intent === "SELF_SALARY" ||
+      /\b(salary|pagar|tankha|vetan|basic|basic_earn|gross_earn|net|ctc)\b/i.test(message || "") ||
+      (sql && /SALARYFILE/i.test(sql));
+    const targetEmpCode = entities.employeeCode || (message.match(/\b(?:emp\s*code|employee\s*code|empcode|code)\s*[:=]?\s*['"]?(\d+)['"]?\b/i)?.[1]) || (message.match(/\b(\d{4,10})\b/)?.[1]);
+
+    if (isSalaryQuery && targetEmpCode) {
+      let empName = entities.employeeName || "";
+      let designation = entities.designation || "";
+      let monthlyCtc = null;
+      let annualCtc = null;
+      if (sequelize?.query && (!empName || !designation)) {
+        try {
+          const empMasterRows = await sequelize.query(`
+            SELECT TOP 1 EMPCODE, LTRIM(RTRIM(ISNULL(EMPFIRSTNAME, '') + ' ' + ISNULL(EMPLASTNAME, ''))) AS FullName,
+                   EMPLOYEEDESIGNATION AS Designation, MONTHLY_CTC, ANNUAL_CTC
+            FROM dbo.EMPLOYEEMASTER WITH (NOLOCK)
+            WHERE LTRIM(RTRIM(CONVERT(varchar(50), EMPCODE))) = '${targetEmpCode.replace(/'/g, "''")}'
+          `, { type: QueryTypes.SELECT }).catch(() => []);
+          if (empMasterRows && empMasterRows.length > 0) {
+            empName = empMasterRows[0].FullName;
+            designation = empMasterRows[0].Designation;
+            monthlyCtc = empMasterRows[0].MONTHLY_CTC;
+            annualCtc = empMasterRows[0].ANNUAL_CTC;
+          }
+        } catch (_) { }
+      }
+
+      const empLabel = empName ? `**${empName} (${targetEmpCode})**${designation ? ` - *${designation}*` : ''}` : `Employee Code **${targetEmpCode}**`;
+      const isDirector = designation && /director|managing director|md|ceo|promoter|partner|owner/i.test(designation);
+
+      let ans = `AutoVyn ERP ke record ke anusar, ${empLabel} ke liye **\`SALARYFILE\`** table me koi monthly salary / Basic_Earn record available nahi hai (0 records found).\n\n`;
+      if (isDirector) {
+        ans += `📌 **Karan:** Ye employee **${designation}** hain. Top Management / Directors ki monthly salary slips aksar regular payroll (\`SALARYFILE\`) me generate nahi hoti hain, aur Master (\`EMPLOYEEMASTER\`) me bhi inka Monthly CTC / Basic null set hai.`;
+      } else if (monthlyCtc && Number(monthlyCtc) > 0) {
+        ans += `📌 Master (\`EMPLOYEEMASTER\`) ke anusar inka **Monthly CTC ₹${Number(monthlyCtc).toLocaleString('en-IN')}** aur **Annual CTC ₹${Number(annualCtc || 0).toLocaleString('en-IN')}** hai, lekin \`SALARYFILE\` me inka monthly breakdown / Basic_Earn generate nahi hua hai.`;
+      } else {
+        ans += `📌 Is employee code ke liye database me kisi bhi mahine ka salary payout / Basic_Earn process nahi hua hai.`;
+      }
+
+      return {
+        answer: ans.trim(),
+        summary: `No salary records for ${targetEmpCode} in SALARYFILE`
+      };
+    }
+
     return {
       answer: `Aapke dwara puche gaye sawal ke liye database me koi record nahi mila. (No records found matching criteria).`,
       summary: "No records found"
+    };
+  }
+
+  const monthsNameArr = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const getMonthNameHelper = (r) => {
+    if (!r) return (entities.month && monthsNameArr[Number(entities.month)] ? monthsNameArr[Number(entities.month)] : (entities.monthName || "-"));
+    const mNum = r.Month || r.MonthNumber || r.SalMnth || r.salmnth || r.SalaryMonth || entities.month;
+    return r.MonthName || (mNum && monthsNameArr[Number(mNum)] ? monthsNameArr[Number(mNum)] : (entities.monthName || (mNum ? `Month ${mNum}` : "-")));
+  };
+
+  // Event Formatter: Marriage Anniversary
+  if (intent === "MARRIAGE_ANNIVERSARY" && rows.length > 0) {
+    const isToday = entities.isToday || /\b(aaj|today)\b/i.test(message || "");
+    const dateStr = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : ""));
+    let ans = `AutoVyn ERP ke record ke anusar, ${dateStr} **${rows.length} employee(s)** ki **Marriage Anniversary** hai! 🎉💐\n\n`;
+    ans += `| Emp Code | Employee Name | Marriage Date | Years Completed | Location / Branch | Designation | Mobile No |\n`;
+    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (const r of rows.slice(0, 50)) {
+      const code = r.EmployeeCode || r.EMPCODE || "-";
+      const name = r.EmployeeName || (r.EMPFIRSTNAME ? `${r.EMPFIRSTNAME} ${r.EMPLASTNAME || ""}`.trim() : "-");
+      const dom = r.MarriageDate || (r.DOM ? String(r.DOM).slice(0, 10) : "-");
+      const years = r.YearsOfMarriage !== undefined ? `${r.YearsOfMarriage} Year(s)` : "-";
+      const loc = r.Location || "-";
+      const desg = r.Designation || "-";
+      const mob = r.MobileNo || "-";
+      ans += `| **${code}** | **${name}** | ${dom} | ${years} | ${loc} | ${desg} | ${mob} |\n`;
+    }
+    if (rows.length > 50) ans += `\n*(Showing top 50 of ${rows.length} records)*`;
+    return {
+      answer: ans.trim(),
+      summary: `${rows.length} employees marriage anniversary ${dateStr}`
+    };
+  }
+
+  // Event Formatter: Work Anniversary
+  if (intent === "WORK_ANNIVERSARY" && rows.length > 0) {
+    const isToday = entities.isToday || /\b(aaj|today)\b/i.test(message || "");
+    const dateStr = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : ""));
+    let ans = `AutoVyn ERP ke record ke anusar, ${dateStr} **${rows.length} employee(s)** ki **Work Anniversary (Joining Day)** hai! 🎉👏\n\n`;
+    ans += `| Emp Code | Employee Name | Joining Date | Years of Service | Location / Branch | Designation | Mobile No |\n`;
+    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (const r of rows.slice(0, 50)) {
+      const code = r.EmployeeCode || r.EMPCODE || "-";
+      const name = r.EmployeeName || (r.EMPFIRSTNAME ? `${r.EMPFIRSTNAME} ${r.EMPLASTNAME || ""}`.trim() : "-");
+      const doj = r.JoiningDate || (r.CURRENTJOINDATE ? String(r.CURRENTJOINDATE).slice(0, 10) : "-");
+      const years = r.YearsOfService !== undefined ? `${r.YearsOfService} Year(s)` : "-";
+      const loc = r.Location || "-";
+      const desg = r.Designation || "-";
+      const mob = r.MobileNo || "-";
+      ans += `| **${code}** | **${name}** | ${doj} | ${years} | ${loc} | ${desg} | ${mob} |\n`;
+    }
+    if (rows.length > 50) ans += `\n*(Showing top 50 of ${rows.length} records)*`;
+    return {
+      answer: ans.trim(),
+      summary: `${rows.length} employees work anniversary ${dateStr}`
+    };
+  }
+
+  // Event Formatter: Birthday
+  if ((intent === "BIRTHDAY_TODAY" || intent === "BIRTHDAY_BY_DATE" || intent === "BIRTHDAYS_MONTH") && rows.length > 0) {
+    const isToday = entities.isToday || /\b(aaj|today)\b/i.test(message || "");
+    const dateStr = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}) me` : ""));
+    let ans = `AutoVyn ERP ke record ke anusar, ${dateStr} **${rows.length} employee(s)** ka **Birthday** hai! 🎂🎉\n\n`;
+    ans += `| Emp Code | Employee Name | Date of Birth | Age | Location / Branch | Designation | Mobile No |\n`;
+    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (const r of rows.slice(0, 50)) {
+      const code = r.EmployeeCode || r.EMPCODE || "-";
+      const name = r.EmployeeName || (r.EMPFIRSTNAME ? `${r.EMPFIRSTNAME} ${r.EMPLASTNAME || ""}`.trim() : "-");
+      const dob = r.DateOfBirth || (r.DOB ? String(r.DOB).slice(0, 10) : "-");
+      const age = r.Age !== undefined ? `${r.Age} yrs` : "-";
+      const loc = r.Location || "-";
+      const desg = r.Designation || "-";
+      const mob = r.MobileNo || "-";
+      ans += `| **${code}** | **${name}** | ${dob} | ${age} | ${loc} | ${desg} | ${mob} |\n`;
+    }
+    if (rows.length > 50) ans += `\n*(Showing top 50 of ${rows.length} records)*`;
+    return {
+      answer: ans.trim(),
+      summary: `${rows.length} employees birthday ${dateStr}`
     };
   }
 
@@ -3307,8 +5694,239 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     };
   }
 
-  if (rows.length === 1 && rows[0].TotalPFCount !== undefined) {
-    const count = rows[0].TotalPFCount;
+  if (rows.length === 1 && (
+    rows[0].ActiveEmployeeCount !== undefined ||
+    rows[0].InactiveEmployeeCount !== undefined ||
+    rows[0].SeparatedEmployeeCount !== undefined ||
+    rows[0].TotalEmployeeCount !== undefined
+  )) {
+    const r = rows[0];
+    const isAct = r.ActiveEmployeeCount !== undefined;
+    const isSeparated = r.SeparatedEmployeeCount !== undefined;
+    const isDeact = r.InactiveEmployeeCount !== undefined;
+    const count = isAct ? r.ActiveEmployeeCount : (isSeparated ? r.SeparatedEmployeeCount : (isDeact ? r.InactiveEmployeeCount : r.TotalEmployeeCount));
+    const statusLabel = isAct ? "active" : (isSeparated ? "separated (chhod ke gaye)" : (isDeact ? "inactive" : "total"));
+    let locLabel = "";
+    if (entities.branches && entities.branches.length > 0) locLabel = ` Branches (${entities.branches.join(', ')}) me`;
+    else if (entities.excludeBranch) locLabel = ` Branch ${entities.excludeBranch} ko chhodkar`;
+    else if (entities.branch) locLabel = ` Branch ${entities.branch} me`;
+    const desigLabel = entities.designation ? ` ${entities.designation}` : "";
+    const periodLabel = entities.month ? ` (${entities.month}/${entities.year || new Date().getFullYear()})` : "";
+    return {
+      answer: `AutoVyn ERP ke record ke anusar,${locLabel} total **${count} ${statusLabel}${desigLabel} employees** hain${periodLabel}.`,
+      summary: `${count} ${statusLabel} employees${locLabel}`.trim()
+    };
+  }
+
+  const firstRow = rows[0] || {};
+  const isSalaryFileResult = Boolean(
+    firstRow.pf_employee !== undefined ||
+    firstRow.PF_Employee !== undefined ||
+    firstRow.pf_employer !== undefined ||
+    firstRow.PF_Employer !== undefined ||
+    firstRow.pf_emplpension !== undefined ||
+    firstRow.PF_EmplPension !== undefined ||
+    firstRow.SalMnth !== undefined ||
+    firstRow.salyear !== undefined ||
+    firstRow.SalaryMonth !== undefined ||
+    firstRow.SalaryYear !== undefined ||
+    firstRow.NetSalary !== undefined ||
+    firstRow.Gross_Earn !== undefined ||
+    firstRow.Final_Payment !== undefined ||
+    firstRow.GrossEarnings !== undefined ||
+    firstRow.Basic_Earn !== undefined ||
+    firstRow.BasicEarnings !== undefined ||
+    firstRow.Deducation !== undefined ||
+    firstRow.TotalDeductions !== undefined ||
+    intent === "SALARY_PF_DEDUCTION" ||
+    intent === "PF_DEDUCTION_COUNT" ||
+    intent === "EMPLOYEE_SALARY_HISTORY" ||
+    intent === "SALARY_REPORT"
+  );
+
+  // Dedicated Formatter: PF Deduction Count / Aggregation
+  const isPFMsg = /\b(pf|provident|pension|uan|eps)\b/i.test(message || "");
+  if (
+    intent === "PF_DEDUCTION_COUNT" ||
+    firstRow.TotalEmployeesWithPF !== undefined ||
+    (rows.length === 1 && (intent === "PF_DEDUCTION_COUNT" || isPFMsg) && (firstRow.TotalCount !== undefined || firstRow.RecordCount !== undefined || firstRow.TotalEmployeesWithPF !== undefined))
+  ) {
+    const r = rows[0] || {};
+    const count = Number(
+      r.TotalEmployeesWithPF !== undefined ? r.TotalEmployeesWithPF :
+      (r.TotalCount !== undefined ? r.TotalCount :
+      (r.RecordCount !== undefined ? r.RecordCount :
+      (rows.length > 1 ? rows.length : (typeof Object.values(r)[0] === "number" && !r.EmployeeCode && !r.Emp_Code && !r.EMPCODE ? Object.values(r)[0] : rows.length))))
+    ) || rows.length;
+
+    const mName = getMonthNameHelper(r);
+    const yVal = r.SalaryYear || r.salyear || entities.year || new Date().getFullYear();
+    const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
+    
+    // If rows contain individual records, calculate sum from rows
+    const totPF = Number(
+      r.TotalEmployeePF !== undefined ? r.TotalEmployeePF :
+      (r.TotalPF !== undefined ? r.TotalPF :
+      rows.reduce((sum, row) => sum + Number(row.PF_Employee !== undefined ? row.PF_Employee : (row.pf_employee || 0)), 0))
+    );
+    const totEmplr = Number(
+      r.TotalEmployerPF !== undefined ? r.TotalEmployerPF :
+      rows.reduce((sum, row) => sum + Number(row.pf_employer !== undefined ? row.pf_employer : (row.PF_Employer || 0)), 0)
+    );
+    const totPension = Number(
+      r.TotalPensionEPS !== undefined ? r.TotalPensionEPS :
+      rows.reduce((sum, row) => sum + Number(row.pf_emplpension !== undefined ? row.pf_emplpension : (row.PF_Pension || 0)), 0)
+    );
+    const avgPF = Number(r.AvgPFDeduction !== undefined ? r.AvgPFDeduction : (count > 0 ? totPF / count : 0));
+
+    let ans = `AutoVyn ERP ke record ke anusar, **${mName} ${yVal}** me${branchStr} total **${count.toLocaleString("en-IN")} employee(s)** ka PF deduction hua hai.`;
+
+    if (totPF > 0 || totEmplr > 0 || totPension > 0) {
+      ans += `\n\n**PF Deduction & Contribution Summary (${mName} ${yVal}):**\n` +
+        `• **Total Employees with PF Deduction:** **${count.toLocaleString("en-IN")}**\n` +
+        (totPF > 0 ? `• **Total Employee PF Deduction (Salary se kata):** **₹${totPF.toLocaleString("en-IN")}**\n` : "") +
+        (totEmplr > 0 ? `• **Total Employer PF Contribution:** ₹${totEmplr.toLocaleString("en-IN")}\n` : "") +
+        (totPension > 0 ? `• **Total Pension Contribution (EPS):** ₹${totPension.toLocaleString("en-IN")}\n` : "") +
+        (avgPF > 0 ? `• **Average Employee PF Deduction:** ₹${Math.round(avgPF).toLocaleString("en-IN")}\n` : "");
+    }
+
+    // If individual employee records are available, also display a clean table!
+    if (rows.length > 1 && (firstRow.EmployeeCode || firstRow.Emp_Code || firstRow.EMPCODE)) {
+      const hasPFNum = rows.some(row => Boolean(row.PFNUMBER || row.PF_Number || row.pfnumber));
+      ans += `\n\n**Employees List (Top ${Math.min(rows.length, 50)}):**\n\n`;
+      if (hasPFNum) {
+        ans += `| Emp Code | Employee Name | PF Number | Month/Year | Employee PF (Deduction) | Employer PF | Pension (EPS) | Net Pay |\n`;
+        ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+      } else {
+        ans += `| Emp Code | Employee Name | Month/Year | Employee PF (Deduction) | Employer PF | Pension (EPS) | Total Deductions | Net Pay |\n`;
+        ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+      }
+
+      rows.slice(0, 50).forEach(row => {
+        const empCode = row.EmployeeCode || row.Emp_Code || row.EMPCODE || "-";
+        const empName = (row.EmployeeName || (row.EMPFIRSTNAME ? `${row.EMPFIRSTNAME} ${row.EMPLASTNAME || ""}`.trim() : "") || "-").trim();
+        const rowMName = getMonthNameHelper(row);
+        const rowYVal = row.SalaryYear || row.salyear || entities.year || "-";
+        const pfNum = row.PFNUMBER || row.PF_Number || row.pfnumber || "-";
+        const pfEmp = Number(row.PF_Employee !== undefined ? row.PF_Employee : (row.pf_employee !== undefined ? row.pf_employee : (row.EmployeePF || 0)));
+        const pfEmplr = Number(row.pf_employer !== undefined ? row.pf_employer : (row.PF_Employer || 0));
+        const pfPension = Number(row.pf_emplpension !== undefined ? row.pf_emplpension : (row.PF_Pension || 0));
+        const totDed = Number(row.TotalDeductions !== undefined ? row.TotalDeductions : (row.Deducation !== undefined ? row.Deducation : pfEmp));
+        const netPay = Number(row.NetSalary !== undefined ? row.NetSalary : (row.Final_Payment || 0));
+
+        if (hasPFNum) {
+          ans += `| **${empCode}** | ${empName} | ${pfNum} | ${rowMName} ${rowYVal} | **₹${pfEmp.toLocaleString("en-IN")}** | ₹${pfEmplr.toLocaleString("en-IN")} | ₹${pfPension.toLocaleString("en-IN")} | ₹${netPay.toLocaleString("en-IN")} |\n`;
+        } else {
+          ans += `| **${empCode}** | ${empName} | ${rowMName} ${rowYVal} | **₹${pfEmp.toLocaleString("en-IN")}** | ₹${pfEmplr.toLocaleString("en-IN")} | ₹${pfPension.toLocaleString("en-IN")} | ₹${totDed.toLocaleString("en-IN")} | ₹${netPay.toLocaleString("en-IN")} |\n`;
+        }
+      });
+
+      if (rows.length > 50) ans += `\n*(Showing top 50 of ${rows.length} records)*`;
+    }
+
+    return {
+      answer: ans.trim(),
+      summary: `${count} employees had PF deduction in ${mName} ${yVal}${branchStr}`.trim()
+    };
+  }
+
+  // Dedicated Formatter: PF Salary Deduction (SALARYFILE.pf_employee, pf_employer, pf_emplpension)
+  const isExplicitPFQuery = intent === "SALARY_PF_DEDUCTION" || intent === "PF_DEDUCTION_COUNT" || /\b(pf|provident|pension|uan|eps)\b/i.test(message || "");
+  const isRankingOrHighestSalary = (intent === "HIGHEST_SALARY_RANKING" && !isExplicitPFQuery) || (/\b(highest|maximum|sabse\s*jyada|sabse\s*badi|max|top\s*\d*)\b/i.test(message || "") && !isExplicitPFQuery);
+
+  if (
+    isExplicitPFQuery &&
+    !isRankingOrHighestSalary &&
+    rows.length > 0 &&
+    (firstRow.pf_employee !== undefined || firstRow.PF_Employee !== undefined || intent === "SALARY_PF_DEDUCTION")
+  ) {
+    if (rows.length === 1 || (entities.employeeCode || entities.searchToken || (rows.length > 0 && rows.every(r => (r.Emp_Code || r.EMPCODE || r.EmployeeCode) === (rows[0].Emp_Code || rows[0].EMPCODE || rows[0].EmployeeCode))))) {
+      const r = rows[0];
+      const empCode = r.EmployeeCode || r.Emp_Code || r.EMPCODE || "-";
+      const empName = (r.EmployeeName || (r.EMPFIRSTNAME ? `${r.EMPFIRSTNAME} ${r.EMPLASTNAME || ""}`.trim() : "") || "-").trim();
+      const mName = getMonthNameHelper(r);
+      const yVal = r.SalaryYear || r.salyear || entities.year || new Date().getFullYear();
+      const pfNum = r.PFNUMBER || r.PF_Number || r.pfnumber || "-";
+      const pfEmp = Number(r.PF_Employee !== undefined ? r.PF_Employee : (r.pf_employee !== undefined ? r.pf_employee : (r.EmployeePF || 0)));
+      const pfEmplr = Number(r.pf_employer !== undefined ? r.pf_employer : (r.PF_Employer || 0));
+      const pfPension = Number(r.pf_emplpension !== undefined ? r.pf_emplpension : (r.PF_Pension || 0));
+      const totPF = pfEmp + pfEmplr + pfPension;
+      const totDed = Number(r.TotalDeductions !== undefined ? r.TotalDeductions : (r.Deducation !== undefined ? r.Deducation : pfEmp));
+      const netPay = Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0));
+      const grossEarn = Number(r.GrossEarnings !== undefined ? r.GrossEarnings : (r.Gross_Earn || 0));
+      const basicEarn = Number(r.Basic_Earn !== undefined ? r.Basic_Earn : (r.BasicEarnings || 0));
+
+      let ans = `AutoVyn ERP record ke anusar, **${empName} (${empCode})** ka **${mName} ${yVal}** me **PF Deduction (Provident Fund)**:\n\n` +
+        (pfNum !== "-" ? `• **PF Number:** \`${pfNum}\`\n` : "") +
+        `• **Employee PF Deduction (Salary se kata):** **₹${pfEmp.toLocaleString("en-IN")}**\n` +
+        `• **Employer PF Contribution:** ₹${pfEmplr.toLocaleString("en-IN")}\n` +
+        `• **Pension Contribution (EPS):** ₹${pfPension.toLocaleString("en-IN")}\n` +
+        `• **Total PF Deposit:** ₹${totPF.toLocaleString("en-IN")}\n` +
+        (basicEarn > 0 ? `• **Basic Pay:** ₹${basicEarn.toLocaleString("en-IN")}\n` : "") +
+        (grossEarn > 0 ? `• **Gross Earnings:** ₹${grossEarn.toLocaleString("en-IN")}\n` : "") +
+        `• **Total Salary Deductions:** ₹${totDed.toLocaleString("en-IN")}\n` +
+        (netPay > 0 ? `• **Net In-Hand Salary:** ₹${netPay.toLocaleString("en-IN")}\n` : "");
+
+      return {
+        answer: ans.trim(),
+        summary: `${empName} (${empCode}) ${mName} ${yVal} PF deduction: ₹${pfEmp.toLocaleString("en-IN")}`
+      };
+    }
+
+    // Multiple rows / employees list
+    const hasPFNum = rows.some(r => Boolean(r.PFNUMBER || r.PF_Number || r.pfnumber));
+    let ans = `**AutoVyn ERP - PF Deduction & Contribution Statement:**\n\n`;
+    if (hasPFNum) {
+      ans += `| Emp Code | Employee Name | PF Number | Month/Year | Employee PF (Deduction) | Employer PF | Pension (EPS) | Net Pay |\n`;
+      ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    } else {
+      ans += `| Emp Code | Employee Name | Month/Year | Employee PF (Deduction) | Employer PF | Pension (EPS) | Total Deductions | Net Pay |\n`;
+      ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    }
+
+    rows.slice(0, 50).forEach(r => {
+      const empCode = r.EmployeeCode || r.Emp_Code || r.EMPCODE || "-";
+      const empName = (r.EmployeeName || (r.EMPFIRSTNAME ? `${r.EMPFIRSTNAME} ${r.EMPLASTNAME || ""}`.trim() : "") || "-").trim();
+      const mName = getMonthNameHelper(r);
+      const yVal = r.SalaryYear || r.salyear || entities.year || "-";
+      const pfNum = r.PFNUMBER || r.PF_Number || r.pfnumber || "-";
+      const pfEmp = Number(r.PF_Employee !== undefined ? r.PF_Employee : (r.pf_employee !== undefined ? r.pf_employee : (r.EmployeePF || 0)));
+      const pfEmplr = Number(r.pf_employer !== undefined ? r.pf_employer : (r.PF_Employer || 0));
+      const pfPension = Number(r.pf_emplpension !== undefined ? r.pf_emplpension : (r.PF_Pension || 0));
+      const totDed = Number(r.TotalDeductions !== undefined ? r.TotalDeductions : (r.Deducation !== undefined ? r.Deducation : pfEmp));
+      const netPay = Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0));
+
+      if (hasPFNum) {
+        ans += `| **${empCode}** | ${empName} | ${pfNum} | ${mName} ${yVal} | **₹${pfEmp.toLocaleString("en-IN")}** | ₹${pfEmplr.toLocaleString("en-IN")} | ₹${pfPension.toLocaleString("en-IN")} | ₹${netPay.toLocaleString("en-IN")} |\n`;
+      } else {
+        ans += `| **${empCode}** | ${empName} | ${mName} ${yVal} | **₹${pfEmp.toLocaleString("en-IN")}** | ₹${pfEmplr.toLocaleString("en-IN")} | ₹${pfPension.toLocaleString("en-IN")} | ₹${totDed.toLocaleString("en-IN")} | ₹${netPay.toLocaleString("en-IN")} |\n`;
+      }
+    });
+
+    if (rows.length > 50) ans += `\n*(Showing top 50 of ${rows.length} records)*`;
+
+    return {
+      answer: ans.trim(),
+      summary: `PF deductions for ${rows.length} records`
+    };
+  }
+
+  // Universal PF Count Formatter: handles TotalPFCount, PF_Count, PFCount, count, etc.
+  const pfCountKey = !isSalaryFileResult ? Object.keys(firstRow).find(k => /^(TotalPFCount|PF_Count|PFCount|Total_PF_Count|pf_cnt)$/i.test(k) || ((intent === "PF_COUNT" || /COUNT/i.test(sql || "")) && /^(count|cnt|Total)$/i.test(k))) : undefined;
+  const isPFCountQuery = !isSalaryFileResult && rows.length === 1 && (
+    pfCountKey !== undefined ||
+    /^\s*SELECT\s+(TOP\s+\d+\s+)?COUNT/i.test(sql || "") ||
+    intent === "PF_COUNT"
+  ) && (
+      intent === "PF_COUNT" ||
+      intent === "PF_EMPLOYEE_LIST" ||
+      /pf|provident/i.test(message || "") ||
+      /pfnumber|pf_count|totalpfcount/i.test(sql || "")
+    );
+
+  if (isPFCountQuery) {
+    const rawVal = pfCountKey ? firstRow[pfCountKey] : Object.values(firstRow)[0];
+    const count = Number(rawVal) || 0;
     const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
     return {
       answer: `AutoVyn ERP ke record ke anusar,${branchStr} total **${Number(count).toLocaleString()} employee(s)** ke pass valid PF Number registered hai.`,
@@ -3317,6 +5935,18 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "PF_EMPLOYEE_LIST" && rows.length > 0) {
+    // Guard: If query returned an aggregation count (e.g. from custom trained SELECT COUNT(*)), don't format as an empty table
+    if (rows.length === 1 && !rows[0].EmployeeCode && !rows[0].EMPCODE && !rows[0].EmployeeName && !rows[0].EMPFIRSTNAME) {
+      const val = Object.values(rows[0])[0];
+      if (typeof val === "number" || /^\d+$/.test(String(val).trim())) {
+        const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
+        return {
+          answer: `AutoVyn ERP ke record ke anusar,${branchStr} total **${Number(val).toLocaleString()} employee(s)** ke pass valid PF Number registered hai.`,
+          summary: `${val} employees with PF registered${branchStr}`.trim()
+        };
+      }
+    }
+
     const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
     let ans = `AutoVyn ERP ke record ke anusar,${branchStr} **${rows.length} employee(s)** ke pass PF Number registered mila hai:\n\n`;
     ans += `| Emp Code | Employee Name | PF Number | UAN No | ESI No | Location | Designation |\n`;
@@ -3457,7 +6087,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const verified = row.TotalVerifiedAccounts || 0;
     const invalid = row.TotalInvalidAccounts || 0;
     const totalVer = row.TotalPennyDropVerifications || (verified + invalid);
-    
+
     return {
       answer: `AutoVyn ERP Bank Account Verification (Penny-Drop) Status:\n\n` +
         `• **Total Employees With Bank Accounts in Master:** ${total}\n` +
@@ -3639,7 +6269,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     if (row.RawResponse) {
       try {
         parsedRaw = typeof row.RawResponse === "object" ? row.RawResponse : JSON.parse(row.RawResponse);
-      } catch (_) {}
+      } catch (_) { }
     }
 
     const nameAtBank = row.NameAtBankDirect || parsedRaw.result?.name_at_bank || parsedRaw.data?.name_at_bank || null;
@@ -3647,7 +6277,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const branchName = parsedRaw.result?.branch || parsedRaw.data?.branch || null;
     const ifsc = row.IFSC || parsedRaw.result?.ifsc_details?.ifsc || parsedRaw.data?.ifsc || null;
     const utr = parsedRaw.result?.utr || parsedRaw.data?.utr || null;
-    
+
     let status = "PENDING / UNVERIFIED";
     if (parsedRaw.result?.account_status === "VALID" || parsedRaw.data?.account_exists === true || row.AccountExistsFlag === 1) {
       status = "✅ VALID / VERIFIED";
@@ -3699,69 +6329,152 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "EMPLOYEE_BY_AADHAAR_NO" && rows.length > 0) {
-    const row = rows[0];
-    const cardVer = String(row.AadhaarCardVerified).toLowerCase() === "true" || row.AadhaarCardVerified === 1 || row.AadhaarCardVerified === "1" ? "✅ Verified" : "❌ Not Verified / Pending";
-    const linkedVer = String(row.AadhaarLinkedVerified).toLowerCase() === "true" || row.AadhaarLinkedVerified === 1 || row.AadhaarLinkedVerified === "1" ? "✅ Linked" : "Pending";
-    const panLinkVer = String(row.AadhaarLinkedWithPanVerified).toLowerCase() === "true" || row.AadhaarLinkedWithPanVerified === 1 || row.AadhaarLinkedWithPanVerified === "1" ? "✅ Linked" : "Pending";
+    const aadharVal = entities.aadharNumber || rows[0].AadharNo || "";
+    const firstRow = rows[0];
+    const firstKey = Object.keys(firstRow)[0] || "";
+    const isCountResult = rows.length === 1 && (
+      typeof firstRow[firstKey] === "number" || !isNaN(Number(firstRow[firstKey]))
+    ) && !firstRow.EmployeeCode && !firstRow.EmployeeName && !firstRow.EMPCODE && !firstRow.EMPFIRSTNAME;
 
-    let ans = `Aadhaar Number **${row.AadharNo || entities.aadharNumber || ""}** ke employee details:\n\n` +
-      `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
-      `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
-      `• **Designation:** ${row.Designation || "-"}\n` +
-      `• **Location / Branch:** ${row.Location || "-"}\n` +
-      `• **Mobile No:** ${row.MobileNo || "-"}\n` +
-      `• **PAN No:** ${row.PAN || "-"}\n` +
-      `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
-      `• **Bank Name:** ${row.BankName || "-"}\n` +
-      `• **Aadhaar Card Verified:** ${cardVer}\n` +
-      `• **Aadhaar Linked Status:** ${linkedVer}\n` +
-      `• **Aadhaar Linked with PAN:** ${panLinkVer}\n`;
-    if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+    if (isCountResult) {
+      const countVal = firstRow[firstKey] || Object.values(firstRow)[0] || 0;
+      return {
+        answer: `AutoVyn ERP ke records ke anusar, Aadhaar Number **${aadharVal}** total **${countVal} employee(s)** ke pass registered mila hai.`,
+        summary: `Aadhaar ${aadharVal} is registered with ${countVal} employees`
+      };
+    }
 
-    return {
-      answer: ans.trim(),
-      summary: `Aadhaar ${row.AadharNo} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
-    };
+    if (rows.length === 1) {
+      const row = rows[0];
+      const cardVer = String(row.AadhaarCardVerified).toLowerCase() === "true" || row.AadhaarCardVerified === 1 || row.AadhaarCardVerified === "1" ? "✅ Verified" : "❌ Not Verified / Pending";
+      const linkedVer = String(row.AadhaarLinkedVerified).toLowerCase() === "true" || row.AadhaarLinkedVerified === 1 || row.AadhaarLinkedVerified === "1" ? "✅ Linked" : "Pending";
+      const panLinkVer = String(row.AadhaarLinkedWithPanVerified).toLowerCase() === "true" || row.AadhaarLinkedWithPanVerified === 1 || row.AadhaarLinkedWithPanVerified === "1" ? "✅ Linked" : "Pending";
+
+      let ans = `Aadhaar Number **${row.AadharNo || aadharVal}** ke employee details:\n\n` +
+        `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+        `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+        `• **Designation:** ${row.Designation || "-"}\n` +
+        `• **Location / Branch:** ${row.Location || "-"}\n` +
+        `• **Mobile No:** ${row.MobileNo || "-"}\n` +
+        `• **PAN No:** ${row.PAN || "-"}\n` +
+        `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
+        `• **Bank Name:** ${row.BankName || "-"}\n` +
+        `• **Aadhaar Card Verified:** ${cardVer}\n` +
+        `• **Aadhaar Linked Status:** ${linkedVer}\n` +
+        `• **Aadhaar Linked with PAN:** ${panLinkVer}\n`;
+      if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+
+      return {
+        answer: ans.trim(),
+        summary: `Aadhaar ${row.AadharNo || aadharVal} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
+      };
+    } else {
+      let ans = `AutoVyn ERP me Aadhaar Number **${aadharVal}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      ans += `| # | Emp Code | Employee Name | Location / Branch | Designation | Mobile | PAN | Bank Account No |\n`;
+      ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+      rows.forEach((r, idx) => {
+        ans += `| ${idx + 1} | **${r.EmployeeCode || "-"}** | **${r.EmployeeName || "-"}** | ${r.Location || "-"} | ${r.Designation || "-"} | ${r.MobileNo || "-"} | ${r.PAN || "-"} | ${r.BankAccountNo || "-"} |\n`;
+      });
+      return {
+        answer: ans.trim(),
+        summary: `Aadhaar ${aadharVal} is registered with ${rows.length} employees`
+      };
+    }
   }
 
   if (intent === "EMPLOYEE_BY_PAN_NO" && rows.length > 0) {
-    const row = rows[0];
-    const panVer = String(row.PanCardVerified).toLowerCase() === "true" || row.PanCardVerified === 1 || row.PanCardVerified === "1" ? "✅ Verified" : "❌ Not Verified / Pending";
-    const panMatch = String(row.PanNameMatchVerified).toLowerCase() === "true" || row.PanNameMatchVerified === 1 || row.PanNameMatchVerified === "1" ? "✅ Matched" : "Pending";
+    const panVal = entities.panNumber || rows[0].PAN || "";
+    const firstRow = rows[0];
+    const firstKey = Object.keys(firstRow)[0] || "";
+    const isCountResult = rows.length === 1 && (
+      typeof firstRow[firstKey] === "number" || !isNaN(Number(firstRow[firstKey]))
+    ) && !firstRow.EmployeeCode && !firstRow.EmployeeName && !firstRow.EMPCODE && !firstRow.EMPFIRSTNAME;
 
-    let ans = `PAN Number **${row.PAN || entities.panNumber || ""}** ke employee details:\n\n` +
-      `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
-      `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
-      `• **Designation:** ${row.Designation || "-"}\n` +
-      `• **Location / Branch:** ${row.Location || "-"}\n` +
-      `• **Mobile No:** ${row.MobileNo || "-"}\n` +
-      `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
-      `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
-      `• **PAN Card Verified:** ${panVer}\n` +
-      `• **PAN Name Matched:** ${panMatch}\n`;
-    if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+    if (isCountResult) {
+      const countVal = firstRow[firstKey] || Object.values(firstRow)[0] || 0;
+      return {
+        answer: `AutoVyn ERP ke records ke anusar, PAN Number **${panVal}** total **${countVal} employee(s)** ke pass registered mila hai.`,
+        summary: `PAN ${panVal} is registered with ${countVal} employees`
+      };
+    }
 
-    return {
-      answer: ans.trim(),
-      summary: `PAN ${row.PAN} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
-    };
+    if (rows.length === 1) {
+      const row = rows[0];
+      const panVer = String(row.PanCardVerified).toLowerCase() === "true" || row.PanCardVerified === 1 || row.PanCardVerified === "1" ? "✅ Verified" : "❌ Not Verified / Pending";
+      const panMatch = String(row.PanNameMatchVerified).toLowerCase() === "true" || row.PanNameMatchVerified === 1 || row.PanNameMatchVerified === "1" ? "✅ Matched" : "Pending";
+
+      let ans = `PAN Number **${row.PAN || panVal}** ke employee details:\n\n` +
+        `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+        `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+        `• **Designation:** ${row.Designation || "-"}\n` +
+        `• **Location / Branch:** ${row.Location || "-"}\n` +
+        `• **Mobile No:** ${row.MobileNo || "-"}\n` +
+        `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
+        `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
+        `• **PAN Card Verified:** ${panVer}\n` +
+        `• **PAN Name Matched:** ${panMatch}\n`;
+      if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+
+      return {
+        answer: ans.trim(),
+        summary: `PAN ${row.PAN || panVal} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
+      };
+    } else {
+      let ans = `AutoVyn ERP me PAN Number **${panVal}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      ans += `| # | Emp Code | Employee Name | Location / Branch | Designation | Mobile | Bank Account No |\n`;
+      ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+      rows.forEach((r, idx) => {
+        ans += `| ${idx + 1} | **${r.EmployeeCode || "-"}** | **${r.EmployeeName || "-"}** | ${r.Location || "-"} | ${r.Designation || "-"} | ${r.MobileNo || "-"} | ${r.BankAccountNo || "-"} |\n`;
+      });
+      return {
+        answer: ans.trim(),
+        summary: `PAN ${panVal} is registered with ${rows.length} employees`
+      };
+    }
   }
 
   if (intent === "EMPLOYEE_BY_MOBILE_NO" && rows.length > 0) {
-    const row = rows[0];
-    let ans = `Mobile Number **${row.MobileNo || entities.mobileNumber || ""}** ke employee details:\n\n` +
-      `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
-      `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
-      `• **Designation:** ${row.Designation || "-"}\n` +
-      `• **Location / Branch:** ${row.Location || "-"}\n` +
-      `• **PAN No:** ${row.PAN || "-"}\n` +
-      `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
-      `• **Bank Account No:** ${row.BankAccountNo || "-"}\n`;
+    const mob = entities.mobileNumber || rows[0].MobileNo || "";
+    const firstRow = rows[0];
+    const firstKey = Object.keys(firstRow)[0] || "";
+    const isCountResult = rows.length === 1 && (
+      typeof firstRow[firstKey] === "number" || !isNaN(Number(firstRow[firstKey]))
+    ) && !firstRow.EmployeeCode && !firstRow.EmployeeName && !firstRow.EMPCODE && !firstRow.EMPFIRSTNAME;
 
-    return {
-      answer: ans.trim(),
-      summary: `Mobile ${row.MobileNo} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
-    };
+    if (isCountResult) {
+      const countVal = firstRow[firstKey] || Object.values(firstRow)[0] || 0;
+      return {
+        answer: `AutoVyn ERP ke records ke anusar, Mobile Number **${mob}** total **${countVal} employee(s)** ke pass registered mila hai.`,
+        summary: `Mobile ${mob} is registered with ${countVal} employees`
+      };
+    }
+
+    if (rows.length === 1) {
+      const row = rows[0];
+      let ans = `Mobile Number **${mob}** ke employee details:\n\n` +
+        `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+        `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+        `• **Designation:** ${row.Designation || "-"}\n` +
+        `• **Location / Branch:** ${row.Location || "-"}\n` +
+        `• **PAN No:** ${row.PAN || "-"}\n` +
+        `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
+        `• **Bank Account No:** ${row.BankAccountNo || "-"}\n`;
+      return {
+        answer: ans.trim(),
+        summary: `Mobile ${mob} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
+      };
+    } else {
+      let ans = `AutoVyn ERP me Mobile Number **${mob}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      ans += `| # | Emp Code | Employee Name | Location / Branch | Designation | PAN | Bank Account No |\n`;
+      ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+      rows.forEach((r, idx) => {
+        ans += `| ${idx + 1} | **${r.EmployeeCode || "-"}** | **${r.EmployeeName || "-"}** | ${r.Location || "-"} | ${r.Designation || "-"} | ${r.PAN || "-"} | ${r.BankAccountNo || "-"} |\n`;
+      });
+      return {
+        answer: ans.trim(),
+        summary: `Mobile ${mob} is registered with ${rows.length} employees`
+      };
+    }
   }
 
   if (intent === "DUPLICATE_AADHAAR_NUMBERS" && rows.length > 0) {
@@ -3803,13 +6516,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   // Birthday Direct Formatters
-  if ((intent === "BIRTHDAY_LOOKUP" || intent === "DOB_LOOKUP" || (rows.length === 1 && rows[0].DateOfBirth !== undefined)) && rows.length > 0) {
+  const isBirthdayQuery = intent === "BIRTHDAY_LOOKUP" || intent === "DOB_LOOKUP" || /\b(birthday|bday|b'day|janamdin|dob|date of birth)\b/i.test(message || entities.rawMessage || "");
+  if (isBirthdayQuery && rows.length > 0 && (rows[0].DateOfBirth !== undefined || rows[0].DOB !== undefined)) {
     const r = rows[0];
     const empName = r.EmployeeName || "Employee";
     const empCode = r.EmployeeCode || "";
     const dob = r.DateOfBirth || r.DOB || "-";
     const age = r.Age ? ` (${r.Age} years old)` : "";
-    
+
     let ans = `🎂 **${empName} (${empCode})** ka Date of Birth / Birthday:\n\n` +
       `• **Birthday / DOB:** **${dob}**${age}\n` +
       `• **Designation:** ${r.Designation || "-"}\n` +
@@ -3849,6 +6563,185 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     };
   }
 
+  // Work Anniversary Formatter
+  if (intent === "WORK_ANNIVERSARY" && rows.length > 0) {
+    const isToday = entities.isToday || (/\b(today|aaj)\b/i.test(entities.rawMessage || message || "") && !entities.day);
+    const monthsNameArr = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const monthName = entities.month ? (monthsNameArr[entities.month] || `Month ${entities.month}`) : "";
+    const yearStr = entities.year ? ` ${entities.year}` : "";
+
+    let dateLabel = "";
+    if (isToday) {
+      dateLabel = "Aaj";
+    } else if (entities.day && entities.month) {
+      dateLabel = `${entities.day} ${monthName}${yearStr}`;
+    } else if (entities.month) {
+      dateLabel = `${monthName}${yearStr} me`;
+    } else {
+      dateLabel = "Iss period me";
+    }
+
+    // 1. Guard for COUNT query (e.g. SELECT COUNT(*) AS TotalAnniversaryCount)
+    const firstRow = rows[0] || {};
+    const countKey = Object.keys(firstRow).find(k => /^(TotalAnniversaryCount|AnniversaryCount|TotalCount|count|cnt|Total|TotalEmployees)$/i.test(k));
+    const isCountQuery = rows.length === 1 && (
+      countKey !== undefined ||
+      /^\s*SELECT\s+(TOP\s+\d+\s+)?COUNT/i.test(sql || "") ||
+      (!firstRow.EmployeeCode && !firstRow.EMPCODE && !firstRow.EmployeeName && !firstRow.EMPFIRSTNAME && !firstRow.AnniversaryDay && typeof Object.values(firstRow)[0] === "number")
+    );
+
+    if (isCountQuery) {
+      const rawCount = countKey ? firstRow[countKey] : Object.values(firstRow)[0];
+      const countVal = Number(rawCount) || 0;
+      return {
+        answer: `🎉 AutoVyn ERP ke records ke anusar, **${dateLabel} total ${countVal.toLocaleString()} employee(s)** ki Work Anniversary hai.`,
+        summary: `${dateLabel} work anniversary: ${countVal} employee(s)`
+      };
+    }
+
+    // 2. Guard for Day-Grouped query (e.g. GROUP BY DAY([E].[CURRENTJOINDATE]))
+    const isDayGroupedQuery = rows.length > 0 && rows[0].AnniversaryDay !== undefined && (rows[0].TotalEmployees !== undefined || rows[0].EmployeeCount !== undefined || rows[0].TotalEmployeesOnThisDay !== undefined || rows[0].Count !== undefined || rows[0].count !== undefined) && !rows[0].EmployeeName;
+    if (isDayGroupedQuery) {
+      let totalEmps = 0;
+      let ans = `🎉 **${dateLabel} din-war (day-wise) Work Anniversaries:**\n\n`;
+      ans += `| # | Anniversary Day | Total Employees |\n`;
+      ans += `| :- | :--- | :--- |\n`;
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const day = r.AnniversaryDay || "-";
+        const c = Number(r.TotalEmployees || r.EmployeeCount || r.TotalEmployeesOnThisDay || r.Count || r.count || 0);
+        totalEmps += c;
+        ans += `| **${i + 1}** | **${day} ${monthName}** | **${c} employee(s)** |\n`;
+      }
+      ans += `\n**Total:** ${totalEmps.toLocaleString()} employee(s) ki work anniversary hai ${dateLabel}.`;
+      return {
+        answer: ans.trim(),
+        summary: `${dateLabel} work anniversary: ${totalEmps} employee(s) across ${rows.length} days`
+      };
+    }
+
+    const uniqueDays = [...new Set(rows.map(r => r.AnniversaryDay || (r.JoiningDate ? parseInt(String(r.JoiningDate).slice(0, 2), 10) : null)).filter(Boolean))].sort((a, b) => a - b);
+    const daysSummary = (!entities.day && uniqueDays.length > 0)
+      ? `\n📅 **Anniversary Days${monthName ? ` (${monthName}${yearStr})` : ""}:** ${uniqueDays.join(', ')}${monthName ? ` ${monthName}` : ""}\n\n`
+      : "\n\n";
+
+    let ans = `🎉 **${dateLabel} total ${rows.length} employee(s) ki Work Anniversary hai:**${daysSummary}`;
+    ans += `| # | Anniversary Day | Emp Code | Employee Name | Joining Date | Years Of Service${yearStr ? ` (in${yearStr})` : ""} | Location | Designation |\n`;
+    ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const code = r.EmployeeCode || "-";
+      const name = r.EmployeeName || "-";
+      const dayVal = r.AnniversaryDay !== undefined ? `${r.AnniversaryDay}${monthName ? ` ${monthName.slice(0, 3)}` : ""}` : "-";
+      const jDate = r.JoiningDate ? (typeof r.JoiningDate === "string" ? r.JoiningDate.slice(0, 10) : new Date(r.JoiningDate).toLocaleDateString('en-GB')) : "-";
+      const yos = r.YearsOfService !== undefined ? `${r.YearsOfService} Year(s)` : "-";
+      const loc = r.Location || "-";
+      const desg = r.Designation || "-";
+      ans += `| **${i + 1}** | **${dayVal}** | ${code} | **${name}** | ${jDate} | ${yos} | ${loc} | ${desg} |\n`;
+    }
+    return {
+      answer: ans.trim(),
+      summary: `${dateLabel} work anniversary: ${rows.length} employee(s)`
+    };
+  }
+
+  // Marriage Anniversary Formatter
+  if (intent === "MARRIAGE_ANNIVERSARY" && rows.length > 0) {
+    const isToday = entities.isToday || (/\b(today|aaj)\b/i.test(entities.rawMessage || message || "") && !entities.day);
+    const monthsNameArr = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const monthName = entities.month ? (monthsNameArr[entities.month] || `Month ${entities.month}`) : "";
+    const yearStr = entities.year ? ` ${entities.year}` : "";
+
+    let dateLabel = "";
+    if (isToday) {
+      dateLabel = "Aaj";
+    } else if (entities.day && entities.month) {
+      dateLabel = `${entities.day} ${monthName}${yearStr}`;
+    } else if (entities.month) {
+      dateLabel = `${monthName}${yearStr} me`;
+    } else {
+      dateLabel = "Iss period me";
+    }
+
+    // 1. Guard for COUNT query
+    const firstRow = rows[0] || {};
+    const countKey = Object.keys(firstRow).find(k => /^(TotalAnniversaryCount|AnniversaryCount|TotalCount|count|cnt|Total|TotalEmployees|TotalMarriageCount)$/i.test(k));
+    const isCountQuery = rows.length === 1 && (
+      countKey !== undefined ||
+      /^\s*SELECT\s+(TOP\s+\d+\s+)?COUNT/i.test(sql || "") ||
+      (!firstRow.EmployeeCode && !firstRow.EMPCODE && !firstRow.EmployeeName && !firstRow.EMPFIRSTNAME && !firstRow.AnniversaryDay && typeof Object.values(firstRow)[0] === "number")
+    );
+
+    if (isCountQuery) {
+      const rawCount = countKey ? firstRow[countKey] : Object.values(firstRow)[0];
+      const countVal = Number(rawCount) || 0;
+      return {
+        answer: `💍 AutoVyn ERP ke records ke anusar, **${dateLabel} total ${countVal.toLocaleString()} employee(s)** ki Marriage Anniversary hai.`,
+        summary: `${dateLabel} marriage anniversary: ${countVal} employee(s)`
+      };
+    }
+
+    // 2. Guard for Day-Grouped query
+    const isDayGroupedQuery = rows.length > 0 && rows[0].AnniversaryDay !== undefined && (rows[0].TotalEmployees !== undefined || rows[0].EmployeeCount !== undefined || rows[0].TotalEmployeesOnThisDay !== undefined || rows[0].Count !== undefined || rows[0].count !== undefined) && !rows[0].EmployeeName;
+    if (isDayGroupedQuery) {
+      let totalEmps = 0;
+      let ans = `💍 **${dateLabel} din-war (day-wise) Marriage Anniversaries:**\n\n`;
+      ans += `| # | Anniversary Day | Total Employees |\n`;
+      ans += `| :- | :--- | :--- |\n`;
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const day = r.AnniversaryDay || "-";
+        const c = Number(r.TotalEmployees || r.EmployeeCount || r.TotalEmployeesOnThisDay || r.Count || r.count || 0);
+        totalEmps += c;
+        ans += `| **${i + 1}** | **${day} ${monthName}** | **${c} employee(s)** |\n`;
+      }
+      ans += `\n**Total:** ${totalEmps.toLocaleString()} employee(s) ki marriage anniversary hai ${dateLabel}.`;
+      return {
+        answer: ans.trim(),
+        summary: `${dateLabel} marriage anniversary: ${totalEmps} employee(s) across ${rows.length} days`
+      };
+    }
+
+    const uniqueDays = [...new Set(rows.map(r => r.AnniversaryDay || (r.MarriageDate ? parseInt(String(r.MarriageDate).slice(0, 2), 10) : null)).filter(Boolean))].sort((a, b) => a - b);
+    const daysSummary = (!entities.day && uniqueDays.length > 0)
+      ? `\n💍 **Marriage Anniversary Days${monthName ? ` (${monthName}${yearStr})` : ""}:** ${uniqueDays.join(', ')}${monthName ? ` ${monthName}` : ""}\n\n`
+      : "\n\n";
+
+    let ans = `💍 **${dateLabel} total ${rows.length} employee(s) ki Marriage Anniversary hai:**${daysSummary}`;
+    ans += `| # | Anniversary Day | Emp Code | Employee Name | Marriage Date | Years Of Marriage${yearStr ? ` (in${yearStr})` : ""} | Location | Designation |\n`;
+    ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const code = r.EmployeeCode || "-";
+      const name = r.EmployeeName || "-";
+      const dayVal = r.AnniversaryDay !== undefined ? `${r.AnniversaryDay}${monthName ? ` ${monthName.slice(0, 3)}` : ""}` : "-";
+      const mDate = r.MarriageDate ? (typeof r.MarriageDate === "string" ? r.MarriageDate.slice(0, 10) : new Date(r.MarriageDate).toLocaleDateString('en-GB')) : "-";
+      const yom = r.YearsOfMarriage !== undefined ? `${r.YearsOfMarriage} Year(s)` : "-";
+      const loc = r.Location || "-";
+      const desg = r.Designation || "-";
+      ans += `| **${i + 1}** | **${dayVal}** | ${code} | **${name}** | ${mDate} | ${yom} | ${loc} | ${desg} |\n`;
+    }
+    return {
+      answer: ans.trim(),
+      summary: `${dateLabel} marriage anniversary: ${rows.length} employee(s)`
+    };
+  }
+
+  // Specific Date Birthday Formatter
+  if (intent === "BIRTHDAY_BY_DATE" && rows.length > 0) {
+    const dateLabel = entities.day && entities.month ? `${entities.day}/${entities.month}` : (entities.specificDate || "Requested date");
+    let ans = `🎂 **${dateLabel} ko ${rows.length} employee(s) ka Birthday tha / hai:**\n\n`;
+    ans += `| Emp Code | Employee Name | DOB | Age | Location | Designation | Mobile |\n`;
+    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (const r of rows) {
+      ans += `| ${r.EmployeeCode || "-"} | **${r.EmployeeName || "-"}** | 🎂 ${r.DateOfBirth || "-"} | ${r.Age || "-"} | ${r.Location || "-"} | ${r.Designation || "-"} | ${r.MobileNo || "-"} |\n`;
+    }
+    return {
+      answer: ans.trim(),
+      summary: `Birthdays on ${dateLabel}: ${rows.length} employees`
+    };
+  }
+
   // Salary Aggregation Formatter (Total Basic, Gross, Net, Deductions, Employees Count)
   if ((intent === "SALARY_TOTAL_AGGREGATE" || (rows.length === 1 && (rows[0].Total_Basic_Earn !== undefined || rows[0].TotalBasicEarn !== undefined || rows[0].Total_Net_Salary !== undefined))) && rows.length > 0) {
     const r = rows[0];
@@ -3864,7 +6757,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const net = netNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const ded = dedNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const hra = hraNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    
+
     const mStr = entities.month ? `${entities.month}/${entities.year || new Date().getFullYear()}` : (entities.year ? `Year ${entities.year}` : "Overall");
     const locStr = entities.branch ? ` (Location / Branch: **${entities.branch}**)` : "";
 
@@ -3929,7 +6822,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const basic = (r.BasicPay || r.BasicEarnings || 0).toLocaleString("en-IN");
       const hra = (r.HRA || r.HRAEarnings || 0).toLocaleString("en-IN");
       const ded = (r.TotalDeductions || r.Deductions || 0).toLocaleString("en-IN");
-      
+
       let ans = `Salary Slip Summary for **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** for **${m}/${y}**:\n\n` +
         `• **Gross Earnings:** ₹${gross}\n` +
         `• **Basic Pay:** ₹${basic}\n` +
@@ -3960,17 +6853,52 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     }
   }
 
-  // If a single rich employee record was returned across 257 columns
-  if (rows.length === 1 && (rows[0].EmployeeCode || rows[0].EmployeeName) && rows[0].FatherName !== undefined) {
+  // Dedicated Formatter: Employee Address or Profile Lookup
+  const isAddressQuery = Boolean(
+    entities.isAddressQuery ||
+    /\b(address|permanent\s*address|current\s*address|pata|rehta\s*hai|ghar|niwas)\b/i.test(message || entities.rawMessage || "")
+  );
+
+  if (rows.length === 1 && (rows[0].EmployeeCode || rows[0].EmployeeName) && (rows[0].PermanentAddress !== undefined || rows[0].CurrentAddress !== undefined || rows[0].FatherName !== undefined || isAddressQuery)) {
     const r = rows[0];
-    let ans = `Employee Profile for **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})**:\n\n`;
+    const empName = r.EmployeeName || (r.EMPFIRSTNAME ? `${r.EMPFIRSTNAME} ${r.EMPLASTNAME || ""}`.trim() : "Employee");
+    const empCode = r.EmployeeCode || r.EMPCODE || "-";
+    const permAddr = r.PermanentAddress || r.PERMANENTADDRESS1 || null;
+    const currAddr = r.CurrentAddress || r.CURRENTADDRESS1 || null;
+
+    if (isAddressQuery) {
+      let ans = `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke Address details:\n\n`;
+      if (permAddr && String(permAddr).trim() !== "") {
+        ans += `• 🏠 **Permanent Address:** **${String(permAddr).trim()}**\n`;
+      } else {
+        ans += `• 🏠 **Permanent Address:** Database (\`EMPLOYEEMASTER\`) me blank / update nahi hai (Not Available in Master).\n`;
+      }
+      if (currAddr && String(currAddr).trim() !== "") {
+        ans += `• 📍 **Current Address:** ${String(currAddr).trim()}\n`;
+      } else if (permAddr && String(permAddr).trim() !== "") {
+        ans += `• 📍 **Current Address:** Same as Permanent Address\n`;
+      }
+      ans += `• **Location / Branch:** ${r.Location || r.Branch || "-"}\n`;
+      ans += `• **Designation:** ${r.Designation || "-"}\n`;
+      ans += `• **Mobile No:** ${r.MobileNo || "-"}\n`;
+      if (r.EmploymentStatus || r.Status) ans += `• **Employment Status:** ${r.EmploymentStatus || r.Status}\n`;
+
+      return {
+        answer: ans.trim(),
+        summary: `Address for ${empName} (${empCode}): ${permAddr ? String(permAddr).trim() : 'Not available'}`
+      };
+    }
+
+    let ans = `Employee Profile for **${empName} (${empCode})**:\n\n`;
     ans += `• **Designation:** ${r.Designation || "-"} | **Department:** ${r.Department || "-"}\n`;
     ans += `• **Location / Branch:** ${r.Location || r.Branch || "-"}\n`;
-    ans += `• **Date of Joining:** ${r.DateOfJoining || "-"} | **Status:** ${r.Status || "Active"}\n`;
+    ans += `• **Date of Joining:** ${r.JoiningDate || r.DateOfJoining || "-"} | **Status:** ${r.EmploymentStatus || r.Status || "Active"}\n`;
     ans += `• **Mobile No:** ${r.MobileNo || "-"}\n`;
-    if (r.OfficialEmail || r.PersonalEmail) ans += `• **Email:** ${r.OfficialEmail || r.PersonalEmail || "-"}\n`;
+    if (r.Email || r.OfficialEmail || r.PersonalEmail) ans += `• **Email:** ${r.Email || r.OfficialEmail || r.PersonalEmail || "-"}\n`;
     ans += `• **Aadhaar No:** ${r.AadharNo || "-"} | **PAN No:** ${r.PAN || "-"}\n`;
     ans += `• **Bank Account No:** ${r.BankAccountNo || "-"} | **Bank Name:** ${r.BankName || "-"} | **IFSC:** ${r.IFSC || "-"}\n`;
+    if (permAddr && String(permAddr).trim() !== "") ans += `• **Permanent Address:** ${String(permAddr).trim()}\n`;
+    if (currAddr && String(currAddr).trim() !== "") ans += `• **Current Address:** ${String(currAddr).trim()}\n`;
     if (r.FatherName) ans += `• **Father Name:** ${r.FatherName} (${r.FatherMobile || r.FatherMobile2 || "-"})\n`;
     if (r.MotherName) ans += `• **Mother Name:** ${r.MotherName} (${r.MotherMobile || r.MotherMobile2 || "-"})\n`;
     if (r.SpouseName) ans += `• **Spouse Name:** ${r.SpouseName} (${r.SpouseMobile || r.SpouseMobile2 || "-"})\n`;
@@ -3981,15 +6909,33 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     if (r.MonthlyCTC || r.AnnualCTC) ans += `• **CTC:** Monthly ₹${r.MonthlyCTC || "-"} | Annual ₹${r.AnnualCTC || "-"}\n`;
     return {
       answer: ans.trim(),
-      summary: `Profile retrieved for ${r.EmployeeName} (${r.EmployeeCode})`
+      summary: `Profile retrieved for ${empName} (${empCode})`
     };
   }
 
-  if ((intent === "EMPLOYEE_SALARY_HISTORY" || intent === "SALARY_REPORT" || (rows.length > 0 && rows[0].SalaryMonth !== undefined && rows[0].NetSalary !== undefined)) && rows.length > 0) {
+  const hasSalaryFileFields = rows.length > 0 && (
+    rows[0].Final_Payment !== undefined ||
+    rows[0].NetSalary !== undefined ||
+    rows[0].Gross_Earn !== undefined ||
+    rows[0].GrossEarnings !== undefined ||
+    rows[0].Total_Earn !== undefined ||
+    rows[0].TotalEarnings !== undefined ||
+    rows[0].SalMnth !== undefined ||
+    rows[0].SalaryMonth !== undefined
+  );
+
+  if (
+    (intent === "HIGHEST_SALARY_RANKING" ||
+      intent === "EMPLOYEE_SALARY_HISTORY" ||
+      intent === "SALARY_REPORT" ||
+      hasSalaryFileFields) &&
+    rows.length > 0 &&
+    (hasSalaryFileFields || (rows[0].MonthlyCTC === undefined && rows[0].AnnualCTC === undefined))
+  ) {
     const validRows = rows.filter(r => Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0)) > 0 || Number(r.GrossEarnings !== undefined ? r.GrossEarnings : (r.Gross_Earn || 0)) > 0);
     const r0 = rows[0];
-    const empName = r0.EmployeeName || "Employee";
-    const empCode = r0.EmployeeCode || entities.employeeCode || "-";
+    const empName = r0.EmployeeName || (r0.EMPFIRSTNAME ? `${r0.EMPFIRSTNAME} ${r0.EMPLASTNAME || ''}`.trim() : (entities.employeeName || "Employee"));
+    const empCode = r0.EmployeeCode || r0.Emp_Code || r0.EMPCODE || entities.employeeCode || "-";
 
     if (validRows.length === 0) {
       const monthStr = entities.month ? `Month ${entities.month}` : "";
@@ -4002,11 +6948,17 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       };
     }
 
-    // If single employee specific month query (e.g. "April 2026 ki salary slip" or Month + Year)
-    if (validRows.length === 1 && (entities.month || entities.year || entities.employeeCode)) {
+    const monthsNameArr = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const getMonthName = (r) => {
+      const mNum = r.Month || r.MonthNumber || r.SalMnth || r.salmnth || r.SalaryMonth || entities.month;
+      return r.MonthName || (mNum && monthsNameArr[Number(mNum)] ? monthsNameArr[Number(mNum)] : (mNum ? `Month ${mNum}` : "-"));
+    };
+
+    // If single row returned (either single employee query OR top 1 highest salary query)
+    if (validRows.length === 1 && (entities.month || entities.year || entities.employeeCode || intent === "HIGHEST_SALARY_RANKING")) {
       const r = validRows[0];
-      const m = r.MonthName || (r.SalaryMonth ? `Month ${r.SalaryMonth}` : "-");
-      const y = r.SalaryYear || r.salyear || "-";
+      const m = getMonthName(r);
+      const y = r.SalaryYear || r.salyear || entities.year || "-";
       const net = Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0)).toLocaleString("en-IN");
       const gross = Number(r.GrossEarnings !== undefined ? r.GrossEarnings : (r.Gross_Earn || 0)).toLocaleString("en-IN");
       const basic = Number(r.BasicEarnings !== undefined ? r.BasicEarnings : (r.Basic_Earn || 0)).toLocaleString("en-IN");
@@ -4014,6 +6966,24 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const ded = Number(r.TotalDeductions !== undefined ? r.TotalDeductions : (r.Deducation || 0)).toLocaleString("en-IN");
       const pDays = r.PresentDays !== undefined ? r.PresentDays : (r.Present_days || "-");
       const tDays = r.TotalDays !== undefined ? r.TotalDays : (r.Monthdays || "-");
+
+      const isAskingHighest = intent === "HIGHEST_SALARY_RANKING" || /\b(highest|maximum|sabse\s*jyada|sabse\s*badi|max|top\s*\d*)\b/i.test(message || entities.rawMessage || "");
+
+      if (isAskingHighest) {
+        let ans = `AutoVyn ERP ke records ke anusar, **${m} ${y}** me sabse jyada salary **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki pay hui hai:\n\n` +
+          `• **Employee Name:** **${r.EmployeeName || empName}**\n` +
+          `• **Emp Code:** **${r.EmployeeCode || empCode}**\n` +
+          `• **Net Pay / Final Payment:** **₹${net}**\n` +
+          `• **Gross Earnings:** ₹${gross}\n` +
+          `• **Basic Pay:** ₹${basic}\n` +
+          `• **Total Deductions:** ₹${ded}\n` +
+          `• **Location / Branch:** ${r.Location || "-"}\n` +
+          `• **Designation:** ${r.Designation || "-"}`;
+        return {
+          answer: ans.trim(),
+          summary: `Top earner in ${m} ${y}: ${r.EmployeeName || empName} (${r.EmployeeCode || empCode}) with Net ₹${net}`
+        };
+      }
 
       let ans = `Salary Slip Summary for **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** for **${m} ${y}**:\n\n` +
         `• **Gross Earnings:** ₹${gross}\n` +
@@ -4030,11 +7000,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       };
     }
 
-    // If multiple rows without an employee code (Company-wide Month Salary Report)
+    // If multiple rows without an employee code (Company-wide Month Salary Report or Highest Salary Ranking)
     if (!entities.employeeCode && !entities.isSelf && validRows.length > 1) {
-      const mName = validRows[0].MonthName || (entities.month ? `Month ${entities.month}` : "");
+      const mName = getMonthName(validRows[0]);
       const yVal = validRows[0].SalaryYear || entities.year || "";
-      let ans = `AutoVyn ERP me **${mName} ${yVal}** ke **${validRows.length} employee(s)** ke salary payout records mile hain:\n\n`;
+      const isAskingHighest = intent === "HIGHEST_SALARY_RANKING" || /\b(highest|maximum|sabse\s*jyada|sabse\s*badi|max|top\s*\d*)\b/i.test(message || entities.rawMessage || "");
+      let ans = isAskingHighest
+        ? `**AutoVyn ERP Highest Paid Salary Ranking (${mName} ${yVal}):**\n\n`
+        : `AutoVyn ERP me **${mName} ${yVal}** ke **${validRows.length} employee(s)** ke salary payout records mile hain:\n\n`;
       ans += `| Rank | Emp Code | Employee Name | Net Salary | Gross Earnings | Basic Pay | Deductions | Present Days | Location |\n`;
       ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
       validRows.slice(0, 50).forEach((r, idx) => {
@@ -4052,34 +7025,67 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       };
     }
 
-    // Else: Single employee salary history across multiple months (Ranked by payout)
+    // Else: Single employee salary history across multiple months
+    const isAskingHighest = /\b(highest|maximum|sabse\s*jyada|sabse\s*badi|max|peak|kab|kis\s*mahine)\b/i.test(message || entities.rawMessage || "");
+
     let maxNet = -1;
     for (const r of validRows) {
       const net = Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0));
       if (net > maxNet) maxNet = net;
     }
     const peakRows = validRows.filter(r => Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0)) === maxNet);
-    const peakMonths = peakRows.map(r => `${r.MonthName || r.SalaryMonth || "-"} ${r.SalaryYear || r.salyear || "-"}`).join(", ");
+    const peakMonths = peakRows.map(r => `${getMonthName(r)} ${r.SalaryYear || r.salyear || entities.year || "-"}`).join(", ");
 
-    let ans = `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ki sabse jyada salary **₹${maxNet.toLocaleString("en-IN")}** aai thi, jo **${peakMonths}** me mili thi.\n\n`;
-    ans += `### 📋 Month-wise Salary History (Ranked by Payout):\n\n`;
+    let ans = "";
+    if (isAskingHighest) {
+      ans += `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ki sabse jyada salary **₹${maxNet.toLocaleString("en-IN")}** aai thi, jo **${peakMonths}** me mili thi.\n\n`;
+      ans += `### 📋 Month-wise Salary History (Ranked by Payout):\n\n`;
+    } else {
+      const periodLabel = entities.year ? `Year ${entities.year}` : "Overall";
+      ans += `📋 **${empName} (${empCode})** ka **${periodLabel}** Month-wise Salary Statement:\n\n`;
+    }
+
     ans += `| Month / Year | Net Salary | Gross Earnings | Basic Pay | Deductions | Present Days |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
 
-    for (const r of validRows.slice(0, 20)) {
-      const mName = r.MonthName || (r.SalaryMonth ? `Month ${r.SalaryMonth}` : "-");
-      const yVal = r.SalaryYear || r.salyear || "-";
-      const net = `₹${Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0)).toLocaleString("en-IN")}`;
-      const gross = `₹${Number(r.GrossEarnings !== undefined ? r.GrossEarnings : (r.Gross_Earn || 0)).toLocaleString("en-IN")}`;
-      const basic = `₹${Number(r.BasicEarnings !== undefined ? r.BasicEarnings : (r.Basic_Earn || 0)).toLocaleString("en-IN")}`;
-      const ded = `₹${Number(r.TotalDeductions !== undefined ? r.TotalDeductions : (r.Deducation || 0)).toLocaleString("en-IN")}`;
+    const displayRows = [...validRows];
+    if (isAskingHighest) {
+      displayRows.sort((a, b) => Number(b.NetSalary !== undefined ? b.NetSalary : (b.Final_Payment || 0)) - Number(a.NetSalary !== undefined ? a.NetSalary : (a.Final_Payment || 0)));
+    } else {
+      displayRows.sort((a, b) => {
+        const yA = Number(a.SalaryYear || a.salyear || 0);
+        const yB = Number(b.SalaryYear || b.salyear || 0);
+        if (yA !== yB) return yA - yB;
+        const mA = Number(a.SalaryMonth || a.SalMnth || a.salmnth || 0);
+        const mB = Number(b.SalaryMonth || b.SalMnth || b.salmnth || 0);
+        return mA - mB;
+      });
+    }
+
+    let totNet = 0, totGross = 0, totDed = 0;
+    for (const r of displayRows.slice(0, 24)) {
+      const mName = getMonthName(r);
+      const yVal = r.SalaryYear || r.salyear || entities.year || "-";
+      const netNum = Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0));
+      const grossNum = Number(r.GrossEarnings !== undefined ? r.GrossEarnings : (r.Gross_Earn || 0));
+      const basicNum = Number(r.BasicEarnings !== undefined ? r.BasicEarnings : (r.Basic_Earn || 0));
+      const dedNum = Number(r.TotalDeductions !== undefined ? r.TotalDeductions : (r.Deducation || 0));
       const pDays = r.PresentDays !== undefined ? r.PresentDays : (r.Present_days || "-");
-      ans += `| **${mName} ${yVal}** | **${net}** | ${gross} | ${basic} | ${ded} | ${pDays} |\n`;
+
+      totNet += netNum;
+      totGross += grossNum;
+      totDed += dedNum;
+
+      ans += `| **${mName} ${yVal}** | **₹${netNum.toLocaleString("en-IN")}** | ₹${grossNum.toLocaleString("en-IN")} | ₹${basicNum.toLocaleString("en-IN")} | ₹${dedNum.toLocaleString("en-IN")} | ${pDays} |\n`;
+    }
+
+    if (!isAskingHighest && displayRows.length > 1) {
+      ans += `\n💰 **Total Net Salary Received (${entities.year ? entities.year : 'Overall'}):** **₹${totNet.toLocaleString("en-IN")}** | 📈 **Total Gross:** ₹${totGross.toLocaleString("en-IN")} | 📉 **Total Deductions:** ₹${totDed.toLocaleString("en-IN")}`;
     }
 
     return {
       answer: ans.trim(),
-      summary: `Peak salary for ${empCode} (${empName}): ₹${maxNet.toLocaleString("en-IN")} in ${peakMonths}`
+      summary: `Salary statement for ${empCode} (${empName}): ${displayRows.length} months`
     };
   }
 
@@ -4124,7 +7130,10 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   // Case 2: EMPLOYEEMASTER Results (Fixed Master Monthly/Annual CTC)
-  if ((intent === "HIGHEST_SALARY_RANKING" || (rows.length > 0 && (rows[0].MonthlyCTC !== undefined || rows[0].AnnualCTC !== undefined))) && rows.length > 0) {
+  if (
+    (intent === "HIGHEST_SALARY_RANKING" || intent === "SALARY_RANKING" || /\b(highest|maximum|sabse\s*jyada|top\s*\d*|ranking)\b/i.test(message || "")) &&
+    rows.length > 0 && (rows[0].MonthlyCTC !== undefined || rows[0].AnnualCTC !== undefined)
+  ) {
     const locStr = entities.branch ? ` in **${entities.branch}** branch` : "";
     let ans = `**AutoVyn ERP Highest Salary / CTC Ranking (Master CTC)${locStr}:**\n\n`;
     ans += `| Rank | Emp Code | Employee Name | Location | Designation | Monthly CTC | Annual CTC |\n`;
@@ -4159,20 +7168,20 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       rows[0].MonthName ||
       (entities.month
         ? [
-            "",
-            "January",
-            "February",
-            "March",
-            "April",
-            "May",
-            "June",
-            "July",
-            "August",
-            "September",
-            "October",
-            "November",
-            "December",
-          ][entities.month]
+          "",
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ][entities.month]
         : "");
     const yVal =
       entities.year || (rows[0].LeaveDate ? rows[0].LeaveDate.split("-")[0] : "");
@@ -4254,7 +7263,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         if (!isNaN(d.getTime())) {
           return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     return strVal;
@@ -4266,6 +7275,16 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
   // Single Record: Format as clean Key-Value Summary Card
   if (totalCount === 1 && allKeys.length <= 15) {
+    const countKey = allKeys.find(k => /^(TotalEmployees|TotalEmployeeCount|ActiveEmployeeCount|InactiveEmployeeCount|SeparatedEmployeeCount|Count|Total)$/i.test(k));
+    if (countKey && (entities.employeeName || entities.nameFilter || /\b(?:name|naam)\s+ke\b/i.test(message || ""))) {
+      const targetName = entities.employeeName || entities.nameFilter || (message.match(/\b([A-Za-z]{2,30})\s+(?:name|naam)\s+ke\b/i)?.[1]) || "Requested";
+      const countVal = sample[countKey];
+      return {
+        answer: `AutoVyn ERP ke record ke anusar, **${targetName}** name ke total **${countVal} employee(s)** hain.`,
+        summary: `Total employees with name ${targetName}: ${countVal}`
+      };
+    }
+
     let ans = `**AutoVyn ERP Record Details:**\n\n`;
     for (const key of allKeys) {
       const formattedKey = formatHeader(key);
@@ -4275,6 +7294,44 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     return {
       answer: ans.trim(),
       summary: `1 record found in AutoVyn ERP`
+    };
+  }
+
+  // Multi-Row Employee Profile / Lookup (e.g. multiple employees with name "Atendra")
+  if (
+    totalCount > 1 &&
+    sample.EmployeeCode !== undefined &&
+    sample.EmployeeName !== undefined &&
+    (sample.Designation !== undefined || sample.Location !== undefined)
+  ) {
+    const targetName = entities.employeeName || entities.nameFilter || "";
+    const namePrefix = targetName ? `**${targetName}** name ke ` : "";
+    let ans = `AutoVyn ERP ke record ke anusar, ${namePrefix}total **${totalCount} employee(s)** mile hain:\n\n`;
+    ans += `| # | Emp Code | Employee Name | Location | Designation | Mobile No | Joining Date | Status |\n`;
+    ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+
+    const displayLimit = Math.min(totalCount, 50);
+    for (let i = 0; i < displayLimit; i++) {
+      const r = rows[i];
+      const code = r.EmployeeCode || "-";
+      const name = r.EmployeeName || "-";
+      const loc = r.Location || "-";
+      const desg = r.Designation || "-";
+      const mob = r.MobileNo || "-";
+      const doj = r.JoiningDate || "-";
+      const status = r.EmploymentStatus || (r.EMP_STATUS === "A" ? "Active" : "Inactive");
+      ans += `| **${i + 1}** | **${code}** | **${name}** | ${loc} | ${desg} | ${mob} | ${doj} | ${status} |\n`;
+    }
+
+    if (totalCount > 50) {
+      ans += `\n*(Showing top 50 of ${totalCount} records)*`;
+    }
+
+    ans += `\n\n*Agar aapko inme se kisi specific employee ka pura profile, salary slip, ya address chahiye, toh unka **Employee Code** batayein.*`;
+
+    return {
+      answer: ans.trim(),
+      summary: `${totalCount} employee records found for ${targetName || 'search'}`
     };
   }
 
@@ -4375,7 +7432,8 @@ const recordLearningAndTelemetry = async ({
   rowCount = 0,
   success = true,
   errorMessage = null,
-  answer = null
+  answer = null,
+  isFallback = false
 }) => {
   try {
     if (!sequelize?.query) return;
@@ -4387,27 +7445,26 @@ const recordLearningAndTelemetry = async ({
     const escapedTables = Array.isArray(tablesUsed) ? tablesUsed.join(", ").replace(/'/g, "''") : "";
     const escapedAnswer = (answer || "").replace(/'/g, "''");
 
-    // 1. Record / Merge in AI_SQL_Learning_Tbl
-    if (success && sql && rowCount > 0) {
-      const insertSql = `
+    const isMiscMstOnEmployeeQuestion = Boolean(
+      Array.isArray(tablesUsed) &&
+      tablesUsed.some(t => String(t).toUpperCase().includes("MISC")) &&
+      (intent?.toUpperCase().includes("EMPLOYEE") || /employee|emp|salary|staff/i.test(rawQuery))
+    );
+
+    // 1. Update existing Golden Rule in AI_SQL_Learning_Tbl if matched
+    // (Only persistLearnedDataRule creates new golden rules to prevent unverified queries from polluting the knowledge base)
+    if (success && sql && rowCount > 0 && !isFallback && !isMiscMstOnEmployeeQuestion) {
+      const updateSql = `
         IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
         BEGIN
-          MERGE [dbo].[AI_SQL_Learning_Tbl] AS target
-          USING (SELECT '${escapedNormalized}' AS Question, '${escapedIntent}' AS Intent) AS source
-          ON (target.Normalized_Question = source.Question AND target.Intent = source.Intent)
-          WHEN MATCHED THEN
-            UPDATE SET 
-              target.Success_Count = target.Success_Count + 1,
-              target.Last_Execution_Time_Ms = ${executionTimeMs},
-              target.SQL_Query = '${escapedSQL}',
-              target.Tables_Used = '${escapedTables}',
-              target.Updated_At = GETDATE()
-          WHEN NOT MATCHED THEN
-            INSERT (Normalized_Question, Intent, SQL_Query, Tables_Used, Success_Count, Last_Execution_Time_Ms, Created_At)
-            VALUES (source.Question, source.Intent, '${escapedSQL}', '${escapedTables}', 1, ${executionTimeMs}, GETDATE());
+          UPDATE [dbo].[AI_SQL_Learning_Tbl]
+          SET Success_Count = Success_Count + 1,
+              Last_Execution_Time_Ms = ${executionTimeMs},
+              Updated_At = GETDATE()
+          WHERE Normalized_Question = N'${escapedNormalized}' AND Intent = '${escapedIntent}';
         END
       `;
-      await sequelize.query(insertSql, { type: QueryTypes.RAW }).catch(() => {});
+      await sequelize.query(updateSql, { type: QueryTypes.RAW }).catch(() => { });
     }
 
     // 2. Ensure Table & Record in AI_Query_Audit_Tbl
@@ -4451,22 +7508,26 @@ const recordLearningAndTelemetry = async ({
         '${(userContext.employeeCode || "").replace(/'/g, "''")}',
         '${(userContext.role || "USER").replace(/'/g, "''")}',
         '${(userContext.compcode || "AUTOVYN").replace(/'/g, "''")}',
-        '${escapedRaw}',
-        '${escapedNormalized}',
+        N'${escapedRaw}',
+        N'${escapedNormalized}',
         '${escapedIntent}',
         '${escapedTables}',
-        '${escapedSQL}',
-        ${escapedAnswer ? `'${escapedAnswer}'` : 'NULL'},
+        N'${escapedSQL}',
+        ${escapedAnswer ? `N'${escapedAnswer}'` : 'NULL'},
         ${rowCount},
         ${executionTimeMs},
         ${success ? 0.95 : 0.0},
         '${success ? "SUCCESS" : "FAILED"}',
-        ${errorMessage ? `'${String(errorMessage).replace(/'/g, "''")}'` : 'NULL'},
+        ${errorMessage ? `N'${String(errorMessage).replace(/'/g, "''")}'` : 'NULL'},
         GETDATE()
       );
     `;
-    await sequelize.query(auditSql, { type: QueryTypes.RAW }).catch(() => {});
-  } catch (_) {}
+    await sequelize.query(auditSql, { type: QueryTypes.RAW }).catch((err) => {
+      console.warn("[V6-Telemetry] Audit log insert notice:", err?.message);
+    });
+  } catch (err) {
+    console.warn("[V6-Telemetry] Non-fatal telemetry recording notice:", err?.message);
+  }
 };
 
 const submitFeedback = async (reqOrPayload, maybePayload = {}) => {
@@ -4492,6 +7553,8 @@ const submitFeedback = async (reqOrPayload, maybePayload = {}) => {
   const targetTable = payload.targetTable || payload.target_table || null;
   const userQuery = payload.userQuery || payload.query || payload.question || payload.message || "";
 
+  const isDislike = feedbackType !== "HELPFUL" && feedbackType !== "GOLDEN";
+
   // Auto-detect if user typed raw SQL inside comment
   if (!correctSQL && /^\s*(SELECT|WITH)\b/i.test(userComment.trim())) {
     correctSQL = userComment.trim();
@@ -4502,20 +7565,124 @@ const submitFeedback = async (reqOrPayload, maybePayload = {}) => {
   CacheEngineInstance.l3VectorCache = [];
 
   if (sequelize?.query) {
-    // 1. Insert into AI_Query_Feedback_Tbl
-    const insertFeedbackSql = `
-      IF OBJECT_ID('dbo.AI_Query_Feedback_Tbl', 'U') IS NOT NULL
+    // 0. Ensure Learning & Feedback Tables exist
+    const ensureTablesSql = `
+      IF OBJECT_ID('dbo.AI_Query_Feedback_Tbl', 'U') IS NULL
       BEGIN
-        INSERT INTO [dbo].[AI_Query_Feedback_Tbl] (Audit_UTD, Conversation_Id, Feedback_Type, User_Comment, User_Id, Created_At)
-        VALUES (${auditUtd ? auditUtd : 'NULL'}, ${conversationId ? `'${conversationId.replace(/'/g, "''")}'` : 'NULL'}, '${feedbackType.replace(/'/g, "''")}', '${userComment.replace(/'/g, "''")}', '${(userContext.userCode || "USER").replace(/'/g, "''")}', GETDATE());
+        CREATE TABLE [dbo].[AI_Query_Feedback_Tbl] (
+          [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+          [Audit_UTD] BIGINT NULL,
+          [Conversation_Id] VARCHAR(100) NULL,
+          [Feedback_Type] VARCHAR(50) NULL,
+          [User_Comment] NVARCHAR(MAX) NULL,
+          [User_Id] VARCHAR(100) NULL,
+          [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+        );
       END
-      ELSE IF OBJECT_ID('dbo.AI_User_Feedback_Tbl', 'U') IS NOT NULL
+
+      IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NULL
       BEGIN
-        INSERT INTO [dbo].[AI_User_Feedback_Tbl] (Audit_UTD, Conversation_Id, Feedback_Type, User_Comment, User_Id, Created_At)
-        VALUES (${auditUtd ? auditUtd : 'NULL'}, ${conversationId ? `'${conversationId.replace(/'/g, "''")}'` : 'NULL'}, '${feedbackType.replace(/'/g, "''")}', '${userComment.replace(/'/g, "''")}', '${(userContext.userCode || "USER").replace(/'/g, "''")}', GETDATE());
+        CREATE TABLE [dbo].[AI_SQL_Learning_Tbl] (
+          [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+          [Normalized_Question] NVARCHAR(MAX) NULL,
+          [Intent] VARCHAR(100) NULL,
+          [SQL_Query] NVARCHAR(MAX) NULL,
+          [Tables_Used] VARCHAR(500) NULL,
+          [Success_Count] INT NULL DEFAULT 1,
+          [Last_Execution_Time_Ms] INT NULL DEFAULT 50,
+          [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+          [Last_Verified_At] DATETIME2(7) NULL,
+          [Updated_At] DATETIME2(7) NULL
+        );
+      END
+
+      IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NULL
+      BEGIN
+        CREATE TABLE [dbo].[AI_SQL_Corrections] (
+          [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+          [Correction_Type] VARCHAR(100) NULL,
+          [User_Message] NVARCHAR(MAX) NULL,
+          [Target_Table] VARCHAR(100) NULL,
+          [Correct_SQL_Pattern] NVARCHAR(MAX) NULL,
+          [Rule_Description] NVARCHAR(MAX) NULL,
+          [Is_Active] BIT NOT NULL DEFAULT 1,
+          [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+        );
       END
     `;
-    await sequelize.query(insertFeedbackSql, { type: QueryTypes.RAW }).catch(() => {});
+    await sequelize.query(ensureTablesSql, { type: QueryTypes.RAW }).catch(() => { });
+
+    // 1. Insert into AI_Query_Feedback_Tbl
+    const insertFeedbackSql = `
+      INSERT INTO [dbo].[AI_Query_Feedback_Tbl] (Audit_UTD, Conversation_Id, Feedback_Type, User_Comment, User_Id, Created_At)
+      VALUES (${auditUtd ? auditUtd : 'NULL'}, ${conversationId ? `'${conversationId.replace(/'/g, "''")}'` : 'NULL'}, '${feedbackType.replace(/'/g, "''")}', N'${userComment.replace(/'/g, "''")}', '${(userContext.userCode || "USER").replace(/'/g, "''")}', GETDATE());
+    `;
+    await sequelize.query(insertFeedbackSql, { type: QueryTypes.RAW }).catch(() => { });
+
+    // 1b. Update AI_Query_Audit_Tbl Status_Code:
+    // If feedback is negative (Dislike / Unhelpful / Incorrect), mark Status_Code as 'FAILED' in history
+    // If feedback is HELPFUL, mark Status_Code as 'SUCCESS'
+    const newStatus = isDislike ? "FAILED" : "SUCCESS";
+    const failReason = userComment
+      ? `Marked as FAILED via user feedback: ${userComment}`
+      : `Marked as FAILED via user dislike (${feedbackType})`;
+
+    let auditUpdateSql = "";
+    if (auditUtd) {
+      auditUpdateSql = `
+        UPDATE [dbo].[AI_Query_Audit_Tbl]
+        SET Status_Code = '${newStatus}',
+            Error_Message = ${isDislike ? `'${failReason.replace(/'/g, "''")}'` : 'NULL'}
+        WHERE UTD = ${parseInt(auditUtd, 10)};
+      `;
+    } else if (conversationId && userQuery) {
+      const normQ = normalizeLower(userQuery).replace(/'/g, "''");
+      const rawQ = userQuery.replace(/'/g, "''");
+      auditUpdateSql = `
+        UPDATE [dbo].[AI_Query_Audit_Tbl]
+        SET Status_Code = '${newStatus}',
+            Error_Message = ${isDislike ? `'${failReason.replace(/'/g, "''")}'` : 'NULL'}
+        WHERE Conversation_Id = '${conversationId.replace(/'/g, "''")}'
+          AND (User_Query = '${rawQ}' OR Normalized_Query = '${normQ}' OR UTD = (
+            SELECT TOP 1 UTD FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
+            WHERE Conversation_Id = '${conversationId.replace(/'/g, "''")}'
+            ORDER BY UTD DESC
+          ));
+      `;
+    } else if (conversationId) {
+      auditUpdateSql = `
+        UPDATE [dbo].[AI_Query_Audit_Tbl]
+        SET Status_Code = '${newStatus}',
+            Error_Message = ${isDislike ? `'${failReason.replace(/'/g, "''")}'` : 'NULL'}
+        WHERE UTD = (
+          SELECT TOP 1 UTD 
+          FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) 
+          WHERE Conversation_Id = '${conversationId.replace(/'/g, "''")}' 
+          ORDER BY UTD DESC
+        );
+      `;
+    } else if (userQuery) {
+      const normQ = normalizeLower(userQuery).replace(/'/g, "''");
+      const rawQ = userQuery.replace(/'/g, "''");
+      auditUpdateSql = `
+        UPDATE [dbo].[AI_Query_Audit_Tbl]
+        SET Status_Code = '${newStatus}',
+            Error_Message = ${isDislike ? `'${failReason.replace(/'/g, "''")}'` : 'NULL'}
+        WHERE UTD = (
+          SELECT TOP 1 UTD 
+          FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) 
+          WHERE User_Query = '${rawQ}' OR Normalized_Query = '${normQ}'
+          ORDER BY UTD DESC
+        );
+      `;
+    }
+
+    if (auditUpdateSql) {
+      await sequelize.query(auditUpdateSql, { type: QueryTypes.RAW }).catch((err) => {
+        console.warn("[submitFeedback] Audit status update notice:", err?.message || err?.original?.message);
+      });
+      console.log(`📋 [V6-Telemetry] Updated AI_Query_Audit_Tbl Status_Code to '${newStatus}' for conversation ${conversationId || 'N/A'}`);
+    }
 
     // Look up last query details from audit table if not explicitly passed
     let targetQuery = userQuery;
@@ -4526,84 +7693,87 @@ const submitFeedback = async (reqOrPayload, maybePayload = {}) => {
       const findAuditQuery = auditUtd
         ? `SELECT TOP 1 User_Query, Normalized_Query, Generated_SQL, Intent, Tables_Used FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE UTD = ${auditUtd}`
         : conversationId
-        ? `SELECT TOP 1 User_Query, Normalized_Query, Generated_SQL, Intent, Tables_Used FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE Conversation_Id = '${conversationId.replace(/'/g, "''")}' AND Status_Code = 'SUCCESS' ORDER BY UTD DESC`
-        : null;
+          ? `SELECT TOP 1 User_Query, Normalized_Query, Generated_SQL, Intent, Tables_Used FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE Conversation_Id = '${conversationId.replace(/'/g, "''")}' ORDER BY UTD DESC`
+          : null;
 
       if (findAuditQuery) {
         const auditRows = await sequelize.query(findAuditQuery, { type: QueryTypes.SELECT }).catch(() => []);
         if (auditRows && auditRows.length > 0) {
           if (!targetQuery) targetQuery = auditRows[0].Normalized_Query || auditRows[0].User_Query;
-          if (!targetSQL) targetSQL = auditRows[0].Generated_SQL;
+          if (!targetSQL && !isDislike) targetSQL = auditRows[0].Generated_SQL;
           if (auditRows[0].Intent) targetIntent = auditRows[0].Intent;
         }
       }
     }
 
-    // If it's positive feedback (Like 👍), promote query in AI_SQL_Learning_Tbl as a Golden Example
-    if (feedbackType === "HELPFUL" && targetQuery && targetSQL) {
+    // If disliked and NO correct SQL was provided, delete the query in AI_SQL_Learning_Tbl so bad queries aren't served
+    if (isDislike && !correctSQL && targetQuery) {
       const norm = normalizeLower(targetQuery);
-      const insertLearnSql = `
-        IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
-        BEGIN
+      const demoteSql = `
+        DELETE FROM [dbo].[AI_SQL_Learning_Tbl]
+        WHERE CONVERT(NVARCHAR(500), Normalized_Question) = '${norm.replace(/'/g, "''")}';
+      `;
+      await sequelize.query(demoteSql, { type: QueryTypes.RAW }).catch(() => { });
+    }
+
+    // Extract all question variations (including synonyms)
+    const rawSynonyms = payload.synonyms || payload.variations || "";
+    const questionList = targetQuery ? [targetQuery] : [];
+    if (rawSynonyms && typeof rawSynonyms === "string") {
+      rawSynonyms.split(/[,;\n]+/).forEach(s => {
+        const trimmed = s.trim();
+        if (trimmed && !questionList.includes(trimmed)) {
+          questionList.push(trimmed);
+        }
+      });
+    }
+
+    // Only promote in AI_SQL_Learning_Tbl if it's positive (Like 👍) OR explicit user correctSQL was provided
+    const effectiveSQL = correctSQL || (feedbackType === "HELPFUL" ? targetSQL : null);
+    if (effectiveSQL && questionList.length > 0 && (feedbackType === "HELPFUL" || correctSQL)) {
+      for (const q of questionList) {
+        const norm = normalizeLower(q);
+        if (!norm) continue;
+
+        const insertLearnSql = `
           MERGE INTO [dbo].[AI_SQL_Learning_Tbl] AS target
-          USING (SELECT '${norm.replace(/'/g, "''")}' AS Question, '${targetIntent.replace(/'/g, "''")}' AS Intent) AS source
-          ON (target.Normalized_Question = source.Question)
+          USING (SELECT N'${norm.replace(/'/g, "''")}' AS Question, '${targetIntent.replace(/'/g, "''")}' AS Intent) AS source
+          ON (CONVERT(NVARCHAR(500), target.Normalized_Question) = source.Question)
           WHEN MATCHED THEN
             UPDATE SET 
-              target.Success_Count = target.Success_Count + 10,
-              target.SQL_Query = '${targetSQL.replace(/'/g, "''")}',
+              target.Success_Count = target.Success_Count + 50,
+              target.SQL_Query = N'${effectiveSQL.replace(/'/g, "''")}',
+              target.Tables_Used = ${targetTable ? `'${targetTable.replace(/'/g, "''")}'` : "target.Tables_Used"},
               target.Last_Verified_At = GETDATE(),
               target.Updated_At = GETDATE()
           WHEN NOT MATCHED THEN
             INSERT (Normalized_Question, Intent, SQL_Query, Tables_Used, Success_Count, Last_Execution_Time_Ms, Created_At, Last_Verified_At)
-            VALUES (source.Question, source.Intent, '${targetSQL.replace(/'/g, "''")}', ${targetTable ? `'${targetTable}'` : "'EMPLOYEEMASTER'"}, 10, 50, GETDATE(), GETDATE());
-        END
-      `;
-      await sequelize.query(insertLearnSql, { type: QueryTypes.RAW }).catch(() => {});
-      console.log(`👍 [V6-RLHF] Query successfully learned and promoted from user Like: "${targetQuery}"`);
+            VALUES (source.Question, source.Intent, N'${effectiveSQL.replace(/'/g, "''")}', ${targetTable ? `'${targetTable.replace(/'/g, "''")}'` : "'EMPLOYEEMASTER'"}, 50, 50, GETDATE(), GETDATE());
+        `;
+        await sequelize.query(insertLearnSql, { type: QueryTypes.RAW }).catch((err) => {
+          console.warn("[V6-RLHF] Merge learning query warning:", err?.message);
+        });
+      }
+      console.log(`🎯 [V6-RLHF] Successfully trained & learned golden SQL for ${questionList.length} question variation(s) on intent '${targetIntent}'!`);
     }
 
-    // 2. If it's negative feedback or correction, insert into AI_SQL_Corrections
-    if (feedbackType !== "HELPFUL" || userComment || correctSQL) {
-      const ruleDesc = userComment || (correctSQL ? `User specified correct SQL: ${correctSQL}` : "Negative feedback rule override");
+    // 2. If it's correction or training rule, insert into AI_SQL_Corrections
+    if (feedbackType !== "HELPFUL" || userComment || effectiveSQL) {
+      const ruleDesc = userComment || (effectiveSQL ? `User specified correct SQL: ${effectiveSQL}` : "Feedback rule override");
       const insertCorrectionSql = `
-        IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NOT NULL
-        BEGIN
-          INSERT INTO [dbo].[AI_SQL_Corrections] (Correction_Type, User_Message, Target_Table, Correct_SQL_Pattern, Rule_Description, Is_Active, Created_At)
-          VALUES ('USER_FEEDBACK', '${userComment.replace(/'/g, "''")}', ${targetTable ? `'${targetTable}'` : 'NULL'}, ${correctSQL ? `'${correctSQL.replace(/'/g, "''")}'` : 'NULL'}, '${ruleDesc.replace(/'/g, "''")}', 1, GETDATE());
-        END
+        INSERT INTO [dbo].[AI_SQL_Corrections] (Correction_Type, User_Message, Target_Table, Correct_SQL_Pattern, Rule_Description, Is_Active, Created_At)
+        VALUES ('${feedbackType.replace(/'/g, "''")}', N'${userComment.replace(/'/g, "''")}', ${targetTable ? `'${targetTable.replace(/'/g, "''")}'` : 'NULL'}, ${effectiveSQL ? `N'${effectiveSQL.replace(/'/g, "''")}'` : 'NULL'}, N'${ruleDesc.replace(/'/g, "''")}', 1, GETDATE());
       `;
-      await sequelize.query(insertCorrectionSql, { type: QueryTypes.RAW }).catch(() => {});
-
-      // 3. If correct SQL is provided, store/update golden example in AI_SQL_Learning_Tbl
-      if (correctSQL && userQuery) {
-        const norm = normalizeLower(userQuery);
-        const insertLearnSql = `
-          IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
-          BEGIN
-            MERGE INTO [dbo].[AI_SQL_Learning_Tbl] AS target
-            USING (SELECT '${norm.replace(/'/g, "''")}' AS Question, 'DYNAMIC_CUSTOM' AS Intent) AS source
-            ON (target.Normalized_Question = source.Question)
-            WHEN MATCHED THEN
-              UPDATE SET 
-                target.Success_Count = target.Success_Count + 5,
-                target.SQL_Query = '${correctSQL.replace(/'/g, "''")}',
-                target.Updated_At = GETDATE()
-            WHEN NOT MATCHED THEN
-              INSERT (Normalized_Question, Intent, SQL_Query, Tables_Used, Success_Count, Last_Execution_Time_Ms, Created_At)
-              VALUES (source.Question, source.Intent, '${correctSQL.replace(/'/g, "''")}', ${targetTable ? `'${targetTable}'` : "'EMPLOYEEMASTER'"}, 5, 50, GETDATE());
-          END
-        `;
-        await sequelize.query(insertLearnSql, { type: QueryTypes.RAW }).catch(() => {});
-      }
+      await sequelize.query(insertCorrectionSql, { type: QueryTypes.RAW }).catch(() => { });
     }
   }
 
   return {
     success: true,
-    message: "Feedback & correction recorded successfully. AI has adapted its learning model."
+    message: isDislike ? "Query marked as FAILED in History." : "Feedback & correction recorded successfully. AI has adapted its learning model."
   };
 };
+
 
 // ============================================================================
 // MASTER ORCHESTRATOR: askEnterpriseCopilotV6
@@ -4617,7 +7787,13 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     effectivePayload = { message: reqOrMessage, ...payload };
     effectiveReq = { body: effectivePayload, headers: payload.headers || {}, user: payload.user || {} };
   } else if (reqOrMessage && typeof reqOrMessage === "object") {
-    effectivePayload = reqOrMessage.body || reqOrMessage;
+    effectivePayload = {
+      ...(reqOrMessage.body && typeof reqOrMessage.body === "object" ? reqOrMessage.body : {}),
+      ...(payload && typeof payload === "object" ? payload : {})
+    };
+    if (Object.keys(effectivePayload).length === 0) {
+      effectivePayload = reqOrMessage;
+    }
     effectiveReq = {
       body: effectivePayload,
       headers: reqOrMessage.headers || payload.headers || {},
@@ -4632,14 +7808,30 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     throw new ApiError(400, "message is required");
   }
 
+  let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
+  // Universal Multilingual Translation & Canonicalization Engine:
+  // Automatically translates any language (Hindi, Hinglish, Marathi, Gujarati, Tamil, etc.) into clean standard English
+  const { englishQuery, isTranslated, translationUsage } = await translateToEnglishIfVernacular(rawMessage);
+  if (translationUsage) {
+    totalUsage.prompt_tokens += translationUsage.prompt_tokens || 0;
+    totalUsage.completion_tokens += translationUsage.completion_tokens || 0;
+    totalUsage.total_tokens += translationUsage.total_tokens || 0;
+  }
+
   console.log("\n=======================================================");
-  console.log("🚀 [AUTOVYN-AI-V6-COPILOT] Question:", rawMessage);
+  console.log("🚀 [AUTOVYN-AI-V6-COPILOT] Original Question:", rawMessage);
+  if (isTranslated) {
+    console.log("🌐 [AUTOVYN-AI-V6-COPILOT] Translated English Query:", englishQuery);
+  }
 
   // 1. User Context & Auth
   const userContext = buildUserContext(effectiveReq);
   const conversationId = effectivePayload.conversationId || `conv_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
 
   let sequelize = null;
+  const queryEmbedding = null;
+
   try {
     // 2. Database Connection
     sequelize = await dbname(effectiveReq, userContext.compcode);
@@ -4647,24 +7839,107 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       throw new ApiError(500, "Unable to establish connection with AutoVyn ERP Database");
     }
 
-    // 2.1 RLHF Continuous Learning: Detect and record in-chat user corrections / table overrides
-    await detectAndStoreUserCorrection({ sequelize, rawMessage, userContext });
+    // 2.1 RLHF Continuous Learning & Follow-Up Data Location Handler
+    const correctionResult = await handleUserCorrectionAndDataLocation({
+      sequelize,
+      rawMessage,
+      englishQuery: englishQuery || rawMessage,
+      conversationId,
+      userContext,
+      startedAt
+    });
 
-    // 3. Engine 1 & 2: Intent & Entity Classification
-    const initialClassification = await classifyIntentAndExtractEntities({
-      message: rawMessage,
+    if (correctionResult && correctionResult.handled && correctionResult.result) {
+      return correctionResult.result;
+    }
+
+    let sqlPlan = null;
+    let tablesUsed = [];
+    let initialClassification = null;
+    let resolvedEntities = {};
+    let isLearnedQuery = false;
+
+    // 3. Engine 1 & 2: Intent & Entity Classification (Run FIRST so date/branch/employee entities are known!)
+    initialClassification = await classifyIntentAndExtractEntities({
+      message: englishQuery || rawMessage,
+      originalMessage: rawMessage,
       userContext
     });
 
-    // 4. Engine 8: Conversation Memory Context Resolution
-    const resolvedEntities = MemoryEngineInstance.resolveContextualEntities(
-      conversationId,
-      initialClassification.entities,
-      rawMessage
+    // 4. Check if CURRENT message explicitly mentions an employee by Name (Database-Backed Entity Resolution)
+    const isIdentifierLookup = Boolean(
+      initialClassification.entities.mobileNumber ||
+      initialClassification.entities.panNumber ||
+      initialClassification.entities.aadharNumber ||
+      initialClassification.entities.accountNumber
     );
+    const isListOrAggregate = /\b(kon kon|kaun kaun|kiske kiske|list|all|sabka|total|kitne|kitna|sankhya|ginti|how many|records)\b/i.test(normalizeLower(rawMessage));
+    const isRankingOrExtremum = initialClassification.intent === "HIGHEST_SALARY_RANKING" ||
+      /\b(sabse\s*jyada|sabse\s*kam|sabse\s*adhik|sabse|highest|lowest|top\s*\d*|bottom\s*\d*|maximum|minimum|max|min|ranking|topper|rank|kiski\s*salary|kiska\s*salary|kisko\s*salary|sabse\s*badi|pay\s*hui|payment)\b/i.test(normalizeLower(rawMessage));
+    const isEventOrWhoQuery = /\b(kiska|kiski|kiske|kisko|kaun|kon|who|whose)\b/i.test(normalizeLower(rawMessage)) ||
+      /\b(annivers\w*|anivers\w*|anvers\w*|saalgir\w*|salgir\w*|birthday|bday|b'day|janamdin|holiday|holidays)\b/i.test(normalizeLower(rawMessage));
 
-    // 4.1 Database-Backed Fuzzy Entity Resolution & Disambiguation
-    if (!resolvedEntities.employeeCode && !resolvedEntities.isSelf) {
+    resolvedEntities = { ...initialClassification.entities };
+
+    // 3.1 Check Conversation Memory (Anaphora & Multi-Turn Context Resolution)
+    await MemoryEngineInstance.ensureContextFromDB(conversationId, sequelize);
+    let contextRes = { entities: resolvedEntities, intent: initialClassification.intent, isFollowup: false, previousTurn: null };
+    if (!resolvedEntities.employeeCode && !resolvedEntities.employeeName && !resolvedEntities.isSelf) {
+      contextRes = MemoryEngineInstance.resolveContextualEntities(
+        conversationId,
+        resolvedEntities,
+        rawMessage,
+        initialClassification.intent
+      );
+      resolvedEntities = contextRes.entities;
+      if (contextRes.intent && contextRes.intent !== initialClassification.intent) {
+        console.log(`🧠 [V6-MemoryEngine] Contextually resolved intent from '${initialClassification.intent}' to '${contextRes.intent}' (isFollowup: ${contextRes.isFollowup})`);
+        initialClassification.intent = contextRes.intent;
+      }
+    }
+
+    const isEmployeeCountIntent = initialClassification.intent === "EMPLOYEE_COUNT" || Boolean(resolvedEntities.designation);
+    const isPronounFollowup = /\b(iska|iski|iske|inhe|inhein|unka|unki|unke|same|vahi|uska|uski|uske|previous|above|wahi|this person|that person|isi|isi\s*employee|is\s*employee|is\s*bande|isi\s*bande|current\s*employee)\b/i.test(normalizeLower(rawMessage));
+
+    if (isPronounFollowup && !resolvedEntities.employeeCode && !resolvedEntities.employeeName && !resolvedEntities.nameFilter) {
+      const clarifMsg = `Aap kis employee ki details/address dekhna chahte hain? Kripya unka **Employee Code** ya **Naam** batayein.`;
+      MemoryEngineInstance.updateContext(
+        conversationId,
+        resolvedEntities,
+        initialClassification.intent,
+        {
+          userMessage: rawMessage,
+          sql: "",
+          rowCount: 0,
+          failed: false,
+          isPendingClarification: true
+        }
+      );
+      return {
+        success: true,
+        data: [],
+        conversationId,
+        answer: clarifMsg,
+        mode: "CONVERSATIONAL",
+        intent: "CLARIFICATION_REQUIRED",
+        isSelfQuery: false,
+        sources: ["AutoVyn ERP"],
+        query: { sql: "", tablesUsed: [], rowCount: 0, executionTimeMs: Date.now() - startedAt },
+        confidence: { level: "HIGH", score: 0.95 },
+        evidence: { canAnswer: true, rows: [] },
+        sqlValidation: { valid: true, sanitized: true },
+        critic: { verified: true, score: 0.95 },
+        isAmbiguous: false,
+        resolvedEntities,
+        cached: false,
+        cacheTier: "NONE",
+        model: "AutoVyn-V6-FollowupClarifier",
+        usage: totalUsage,
+        responseTimeMs: Date.now() - startedAt
+      };
+    }
+
+    if (!resolvedEntities.employeeCode && !isPronounFollowup && !resolvedEntities.isSelf && !isIdentifierLookup && !isListOrAggregate && !isRankingOrExtremum && !isEventOrWhoQuery && !isEmployeeCountIntent) {
       const dbEntityResult = await resolveEmployeeEntityViaDB({
         sequelize,
         message: rawMessage,
@@ -4685,7 +7960,35 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         if (!resolvedEntities.designation && dbEntityResult.designation) {
           resolvedEntities.designation = dbEntityResult.designation;
         }
-        console.log(`👤 [V6-DBEntityLinker] Resolved employee: ${dbEntityResult.employeeName} (${dbEntityResult.employeeCode})`);
+        console.log(`👤 [V6-DBEntityLinker] Resolved employee from current message: ${dbEntityResult.employeeName} (${dbEntityResult.employeeCode})`);
+
+        // If the current query was just a name or general query answering a previous question, inherit the previous question's intent!
+        const prevTurn = MemoryEngineInstance.getContext(conversationId);
+        if (prevTurn && (initialClassification.intent === "GENERAL_DATABASE_QUERY" || !initialClassification.intent || initialClassification.intent === "EMPLOYEE_LOOKUP")) {
+          const prevMsg = normalizeLower(prevTurn.lastUserMessage || "");
+          const isPrevAddress = /\b(address|pata|rehta\s*hai|ghar|niwas)\b/i.test(prevMsg);
+          const isPrevSalary = /\b(salary|pagar|tankha|vetan|basic|gross|net|ctc)\b/i.test(prevMsg);
+          const isPrevMispunch = /\b(mispunch|punch|haziri|attendance)\b/i.test(prevMsg);
+          const isPrevLeave = /\b(leave|chhutti)\b/i.test(prevMsg);
+
+          if (isPrevAddress) {
+            initialClassification.intent = "EMPLOYEE_LOOKUP";
+            resolvedEntities.isAddressQuery = true;
+          } else if (isPrevSalary) {
+            initialClassification.intent = prevTurn.lastIntent || "EMPLOYEE_SALARY_HISTORY";
+            if (prevTurn.lastMonth) resolvedEntities.month = prevTurn.lastMonth;
+            if (prevTurn.lastYear) resolvedEntities.year = prevTurn.lastYear;
+          } else if (isPrevMispunch) {
+            initialClassification.intent = prevTurn.lastIntent || "MISPUNCH_LOOKUP_BY_EMP";
+          } else if (isPrevLeave) {
+            initialClassification.intent = prevTurn.lastIntent || "EMPLOYEE_LEAVE_LOOKUP";
+          } else if (prevTurn.lastIntent && prevTurn.lastIntent !== "CLARIFICATION_REQUIRED") {
+            initialClassification.intent = prevTurn.lastIntent;
+          } else {
+            initialClassification.intent = "EMPLOYEE_LOOKUP";
+          }
+          console.log(`🧠 [V6-MemoryEngine] Inherited intent '${initialClassification.intent}' for employee ${dbEntityResult.employeeName} from previous turn context`);
+        }
 
         // Upgrade generic report intents to employee-targeted intents
         if (initialClassification.intent === "MISPUNCH_REPORT" || initialClassification.intent === "MISPUNCH_COUNT") {
@@ -4705,6 +8008,20 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
           ambAns += `| ${idx + 1} | **${c.empCode}** | **${c.name}** | ${c.branch} | ${c.department} | ${c.designation} | ${c.status} |\n`;
         });
         ambAns += `\n👉 Kripya bataiye aap inme se kis **Employee Code** ya branch ka data dekhna chahte hain?`;
+
+        // Update MemoryEngine so follow-up corrections know what question caused this disambiguation
+        MemoryEngineInstance.updateContext(
+          conversationId,
+          resolvedEntities,
+          "ENTITY_DISAMBIGUATION",
+          {
+            userMessage: rawMessage,
+            sql: "ENTITY_DISAMBIGUATION_PROMPT",
+            rowCount: dbEntityResult.candidates.length,
+            failed: false,
+            tablesUsed: ["EMPLOYEEMASTER"]
+          }
+        );
 
         return {
           success: true,
@@ -4734,113 +8051,156 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     MemoryEngineInstance.updateContext(conversationId, resolvedEntities, initialClassification.intent);
 
     const normalizedQuery = normalizeLower(rawMessage);
-    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-    // 5. Engine 7: Multi-Tier Cache Lookup (L1 Hash -> L3 Embedding)
-    let cachedResult = CacheEngineInstance.getExactMatch(
-      normalizedQuery,
-      userContext.compcode,
-      userContext.role,
-      userContext.userCode
-    );
+    // 5. Engine 5.1: RLHF Learned Query Matcher (User-trained Golden Rules have HIGHEST priority!)
+    if (!sqlPlan) {
+      // Date queries use exactOnly to avoid stale date pollution
+      const isBuiltinDateQuery = ["WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY", "BIRTHDAY_BY_DATE", "BIRTHDAY_TODAY", "BIRTHDAYS_MONTH"].includes(initialClassification?.intent);
 
-    let queryEmbedding = [];
-    if (!cachedResult) {
-      queryEmbedding = await generateEmbedding(normalizedQuery);
-      cachedResult = await CacheEngineInstance.getSemanticMatch(
-        queryEmbedding,
-        userContext.compcode,
-        userContext.role
-      );
-    }
-
-    if (cachedResult && cachedResult.sql) {
-      console.log(`⚡ [V6-Cache-Hit] Served via ${cachedResult.cacheTier} in ${Date.now() - startedAt}ms`);
-      
-      // Execute cached SQL directly on live DB to ensure data freshness
-      const rows = await sequelize.query(cachedResult.sql, { type: QueryTypes.SELECT });
-      const responseTimeMs = Date.now() - startedAt;
-
-      return {
-        success: true,
-        data: rows,
-        conversationId,
-        answer: cachedResult.answer,
-        mode: initialClassification.mode,
-        intent: initialClassification.intent,
-        isSelfQuery: initialClassification.isSelfQuery,
-        sources: ["AutoVyn ERP Live Database (Cached Plan)"],
-        query: {
-          sql: cachedResult.sql,
-          tablesUsed: [cachedResult.targetTable || "LiveERP"],
-          rowCount: rows.length,
-          executionTimeMs: responseTimeMs,
-        },
-        confidence: { level: "HIGH", score: 0.99 },
-        evidence: { canAnswer: true, rows: rows.slice(0, 10), rowCount: rows.length },
-        sqlValidation: { valid: true, sanitized: true },
-        critic: { verified: true, score: 0.99 },
-        cached: true,
-        cacheTier: cachedResult.cacheTier,
-        model: "AutoVyn-V6-HighSpeed-Cache",
-        usage: totalUsage,
-        responseTimeMs
-      };
-    }
-
-    // 6. Engine 5: SQL Planning (Deterministic Template First -> RLHF Learned Match -> GPT Planner Fallback)
-    let sqlPlan = getDeterministicSQLTemplate({
-      intent: initialClassification.intent,
-      entities: resolvedEntities,
-      userContext
-    });
-
-    let tablesUsed = [];
-
-    if (sqlPlan && sqlPlan.sql) {
-      console.log("🎯 [V6-SQLPlanner] Instant match with Deterministic Template Library.");
-      tablesUsed = [sqlPlan.targetTable || "ERP_MASTER"];
-    } else {
-      // 6.1 RLHF Learned Query Matcher (Checks verified user-liked queries from AI_SQL_Learning_Tbl)
       let learnedMatch = await matchLearnedSimilarQuery({
         sequelize,
-        message: rawMessage,
-        intent: initialClassification.intent,
-        entities: resolvedEntities
+        message: englishQuery || rawMessage,
+        originalMessage: rawMessage,
+        intent: initialClassification?.intent,
+        entities: resolvedEntities,
+        exactOnly: isBuiltinDateQuery
       });
 
       if (learnedMatch && learnedMatch.sql) {
-        console.log(`🏆 [V6-RLHF-LearnedGoldenQuery] Matched learned user-approved pattern: ${learnedMatch.source}`);
+        console.log(`🏆 [V6-RLHF-LearnedGoldenQuery] Matched user-trained golden rule: ${learnedMatch.source}`);
         sqlPlan = {
           sql: learnedMatch.sql,
           requiresJoin: false,
           isTemplate: true,
-          confidence: learnedMatch.confidence,
-          targetTable: "AI_SQL_Learning_Tbl"
+          confidence: learnedMatch.confidence || 0.99,
+          targetTable: learnedMatch.targetTable || "AI_SQL_Learning_Tbl"
         };
-        tablesUsed = ["AI_SQL_Learning_Tbl"];
-      } else {
-        const relevantTables = SchemaEngineInstance.searchRelevantTables(
-          rawMessage,
-          initialClassification.intent
-        );
-        tablesUsed = relevantTables.map(t => t.tableName);
-
-        sqlPlan = await planDynamicSQL({
-          sequelize,
-          message: rawMessage,
-          intent: initialClassification.intent,
-          entities: resolvedEntities,
-          relevantTables,
-          userContext
-        });
-        if (sqlPlan.usage) {
-          totalUsage.prompt_tokens += sqlPlan.usage.prompt_tokens || 0;
-          totalUsage.completion_tokens += sqlPlan.usage.completion_tokens || 0;
-          totalUsage.total_tokens += sqlPlan.usage.total_tokens || 0;
-        }
+        tablesUsed = [learnedMatch.targetTable || "AI_SQL_Learning_Tbl"];
+        isLearnedQuery = true;
       }
     }
+
+    // 6. Engine 7: Multi-Tier Cache Lookup (L1 Hash -> L3 Embedding)
+    if (!sqlPlan) {
+      let cachedResult = CacheEngineInstance.getExactMatch(
+        normalizedQuery,
+        userContext.compcode,
+        userContext.role,
+        userContext.userCode
+      );
+
+      let queryEmbedding = [];
+      if (!cachedResult) {
+        queryEmbedding = await generateEmbedding(normalizedQuery);
+        cachedResult = await CacheEngineInstance.getSemanticMatch(
+          queryEmbedding,
+          userContext.compcode,
+          userContext.role
+        );
+      }
+
+      if (cachedResult && cachedResult.sql) {
+        console.log(`⚡ [V6-Cache-Hit] Served via ${cachedResult.cacheTier} in ${Date.now() - startedAt}ms`);
+
+        // Execute cached SQL directly on live DB to ensure data freshness
+        const rows = await sequelize.query(cachedResult.sql, { type: QueryTypes.SELECT });
+        const responseTimeMs = Date.now() - startedAt;
+
+        // Freshly format response to prevent stale answers or count misalignments
+        let formattedAnswer = cachedResult.answer;
+        if (rows && rows.length > 0) {
+          const aiFmt = await formatResponseViaAI({
+            message: rawMessage,
+            englishQuery: englishQuery || rawMessage,
+            intent: initialClassification?.intent,
+            sql: cachedResult.sql,
+            rows,
+            userContext,
+            entities: resolvedEntities
+          });
+          if (aiFmt?.answer) {
+            formattedAnswer = aiFmt.answer;
+          } else {
+            const detFmt = await formatHumanBusinessAnswer({
+              message: rawMessage,
+              englishQuery: englishQuery || rawMessage,
+              intent: initialClassification?.intent,
+              entities: resolvedEntities,
+              sql: cachedResult.sql,
+              rows,
+              userContext,
+              sequelize
+            });
+            if (detFmt?.answer) {
+              formattedAnswer = detFmt.answer;
+            }
+          }
+        }
+
+        return {
+          success: true,
+          data: rows,
+          conversationId,
+          answer: formattedAnswer,
+          mode: initialClassification?.mode || "DATABASE_QUERY",
+          intent: initialClassification?.intent || "GENERAL_DATABASE_QUERY",
+          isSelfQuery: initialClassification?.isSelfQuery || false,
+          sources: ["AutoVyn ERP Live Database (Cached Plan)"],
+          query: {
+            sql: cachedResult.sql,
+            tablesUsed: [cachedResult.targetTable || "LiveERP"],
+            rowCount: rows.length,
+            executionTimeMs: responseTimeMs,
+          },
+          confidence: { level: "HIGH", score: 0.99 },
+          evidence: { canAnswer: true, rows: rows.slice(0, 10), rowCount: rows.length },
+          sqlValidation: { valid: true, sanitized: true },
+          critic: { verified: true, score: 0.99 },
+          cached: true,
+          cacheTier: cachedResult.cacheTier,
+          model: "AutoVyn-V6-HighSpeed-Cache",
+          usage: totalUsage,
+          responseTimeMs
+        };
+      }
+    }
+
+    // 7. Engine 5: SQL Planning (if not already matched via Learned Engine or Cache)
+    if (!sqlPlan) {
+      // 7.1 Deterministic Template Matcher
+      sqlPlan = getDeterministicSQLTemplate({
+        intent: initialClassification.intent,
+        entities: resolvedEntities,
+        userContext
+      });
+
+      if (sqlPlan && sqlPlan.sql) {
+          console.log("🎯 [V6-SQLPlanner] Match with Deterministic Template Library.");
+          tablesUsed = [sqlPlan.targetTable || "ERP_MASTER"];
+        } else {
+          // 6.3 GPT-4o-mini Dynamic Planner Fallback
+          const relevantTables = SchemaEngineInstance.searchRelevantTables(
+            englishQuery || rawMessage,
+            initialClassification.intent
+          );
+          tablesUsed = relevantTables.map(t => t.tableName);
+
+          sqlPlan = await planDynamicSQL({
+            sequelize,
+            message: englishQuery || rawMessage,
+            originalMessage: rawMessage,
+            intent: initialClassification.intent,
+            entities: resolvedEntities,
+            relevantTables,
+            userContext
+          });
+          if (sqlPlan.usage) {
+            totalUsage.prompt_tokens += sqlPlan.usage.prompt_tokens || 0;
+            totalUsage.completion_tokens += sqlPlan.usage.completion_tokens || 0;
+            totalUsage.total_tokens += sqlPlan.usage.total_tokens || 0;
+          }
+        }
+      }
 
     // 7. Engine 6: SQL Validation & Auto-Repair
     let validatedSQL = validateAndRepairSQL(sqlPlan.sql, userContext);
@@ -4869,10 +8229,15 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       "MISPUNCH_EMPLOYEE_TOTAL", "MISPUNCH_REPORT", "MISPUNCH_LOOKUP_BY_EMP", "MISPUNCH_COUNT",
       "EMPLOYEE_LEAVE_LOOKUP", "EMPLOYEE_LEAVE_COUNT", "EMPLOYEE_LEAVE_LIST",
       "SALARY_TOTAL_AGGREGATE", "SALARY_COUNT_AGGREGATE", "PRESENT_COUNT", "ABSENT_COUNT",
-      "PF_COUNT", "BANK_ACCOUNT_VERIFY_COUNT", "AADHAAR_VERIFY_COUNT", "PAN_VERIFY_COUNT", "KYC_COUNT"
+      "PF_COUNT", "BANK_ACCOUNT_VERIFY_COUNT", "AADHAAR_VERIFY_COUNT", "PAN_VERIFY_COUNT", "KYC_COUNT",
+      "SERVICE_REMINDERS_DUE",
+      "WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY", "BIRTHDAY_BY_DATE", "BIRTHDAY_TODAY", "BIRTHDAYS_MONTH",
+      "SALARY_REPORT", "EMPLOYEE_SALARY_HISTORY", "SELF_SALARY", "SALARY_PF_DEDUCTION",
+      "EMPLOYEE_LOOKUP", "EMPLOYEE_PROFILE"
     ]);
 
     let effectiveIntent = initialClassification.intent;
+    let isAdaptiveFallback = false;
     if ((!dbRows || dbRows.length === 0) && !nonFallbackIntents.has(initialClassification.intent)) {
       console.log("⚠️ [V6-Notice] Primary query returned 0 rows. Triggering Autonomous Adaptive Cross-Table Search...");
       const fallbackResult = await executeAdaptiveCrossTableSearch({
@@ -4888,21 +8253,43 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         dbRows = fallbackResult.rows;
         validatedSQL = fallbackResult.sql;
         tablesUsed = fallbackResult.tablesUsed || [fallbackResult.source];
+        isAdaptiveFallback = true;
         if (fallbackResult.intent) {
           effectiveIntent = fallbackResult.intent;
         }
       }
     }
 
-    // 10. Engine 10: Human Response Formatter
-    const formatted = await formatHumanBusinessAnswer({
-      message: rawMessage,
-      intent: effectiveIntent,
-      entities: resolvedEntities,
-      sql: validatedSQL,
-      rows: dbRows,
-      userContext
-    });
+    // 10. Engine 10: Human Response Formatter (AI Formatter with Deterministic Fallback)
+    let formatted = null;
+
+    // First, try AI Response Formatter for rich, natural, 100% accurate conversational formatting
+    if (dbRows.length > 0) {
+      formatted = await formatResponseViaAI({
+        message: rawMessage,
+        englishQuery: englishQuery || rawMessage,
+        intent: effectiveIntent,
+        sql: validatedSQL,
+        rows: dbRows,
+        userContext,
+        entities: resolvedEntities,
+        previousContext: contextRes?.isFollowup ? contextRes.previousTurn : null
+      });
+    }
+
+    // If AI formatter didn't run or returned null, use deterministic formatter
+    if (!formatted || !formatted.answer) {
+      formatted = await formatHumanBusinessAnswer({
+        message: rawMessage,
+        englishQuery: englishQuery || rawMessage,
+        intent: effectiveIntent,
+        entities: resolvedEntities,
+        sql: validatedSQL,
+        rows: dbRows,
+        userContext,
+        sequelize
+      });
+    }
     if (formatted.usage) {
       totalUsage.prompt_tokens += formatted.usage.prompt_tokens || 0;
       totalUsage.completion_tokens += formatted.usage.completion_tokens || 0;
@@ -4919,17 +8306,19 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
     // 12. Engine 12: Save in Cache & Learn Query
     if (dbRows.length > 0) {
-      CacheEngineInstance.saveToCache({
-        normalizedQuery,
-        queryEmbedding,
-        sql: validatedSQL,
-        answer: formatted.answer,
-        entities: resolvedEntities,
-        compcode: userContext.compcode,
-        role: userContext.role,
-        userCode: userContext.userCode,
-        intent: effectiveIntent
-      });
+      if (!isAdaptiveFallback) {
+        CacheEngineInstance.saveToCache({
+          normalizedQuery,
+          queryEmbedding,
+          sql: validatedSQL,
+          answer: formatted.answer,
+          entities: resolvedEntities,
+          compcode: userContext.compcode,
+          role: userContext.role,
+          userCode: userContext.userCode,
+          intent: effectiveIntent
+        });
+      }
 
       recordLearningAndTelemetry({
         sequelize,
@@ -4944,8 +8333,9 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         executionTimeMs: responseTimeMs,
         rowCount: dbRows.length,
         success: true,
-        answer: formatted.answer
-      }).catch(() => {});
+        answer: formatted.answer,
+        isFallback: isAdaptiveFallback
+      }).catch(() => { });
     } else {
       recordLearningAndTelemetry({
         sequelize,
@@ -4960,9 +8350,42 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         executionTimeMs: responseTimeMs,
         rowCount: 0,
         success: true,
-        answer: formatted.answer
-      }).catch(() => {});
+        answer: formatted.answer,
+        isFallback: isAdaptiveFallback
+      }).catch(() => { });
     }
+
+    // Auto-capture primary employee entity from query results (e.g. single employee result or top-1 ranking like highest salary)
+    if (Array.isArray(dbRows) && dbRows.length >= 1) {
+      const isTopRankingOrSingle = dbRows.length === 1 ||
+        initialClassification?.intent?.includes("RANKING") ||
+        /\b(sabse\s*jyada|sabse\s*kam|sabse\s*adhik|highest|lowest|top\s*1\b|maximum|minimum|kiske|kisko|kiska)\b/i.test(rawMessage);
+      if (isTopRankingOrSingle) {
+        const topRow = dbRows[0];
+        const rowEmpCode = topRow.EMPCODE || topRow.Emp_Code || topRow.EmpCode || topRow.emp_code || topRow.EmployeeCode || topRow.USER_Code;
+        const rowEmpName = topRow.FullName || topRow.EmpName || topRow.EMPFIRSTNAME || topRow.EmployeeName || topRow.Name ||
+          ([topRow.EMPFIRSTNAME, topRow.EMPLASTNAME].filter(Boolean).join(" ") || null);
+        if (rowEmpCode) {
+          resolvedEntities.employeeCode = String(rowEmpCode);
+          if (rowEmpName) resolvedEntities.employeeName = String(rowEmpName);
+          console.log(`🧠 [V6-MemoryEngine] Auto-captured primary employee from query results: ${resolvedEntities.employeeName || ''} (${resolvedEntities.employeeCode})`);
+        }
+      }
+    }
+
+    // Update Conversation Memory Turn Context for multi-turn learning & follow-ups
+    MemoryEngineInstance.updateContext(
+      conversationId,
+      resolvedEntities,
+      effectiveIntent,
+      {
+        userMessage: rawMessage,
+        sql: validatedSQL,
+        rowCount: dbRows.length,
+        failed: false,
+        tablesUsed
+      }
+    );
 
     console.log(`✅ [V6-Execution-Complete] Success in ${responseTimeMs}ms (SQL: ${sqlExecutionTimeMs}ms)`);
 
@@ -5019,11 +8442,611 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         success: false,
         errorMessage: err.message,
         answer: `Query processing error: ${err.message}`
-      }).catch(() => {});
+      }).catch(() => { });
     }
+
+    // Record failure in Conversation Memory so follow-up correction knows prior query failed
+    MemoryEngineInstance.updateContext(
+      conversationId,
+      {},
+      "FAILED_QUERY",
+      {
+        userMessage: rawMessage,
+        sql: "",
+        rowCount: 0,
+        failed: true,
+        errorMessage: err.message
+      }
+    );
 
     throw err;
   }
+};
+
+// ============================================================================
+// DYNAMIC AI TRAINING RULES & LIVE SQL TESTING API ENGINE
+// ============================================================================
+
+const ensureLearningTablesExist = async (sequelize) => {
+  if (!sequelize?.query) return;
+  const ensureTablesSql = `
+    IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_SQL_Learning_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Normalized_Question] NVARCHAR(500) NULL,
+        [Intent] VARCHAR(100) NULL,
+        [SQL_Query] NVARCHAR(MAX) NULL,
+        [Tables_Used] VARCHAR(500) NULL,
+        [Success_Count] INT NULL DEFAULT 1,
+        [Last_Execution_Time_Ms] INT NULL DEFAULT 50,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        [Last_Verified_At] DATETIME2(7) NULL,
+        [Updated_At] DATETIME2(7) NULL
+      );
+    END
+    ELSE
+    BEGIN
+      IF COL_LENGTH('dbo.AI_SQL_Learning_Tbl', 'Last_Verified_At') IS NULL
+        ALTER TABLE [dbo].[AI_SQL_Learning_Tbl] ADD [Last_Verified_At] DATETIME2(7) NULL;
+      IF COL_LENGTH('dbo.AI_SQL_Learning_Tbl', 'Updated_At') IS NULL
+        ALTER TABLE [dbo].[AI_SQL_Learning_Tbl] ADD [Updated_At] DATETIME2(7) NULL;
+      IF COL_LENGTH('dbo.AI_SQL_Learning_Tbl', 'Intent') IS NULL
+        ALTER TABLE [dbo].[AI_SQL_Learning_Tbl] ADD [Intent] VARCHAR(100) NULL;
+      IF COL_LENGTH('dbo.AI_SQL_Learning_Tbl', 'Tables_Used') IS NULL
+        ALTER TABLE [dbo].[AI_SQL_Learning_Tbl] ADD [Tables_Used] VARCHAR(500) NULL;
+    END;
+
+    IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_SQL_Corrections] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Correction_Type] VARCHAR(100) NULL,
+        [User_Message] NVARCHAR(MAX) NULL,
+        [Target_Table] VARCHAR(100) NULL,
+        [Correct_SQL_Pattern] NVARCHAR(MAX) NULL,
+        [Rule_Description] NVARCHAR(MAX) NULL,
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+  `;
+  await sequelize.query(ensureTablesSql, { type: QueryTypes.RAW }).catch((err) => {
+    console.warn("[ensureLearningTablesExist] Table check warning:", err?.message || err?.original?.message);
+  });
+};
+
+const getAILearnedRules = async (reqOrPayload) => {
+  const effectiveReq = reqOrPayload?.headers ? reqOrPayload : { body: reqOrPayload, headers: {}, user: {} };
+  const userContext = buildUserContext(effectiveReq);
+  const sequelize = await dbname(effectiveReq, userContext.compcode);
+  if (!sequelize?.query) {
+    throw new ApiError(500, "Database connection not available");
+  }
+
+  await ensureLearningTablesExist(sequelize);
+
+  const query = `
+    SELECT 
+      UTD,
+      CONVERT(NVARCHAR(500), Normalized_Question) AS Normalized_Question,
+      Intent,
+      CONVERT(NVARCHAR(MAX), SQL_Query) AS SQL_Query,
+      Tables_Used,
+      ISNULL(Success_Count, 1) AS Success_Count,
+      CONVERT(VARCHAR(19), Created_At, 120) AS Created_At,
+      CONVERT(VARCHAR(19), Last_Verified_At, 120) AS Last_Verified_At
+    FROM [dbo].[AI_SQL_Learning_Tbl] WITH (NOLOCK)
+    ORDER BY UTD DESC;
+  `;
+  const rules = await sequelize.query(query, { type: QueryTypes.SELECT }).catch(() => []);
+  return {
+    success: true,
+    data: rules || [],
+    count: rules ? rules.length : 0
+  };
+};
+
+const saveAILearnedRule = async (reqOrPayload) => {
+  const payload = reqOrPayload?.body || reqOrPayload || {};
+  const effectiveReq = reqOrPayload?.headers ? reqOrPayload : { body: payload, headers: {}, user: {} };
+  const userContext = buildUserContext(effectiveReq);
+  const sequelize = await dbname(effectiveReq, userContext.compcode);
+  if (!sequelize?.query) {
+    throw new ApiError(500, "Database connection not available");
+  }
+
+  const question = (payload.question || payload.userQuery || "").trim();
+  const sql = (payload.sql || payload.correctSQL || "").trim();
+  const intent = (payload.intent || "DYNAMIC_CUSTOM").trim();
+  const table = (payload.targetTable || payload.table || "ERP_MASTER").trim();
+  const synonyms = payload.synonyms || "";
+
+  if (!question) throw new ApiError(400, "Question is required");
+  if (!sql) throw new ApiError(400, "SQL Query is required");
+
+  // Validate SQL is SELECT or WITH
+  if (!/^\s*(SELECT|WITH)\b/i.test(sql) || /\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|EXEC|CREATE)\b/i.test(sql)) {
+    throw new ApiError(400, "Only read-only SELECT queries are allowed for security.");
+  }
+
+  await ensureLearningTablesExist(sequelize);
+
+  const questionsToSave = [question];
+  if (synonyms && typeof synonyms === "string") {
+    synonyms.split(/[,;\n]+/).forEach(s => {
+      const trimmed = s.trim();
+      if (trimmed && !questionsToSave.includes(trimmed)) {
+        questionsToSave.push(trimmed);
+      }
+    });
+  }
+
+  for (const q of questionsToSave) {
+    const norm = normalizeLower(q);
+    const mergeSql = `
+      MERGE INTO [dbo].[AI_SQL_Learning_Tbl] AS target
+      USING (SELECT N'${norm.replace(/'/g, "''")}' AS Question, '${intent.replace(/'/g, "''")}' AS Intent) AS source
+      ON (CONVERT(NVARCHAR(500), target.Normalized_Question) = source.Question)
+      WHEN MATCHED THEN
+        UPDATE SET 
+          target.Success_Count = target.Success_Count + 50,
+          target.SQL_Query = N'${sql.replace(/'/g, "''")}',
+          target.Tables_Used = '${table.replace(/'/g, "''")}',
+          target.Intent = source.Intent,
+          target.Last_Verified_At = GETDATE(),
+          target.Updated_At = GETDATE()
+      WHEN NOT MATCHED THEN
+        INSERT (Normalized_Question, Intent, SQL_Query, Tables_Used, Success_Count, Last_Execution_Time_Ms, Created_At, Last_Verified_At)
+        VALUES (source.Question, source.Intent, N'${sql.replace(/'/g, "''")}', '${table.replace(/'/g, "''")}', 50, 50, GETDATE(), GETDATE());
+    `;
+    try {
+      await sequelize.query(mergeSql, { type: QueryTypes.RAW });
+    } catch (sqlErr) {
+      console.error(`[saveAILearnedRule] MERGE error for question "${q}":`, sqlErr?.message || sqlErr?.original?.message);
+      throw sqlErr;
+    }
+  }
+
+  // Clear in-memory caches
+  CacheEngineInstance.l1ExactCache.clear();
+  CacheEngineInstance.l3VectorCache = [];
+
+  return {
+    success: true,
+    message: `Rule saved & model trained successfully for ${questionsToSave.length} phrasing variation(s)!`
+  };
+};
+
+const deleteAILearnedRule = async (reqOrPayload) => {
+  const payload = reqOrPayload?.body || reqOrPayload || {};
+  const effectiveReq = reqOrPayload?.headers ? reqOrPayload : { body: payload, headers: {}, user: {} };
+  const userContext = buildUserContext(effectiveReq);
+  const sequelize = await dbname(effectiveReq, userContext.compcode);
+  if (!sequelize?.query) {
+    throw new ApiError(500, "Database connection not available");
+  }
+
+  const utd = payload.utd || payload.UTD;
+  const question = payload.question;
+
+  if (!utd && !question) {
+    throw new ApiError(400, "UTD or question is required to delete rule");
+  }
+
+  let deleteSql = `DELETE FROM [dbo].[AI_SQL_Learning_Tbl] WHERE `;
+  if (utd) deleteSql += `UTD = ${parseInt(utd, 10)}`;
+  else deleteSql += `CONVERT(NVARCHAR(500), Normalized_Question) = '${normalizeLower(question).replace(/'/g, "''")}'`;
+
+  await sequelize.query(deleteSql, { type: QueryTypes.RAW });
+
+  // Clear in-memory caches
+  CacheEngineInstance.l1ExactCache.clear();
+  CacheEngineInstance.l3VectorCache = [];
+
+  return {
+    success: true,
+    message: "Trained rule deleted successfully from AI learning memory."
+  };
+};
+
+const testSQLQuery = async (reqOrPayload) => {
+  const payload = reqOrPayload?.body || reqOrPayload || {};
+  const effectiveReq = reqOrPayload?.headers ? reqOrPayload : { body: payload, headers: {}, user: {} };
+  const userContext = buildUserContext(effectiveReq);
+  const sequelize = await dbname(effectiveReq, userContext.compcode);
+  if (!sequelize?.query) {
+    throw new ApiError(500, "Database connection not available");
+  }
+
+  let sql = (payload.sql || payload.correctSQL || payload.query || "").trim();
+  if (!sql) throw new ApiError(400, "SQL Query is required for testing");
+
+  // Validate SQL
+  if (!/^\s*(SELECT|WITH)\b/i.test(sql) || /\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|EXEC|CREATE)\b/i.test(sql)) {
+    throw new ApiError(400, "Security Violation: Only read-only SELECT queries are allowed.");
+  }
+
+  // Ensure TOP 50 for testing preview
+  if (!/\bTOP\s+\d+\b/i.test(sql) && !/\bCOUNT\s*\(/i.test(sql)) {
+    sql = sql.replace(/^\s*SELECT\b/i, "SELECT TOP 50");
+  }
+
+  const startTime = Date.now();
+  try {
+    const rows = await sequelize.query(sql, { type: QueryTypes.SELECT });
+    const latencyMs = Date.now() - startTime;
+    const columns = rows && rows.length > 0 ? Object.keys(rows[0]) : [];
+
+    return {
+      success: true,
+      rowCount: rows ? rows.length : 0,
+      columns,
+      latencyMs,
+      rows: rows ? rows.slice(0, 50) : [],
+      sql
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err.original?.message || err.message || "SQL Execution Error",
+      sql
+    };
+  }
+};
+
+const ensureAllAITables = async (sequelize) => {
+  if (!sequelize?.query) return;
+  const ddl = `
+    IF OBJECT_ID('dbo.AI_Conversation_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Conversation_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Conversation_Id] VARCHAR(100) NOT NULL,
+        [User_Code] BIGINT NULL,
+        [User_Name] NVARCHAR(200) NULL,
+        [Title] NVARCHAR(500) NULL,
+        [Conversation_Type] VARCHAR(50) NULL DEFAULT 'GENERAL',
+        [Comp_Code] VARCHAR(50) NULL,
+        [Status] VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+        [Last_Message_At] DATETIME2(7) NULL DEFAULT SYSDATETIME(),
+        [Created_By] VARCHAR(100) NULL,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        [Updated_By] VARCHAR(100) NULL,
+        [Updated_At] DATETIME2(7) NULL
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Message_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Message_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Message_Id] VARCHAR(100) NOT NULL,
+        [Conversation_Id] VARCHAR(100) NOT NULL,
+        [Role] VARCHAR(20) NOT NULL,
+        [Message_Content] NVARCHAR(MAX) NOT NULL,
+        [Message_Type] VARCHAR(50) NULL DEFAULT 'TEXT',
+        [Route_Type] VARCHAR(50) NULL,
+        [Model_Name] VARCHAR(100) NULL,
+        [Prompt_Tokens] INT NULL,
+        [Completion_Tokens] INT NULL,
+        [Total_Tokens] INT NULL,
+        [Response_Time_Ms] INT NULL,
+        [Metadata] NVARCHAR(MAX) NULL,
+        [Error_Message] NVARCHAR(MAX) NULL,
+        [Created_By] VARCHAR(100) NULL,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Query_Audit_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Query_Audit_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Conversation_Id] VARCHAR(100) NULL,
+        [User_Id] VARCHAR(100) NULL,
+        [Emp_Code] VARCHAR(100) NULL,
+        [Role] VARCHAR(50) NULL,
+        [Comp_Code] VARCHAR(50) NULL,
+        [User_Query] NVARCHAR(MAX) NULL,
+        [Normalized_Query] NVARCHAR(MAX) NULL,
+        [Intent] VARCHAR(100) NULL,
+        [Tables_Used] VARCHAR(500) NULL,
+        [Generated_SQL] NVARCHAR(MAX) NULL,
+        [AI_Response] NVARCHAR(MAX) NULL,
+        [Rows_Returned] INT NULL DEFAULT 0,
+        [Execution_Time_Ms] INT NULL DEFAULT 0,
+        [Confidence_Score] DECIMAL(5,2) NULL DEFAULT 0.95,
+        [Status_Code] VARCHAR(30) NULL DEFAULT 'SUCCESS',
+        [Error_Message] NVARCHAR(MAX) NULL,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END
+    ELSE IF COL_LENGTH('dbo.AI_Query_Audit_Tbl', 'AI_Response') IS NULL
+    BEGIN
+      ALTER TABLE [dbo].[AI_Query_Audit_Tbl] ADD [AI_Response] NVARCHAR(MAX) NULL;
+    END;
+
+    IF OBJECT_ID('dbo.AI_Query_Feedback_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Query_Feedback_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Audit_UTD] BIGINT NULL,
+        [Conversation_Id] VARCHAR(100) NULL,
+        [Feedback_Type] VARCHAR(50) NULL,
+        [User_Comment] NVARCHAR(MAX) NULL,
+        [User_Id] VARCHAR(100) NULL,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_SQL_Learning_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Normalized_Question] NVARCHAR(500) NULL,
+        [Intent] VARCHAR(100) NULL,
+        [SQL_Query] NVARCHAR(MAX) NULL,
+        [Tables_Used] VARCHAR(500) NULL,
+        [Success_Count] INT NULL DEFAULT 1,
+        [Last_Execution_Time_Ms] INT NULL DEFAULT 50,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        [Last_Verified_At] DATETIME2(7) NULL,
+        [Updated_At] DATETIME2(7) NULL
+      );
+    END
+    ELSE
+    BEGIN
+      IF COL_LENGTH('dbo.AI_SQL_Learning_Tbl', 'Last_Verified_At') IS NULL
+        ALTER TABLE [dbo].[AI_SQL_Learning_Tbl] ADD [Last_Verified_At] DATETIME2(7) NULL;
+      IF COL_LENGTH('dbo.AI_SQL_Learning_Tbl', 'Updated_At') IS NULL
+        ALTER TABLE [dbo].[AI_SQL_Learning_Tbl] ADD [Updated_At] DATETIME2(7) NULL;
+      IF COL_LENGTH('dbo.AI_SQL_Learning_Tbl', 'Intent') IS NULL
+        ALTER TABLE [dbo].[AI_SQL_Learning_Tbl] ADD [Intent] VARCHAR(100) NULL;
+      IF COL_LENGTH('dbo.AI_SQL_Learning_Tbl', 'Tables_Used') IS NULL
+        ALTER TABLE [dbo].[AI_SQL_Learning_Tbl] ADD [Tables_Used] VARCHAR(500) NULL;
+    END;
+
+    IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_SQL_Corrections] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Correction_Type] VARCHAR(100) NULL,
+        [User_Message] NVARCHAR(MAX) NULL,
+        [Target_Table] VARCHAR(100) NULL,
+        [Correct_SQL_Pattern] NVARCHAR(MAX) NULL,
+        [Rule_Description] NVARCHAR(MAX) NULL,
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Schema_Table_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Schema_Table_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Schema_Name] VARCHAR(50) NULL DEFAULT 'dbo',
+        [Table_Name] VARCHAR(100) NOT NULL,
+        [Display_Name] NVARCHAR(200) NULL,
+        [Module_Name] VARCHAR(50) NULL DEFAULT 'GENERAL',
+        [Description] NVARCHAR(MAX) NULL,
+        [Approx_Row_Count] BIGINT NULL DEFAULT 0,
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Last_Synced_At] DATETIME2(7) NULL,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        [Updated_At] DATETIME2(7) NULL
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Schema_Column_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Schema_Column_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Table_Name] VARCHAR(100) NOT NULL,
+        [Column_Name] VARCHAR(100) NOT NULL,
+        [Data_Type] VARCHAR(50) NULL,
+        [Business_Name] NVARCHAR(200) NULL,
+        [Description] NVARCHAR(MAX) NULL,
+        [Synonyms_JSON] NVARCHAR(MAX) NULL,
+        [Is_Primary_Key] BIT NOT NULL DEFAULT 0,
+        [Is_Foreign_Key] BIT NOT NULL DEFAULT 0,
+        [Referenced_Table] VARCHAR(100) NULL,
+        [Referenced_Column] VARCHAR(100) NULL,
+        [Sensitivity_Level] VARCHAR(30) NULL DEFAULT 'INTERNAL',
+        [Is_Filterable] BIT NOT NULL DEFAULT 1,
+        [Is_Searchable] BIT NOT NULL DEFAULT 1,
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Schema_Relationship_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Schema_Relationship_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [From_Table] VARCHAR(100) NOT NULL,
+        [From_Column] VARCHAR(100) NOT NULL,
+        [To_Table] VARCHAR(100) NOT NULL,
+        [To_Column] VARCHAR(100) NOT NULL,
+        [Relationship_Type] VARCHAR(50) NULL DEFAULT 'ONE_TO_MANY',
+        [Relationship_Source] VARCHAR(50) NULL DEFAULT 'BUSINESS_DEFINED',
+        [Business_Meaning] NVARCHAR(500) NULL,
+        [Confidence] DECIMAL(5,2) NULL DEFAULT 1.0,
+        [Priority] INT NULL DEFAULT 1,
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Business_Rule_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Business_Rule_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Rule_Code] VARCHAR(100) NOT NULL,
+        [Rule_Name] NVARCHAR(200) NOT NULL,
+        [Target_Table] VARCHAR(100) NOT NULL,
+        [SQL_Expression] NVARCHAR(MAX) NOT NULL,
+        [Description] NVARCHAR(MAX) NULL,
+        [Module_Name] VARCHAR(50) NULL DEFAULT 'GENERAL',
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Metric_Definition_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Metric_Definition_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Metric_Code] VARCHAR(100) NOT NULL,
+        [Metric_Name] NVARCHAR(200) NOT NULL,
+        [Source_Table] VARCHAR(100) NOT NULL,
+        [SQL_Formula] NVARCHAR(MAX) NOT NULL,
+        [Supported_Dimensions] NVARCHAR(500) NULL,
+        [Description] NVARCHAR(MAX) NULL,
+        [Module_Name] VARCHAR(50) NULL DEFAULT 'GENERAL',
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Business_Synonym_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Business_Synonym_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Synonym_Word] NVARCHAR(200) NOT NULL,
+        [Standard_Term] VARCHAR(100) NOT NULL,
+        [Category] VARCHAR(50) NULL DEFAULT 'GENERAL',
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+      );
+    END;
+  `;
+  await sequelize.query(ddl, { type: QueryTypes.RAW }).catch((err) => {
+    console.warn("[ensureAllAITables] Notice during table check:", err?.message || err?.original?.message);
+  });
+};
+
+const getAuditLogs = async (reqOrPayload, maybeRes) => {
+  const req = reqOrPayload?.headers ? reqOrPayload : { query: reqOrPayload || {}, headers: {}, user: {} };
+  const userContext = buildUserContext(req);
+  const sequelize = await dbname(req, userContext.compcode);
+
+  const page = Math.max(1, parseInt(req.query?.page || req.body?.page, 10) || 1);
+  const limit = Math.min(Math.max(1, parseInt(req.query?.limit || req.body?.limit, 10) || 20), 200);
+  const offset = (page - 1) * limit;
+  const search = String(req.query?.search || req.body?.search || "").trim();
+  const status = String(req.query?.status || req.body?.status || "").trim().toUpperCase();
+  const intent = String(req.query?.intent || req.body?.intent || "").trim();
+  const startDate = String(req.query?.startDate || req.body?.startDate || "").trim();
+  const endDate = String(req.query?.endDate || req.body?.endDate || "").trim();
+
+  await ensureAllAITables(sequelize);
+
+  let whereClauses = ["1=1"];
+  let replacements = { limit, offset };
+
+  if (search) {
+    whereClauses.push("(User_Query LIKE :search OR Normalized_Query LIKE :search OR Generated_SQL LIKE :search OR Intent LIKE :search OR Emp_Code LIKE :search OR User_Id LIKE :search OR AI_Response LIKE :search)");
+    replacements.search = `%${search}%`;
+  }
+
+  if (status && status !== "ALL") {
+    whereClauses.push("Status_Code = :status");
+    replacements.status = status;
+  }
+
+  if (intent && intent !== "ALL") {
+    whereClauses.push("Intent = :intent");
+    replacements.intent = intent;
+  }
+
+  if (startDate) {
+    whereClauses.push("Created_At >= :startDate");
+    replacements.startDate = `${startDate} 00:00:00`;
+  }
+
+  if (endDate) {
+    whereClauses.push("Created_At <= :endDate");
+    replacements.endDate = `${endDate} 23:59:59`;
+  }
+
+  const whereSql = whereClauses.join(" AND ");
+
+  const countResult = await sequelize.query(`
+    SELECT COUNT(1) AS TotalRecords FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE ${whereSql}
+  `, { replacements, type: QueryTypes.SELECT }).catch(() => [{ TotalRecords: 0 }]);
+
+  const totalRecords = Number(countResult[0]?.TotalRecords || 0);
+  const totalPages = Math.ceil(totalRecords / limit) || 1;
+
+  const rows = await sequelize.query(`
+    SELECT 
+      [UTD],
+      [Conversation_Id] AS conversationId,
+      [User_Id] AS userId,
+      [Emp_Code] AS empCode,
+      [Role] AS role,
+      [Comp_Code] AS compCode,
+      [User_Query] AS userQuery,
+      [Normalized_Query] AS normalizedQuery,
+      [Intent] AS intent,
+      [Tables_Used] AS tablesUsed,
+      [Generated_SQL] AS generatedSql,
+      [AI_Response] AS aiResponse,
+      ISNULL([Rows_Returned], 0) AS rowsReturned,
+      ISNULL([Execution_Time_Ms], 0) AS executionTimeMs,
+      ISNULL([Confidence_Score], 0.95) AS confidenceScore,
+      ISNULL([Status_Code], 'SUCCESS') AS statusCode,
+      [Error_Message] AS errorMessage,
+      [Created_At] AS createdAt
+    FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
+    WHERE ${whereSql}
+    ORDER BY [UTD] DESC
+    OFFSET :offset ROWS
+    FETCH NEXT :limit ROWS ONLY
+  `, { replacements, type: QueryTypes.SELECT }).catch(() => []);
+
+  const statsResult = await sequelize.query(`
+    SELECT 
+      COUNT(1) AS totalQueries,
+      SUM(CASE WHEN Status_Code = 'SUCCESS' THEN 1 ELSE 0 END) AS successQueries,
+      SUM(CASE WHEN Status_Code = 'FAILED' THEN 1 ELSE 0 END) AS failedQueries,
+      AVG(ISNULL(Execution_Time_Ms, 0)) AS avgExecutionTimeMs,
+      COUNT(DISTINCT User_Id) AS activeUsersCount,
+      SUM(CASE WHEN CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS todayQueriesCount
+    FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
+  `, { type: QueryTypes.SELECT }).catch(() => [{}]);
+
+  const globalStats = statsResult[0] || {};
+  const tot = Number(globalStats.totalQueries || 0);
+  const succ = Number(globalStats.successQueries || 0);
+  const successRate = tot > 0 ? ((succ / tot) * 100).toFixed(1) + "%" : "100%";
+
+  const resultData = {
+    success: true,
+    data: rows,
+    pagination: {
+      page,
+      limit,
+      totalRecords,
+      totalPages,
+      hasMore: page < totalPages
+    },
+    stats: {
+      totalQueries: tot,
+      successQueries: succ,
+      failedQueries: Number(globalStats.failedQueries || 0),
+      successRate,
+      avgExecutionTimeMs: Math.round(Number(globalStats.avgExecutionTimeMs || 0)),
+      activeUsersCount: Number(globalStats.activeUsersCount || 0),
+      todayQueriesCount: Number(globalStats.todayQueriesCount || 0)
+    }
+  };
+
+  if (maybeRes && typeof maybeRes.status === "function") {
+    return maybeRes.status(200).json(resultData);
+  }
+  return resultData;
 };
 
 // ============================================================================
@@ -5033,9 +9056,20 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 module.exports = {
   askEnterpriseCopilotV6,
   askERPAssistant: askEnterpriseCopilotV6,
+  translateToEnglishIfVernacular,
   submitFeedback,
+  getAuditLogs,
+  getAILearnedRules,
+  saveAILearnedRule,
+  deleteAILearnedRule,
+  testSQLQuery,
+  ensureAllAITables,
+  ensureLearningTablesExist,
   fetchLearnedGoldenExamplesAndRules,
   detectAndStoreUserCorrection,
+  handleUserCorrectionAndDataLocation,
+  extractGuidanceComponents,
+  persistLearnedDataRule,
   asyncHandler,
   ApiError,
   buildUserContext,
@@ -5050,6 +9084,8 @@ module.exports = {
   SchemaEngineInstance,
   MemoryEngineInstance,
   CacheEngineInstance,
+  matchLearnedSimilarQuery,
+  canonicalizeQueryPattern,
   getCacheAnalytics: () => CacheEngineInstance.getStats(),
   clearCache: () => CacheEngineInstance.clear()
 };
