@@ -203,8 +203,26 @@ router.post("/debug/sql", AI.testSQLQuery);
 
 // ============================================================
 // KNOWLEDGE DOCUMENTS MANAGEMENT API
-// POST /knowledge/documents/:id/process, GET /status, PATCH /deactivate
+// GET /knowledge/documents, POST /knowledge/documents/:id/process, GET /status, PATCH /deactivate
 // ============================================================
+router.get(
+  "/knowledge/documents",
+  AI.asyncHandler(async (req, res) => {
+    const data = await AI.listKnowledgeDocuments({ req, query: req.query });
+    return res.status(200).json({ success: true, count: data.length, data });
+  })
+);
+
+router.get(
+  "/knowledge/documents/:documentId/detail",
+  AI.asyncHandler(async (req, res) => {
+    const data = await AI.getKnowledgeDocumentDetail({
+      req,
+      documentId: AI.assertDocumentId(req.params.documentId),
+    });
+    return res.status(200).json({ success: true, data });
+  })
+);
 router.post(
   "/knowledge/documents/:documentId/process",
   AI.asyncHandler(async (req, res) => {

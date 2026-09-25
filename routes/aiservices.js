@@ -2736,6 +2736,48 @@ const deactivateKnowledgeDocument = exports.deactivateKnowledgeDocument = async 
   return { documentId, status: "INACTIVE", vectorsDeleted: hardDelete };
 };
 
+const listKnowledgeDocuments = exports.listKnowledgeDocuments = async ({ req, query = {} }) => {
+  const user = buildUserContext(req);
+  const sequelize = await dbname(req, user.compcode);
+  const search = String(query.search || "").trim();
+  const moduleName = String(query.module || "").trim();
+  const docType = String(query.type || "").trim();
+
+  let whereClauses = ["D.[Comp_Code] = :compCode"];
+  let replacements = { compCode: user.compcode };
+
+  if (search) {
+    whereClauses.push("(D.[Title] LIKE :search OR D.[Source_Name] LIKE :search OR D.[Source_Reference] LIKE :search OR D.[Module_Name] LIKE :search)");
+    replacements.search = "%" + search + "%";
+  }
+  if (moduleName && moduleName !== "ALL") {
+    whereClauses.push("D.[Module_Name] = :moduleName");
+    replacements.moduleName = moduleName;
+  }
+  if (docType && docType !== "ALL") {
+    whereClauses.push("D.[Document_Type] = :docType");
+    replacements.docType = docType;
+  }
+
+  const sql = "SELECT D.[UTD] AS documentId, D.[Module_Name] AS moduleName, D.[Document_Type] AS documentType, D.[Title] AS title, D.[Source_Name] AS sourceName, D.[Source_Reference] AS sourceReference, D.[Is_Active] AS isActive, (SELECT COUNT(1) FROM [dbo].[AI_Knowledge_Chunk_Tbl] C WITH (NOLOCK) WHERE C.Document_UTD = D.UTD) AS chunkCount, CONVERT(VARCHAR(19), D.[Created_At], 120) AS createdAt FROM [dbo].[AI_Knowledge_Document_Tbl] D WITH (NOLOCK) WHERE " + whereClauses.join(" AND ") + " ORDER BY D.[UTD] DESC";
+
+  const rows = await sequelize.query(sql, { replacements, type: QueryTypes.SELECT }).catch(() => []);
+  return rows;
+};
+
+const getKnowledgeDocumentDetail = exports.getKnowledgeDocumentDetail = async ({ req, documentId }) => {
+  const user = buildUserContext(req);
+  const sequelize = await dbname(req, user.compcode);
+  const sqlDoc = "SELECT TOP 1 D.[UTD] AS documentId, D.[Module_Name] AS moduleName, D.[Document_Type] AS documentType, D.[Title] AS title, D.[Source_Name] AS sourceName, D.[Source_Reference] AS sourceReference, D.[Content] AS content, D.[Is_Active] AS isActive, CONVERT(VARCHAR(19), D.[Created_At], 120) AS createdAt FROM [dbo].[AI_Knowledge_Document_Tbl] D WITH (NOLOCK) WHERE D.[UTD] = :documentId AND D.[Comp_Code] = :compCode";
+  const rows = await sequelize.query(sqlDoc, { replacements: { documentId, compCode: user.compcode }, type: QueryTypes.SELECT });
+  if (!rows.length) throw new ApiError(404, "Knowledge document was not found");
+
+  const sqlChunks = "SELECT C.[UTD] AS chunkId, C.[Chunk_Index] AS chunkIndex, C.[Chunk_Content] AS chunkContent, C.[Token_Count] AS tokenCount, C.[Is_Active] AS isActive FROM [dbo].[AI_Knowledge_Chunk_Tbl] C WITH (NOLOCK) WHERE C.[Document_UTD] = :documentId AND C.[Comp_Code] = :compCode ORDER BY C.[Chunk_Index] ASC";
+  const chunks = await sequelize.query(sqlChunks, { replacements: { documentId, compCode: user.compcode }, type: QueryTypes.SELECT }).catch(() => []);
+
+  return { ...rows[0], chunks };
+};
+
 
 
 
