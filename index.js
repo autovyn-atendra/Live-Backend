@@ -22,6 +22,7 @@ const metaWebhookapi = require("./api/metaWebhookapi");
 const { startServiceReminderCron } = require("./cronJobs/cronJobs");
 const aiRoutes = require("./api/aiRoutes");
 const aiImageApi = require("./api/AI_Image_API");
+const leadRoute = require("./api/lead_route");
 
 
 
@@ -132,6 +133,10 @@ app.use("/employee",faceData);
 // app.use("/call",GetCallRecordings)
 app.use("/ai", aiRoutes);
 app.use("/ai/image", aiImageApi);
+app.use("/lead", leadRoute);
+app.use("/backend/lead", leadRoute);
+app.use("/quotation", leadRoute);
+app.use("/backend/quotation", leadRoute);
 
 
 
