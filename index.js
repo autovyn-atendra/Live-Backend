@@ -23,6 +23,7 @@ const { startServiceReminderCron } = require("./cronJobs/cronJobs");
 const aiRoutes = require("./api/aiRoutes");
 const aiImageApi = require("./api/AI_Image_API");
 const leadRoute = require("./api/lead_route");
+const eicherRoute = require("./api/eicher_API")
 
 
 
@@ -137,6 +138,7 @@ app.use("/lead", leadRoute);
 app.use("/backend/lead", leadRoute);
 app.use("/quotation", leadRoute);
 app.use("/backend/quotation", leadRoute);
+app.use("/eicher", eicherRoute)
 
 
 

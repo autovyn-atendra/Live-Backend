@@ -1,7 +1,7 @@
 const Sequelize = require('sequelize');
-const _VecvPurc = function(sequelize, DataTypes) {
+const _VecvPurc = function (sequelize, DataTypes) {
   return sequelize.define('VecvPurc', {
-    ID: {
+    UTD: {
       type: DataTypes.INTEGER,
       allowNull: false,
       primaryKey: true,
@@ -474,7 +474,28 @@ const _VecvPurc = function(sequelize, DataTypes) {
     CompanyCode: {
       type: DataTypes.STRING(255),
       allowNull: true
-    }
+    },
+    Created_By: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    Created_At: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.literal("GETDATE()"),
+    },
+
+    Updated_By: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+  
+
+    Updated_At: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
   }, {
     sequelize,
     tableName: 'Vecv_Purc',
@@ -482,12 +503,12 @@ const _VecvPurc = function(sequelize, DataTypes) {
     timestamps: false,
     indexes: [
       {
-        name: "PK__Vecv_Pur__3214EC270F804A3B",
+        name: "PK_Vecv_Purc",
         unique: true,
         fields: [
-          { name: "ID" },
+          { name: "UTD" }
         ]
-      },
+      }
     ]
   });
 };

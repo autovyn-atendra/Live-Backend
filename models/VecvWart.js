@@ -1,11 +1,11 @@
 const Sequelize = require('sequelize');
-const _VecvWart = function(sequelize, DataTypes) {
+const _VecvWart = function (sequelize, DataTypes) {
   return sequelize.define('VecvWart', {
-    ID: {
-      autoIncrement: true,
+    UTD: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      primaryKey: true
+      primaryKey: true,
+      autoIncrement: true,
     },
     ZplantCode: {
       type: DataTypes.STRING(255),
@@ -104,7 +104,7 @@ const _VecvWart = function(sequelize, DataTypes) {
       allowNull: true
     },
     Zquant: {
-      type: DataTypes.DECIMAL(18,3),
+      type: DataTypes.DECIMAL(18, 3),
       allowNull: true
     },
     Zuom: {
@@ -178,21 +178,42 @@ const _VecvWart = function(sequelize, DataTypes) {
     ZhsnCode: {
       type: DataTypes.STRING(255),
       allowNull: true
-    }
+    },
+    // Audit Fields
+    Created_By: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    Created_At: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.literal("GETDATE()"),
+    },
+
+    Updated_By: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    Updated_At: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+
+
   }, {
     sequelize,
-    tableName: 'Vecv_wart',
+    tableName: 'VecvWart',
     schema: 'dbo',
     timestamps: false,
     indexes: [
       {
-        name: "PK__Vecv_war__3214EC270AC8569E",
+        name: "PK_VecvWart",
         unique: true,
-        fields: [
-          { name: "ID" },
-        ]
+        fields: [{ name: "UTD" }],
       },
-    ]
+    ],
   });
 };
 

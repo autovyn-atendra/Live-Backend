@@ -1,7 +1,7 @@
 const Sequelize = require('sequelize');
-const _VecvSale = function(sequelize, DataTypes) {
+const _VecvSale = function (sequelize, DataTypes) {
   return sequelize.define('VecvSale', {
-    ID: {
+    UTD: {
       autoIncrement: true,
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -314,10 +314,43 @@ const _VecvSale = function(sequelize, DataTypes) {
     PanNo: {
       type: DataTypes.STRING(20),
       allowNull: true
-    }
+    },
+    CustomerAddress: {
+      type: DataTypes.STRING(500),
+      allowNull: true
+    },
+    VehicleColor: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    },
+    BodyType: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    },
+    WheelBase: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    },
+    Created_By: {
+      type: DataTypes.STRING(255),
+      allowNull: true
+    },
+    Created_At: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: Sequelize.literal("GETDATE()")
+    },
+    Updated_By: {
+      type: DataTypes.STRING(255),
+      allowNull: true
+    },
+    Updated_At: {
+      type: DataTypes.DATE,
+      allowNull: true
+    },
   }, {
     sequelize,
-    tableName: 'Vecv_Sale',
+    tableName: 'VecvSale',
     schema: 'dbo',
     timestamps: false,
     indexes: [
