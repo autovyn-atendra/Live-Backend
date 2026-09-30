@@ -23,7 +23,7 @@ const authenticateUser = (req, res, next) => {
     req.path.startsWith("/scheduler/run") ||
     req.path.includes("renderGet") ||
     req.path.includes("/lead") ||
-    req.path.includes("/test-plan-reminder")
+    req.path.includes("/test-plan-reminder") 
   ) {
     return next();
   }
