@@ -63,6 +63,18 @@ function parseExcelDate(value) {
   let strOriginal = String(value).replace(/^['"\s]+|['"\s]+$/g, "").trim();
   if (!strOriginal) return { date: null, displayDate: null, displayShort: null, invalid: false };
 
+  // Treat placeholder strings like '-  -', '- -', '--', '-', '.', '/', '0', '00-00-0000', 'N/A', 'NULL', etc. as null
+  const cleanLower = strOriginal.toLowerCase().trim();
+  const withoutSeparators = cleanLower.replace(/[\s\-_.\/\\]/g, "");
+  if (
+    !withoutSeparators ||
+    /^0+$/.test(withoutSeparators) ||
+    ["na", "n/a", "null", "nil", "none", "nan", "undefined", "notavailable", "notapplicable"].includes(cleanLower) ||
+    ["na", "n/a", "null", "nil", "none", "nan", "undefined"].includes(withoutSeparators)
+  ) {
+    return { date: null, displayDate: null, displayShort: null, invalid: false };
+  }
+
   // 2. Excel numeric serial date (e.g. 45427 or 45427.0 or 32998)
   if (!isNaN(strOriginal) && !/[a-zA-Z]/.test(strOriginal) && !strOriginal.includes("/") && !strOriginal.includes("-")) {
     const num = parseFloat(strOriginal);
@@ -432,6 +444,23 @@ exports.excelimportFinal = async function (req, res) {
         BANK_NAME: "BANKNAME",
         BANKNAME: "BANKNAME",
         BANKACCOUNTNO: "BANKACCOUNTNO",
+        "Bank Account No": "BANKACCOUNTNO",
+        "BANK ACCOUNT NO": "BANKACCOUNTNO",
+        "Bank Account Number": "BANKACCOUNTNO",
+        "BANK ACCOUNT NUMBER": "BANKACCOUNTNO",
+        "Account No": "BANKACCOUNTNO",
+        "ACCOUNT NO": "BANKACCOUNTNO",
+        "Account Number": "BANKACCOUNTNO",
+        "ACCOUNT NUMBER": "BANKACCOUNTNO",
+        "Bank_Account_No": "BANKACCOUNTNO",
+        "BANK_ACCOUNT_NO": "BANKACCOUNTNO",
+        "Bank_Account_Number": "BANKACCOUNTNO",
+        "BANK_ACCOUNT_NUMBER": "BANKACCOUNTNO",
+        "bank_account_no": "BANKACCOUNTNO",
+        "account_no": "BANKACCOUNTNO",
+        "accountno": "BANKACCOUNTNO",
+        "AccountNo": "BANKACCOUNTNO",
+        "BANKACCOUNTNUMBER": "BANKACCOUNTNO",
         ifsc_code: "ifsc_code",
         WEEKLYOFF: "WEEKLYOFF",
         EMP_SHIFT: "EMP_SHIFT",
@@ -480,10 +509,30 @@ exports.excelimportFinal = async function (req, res) {
           }
         } else {
           let value = obj[key];
-          if (newKey === "UID_NO" && value !== null && value !== "") {
-            value = String(value).replace(/\D/g, "");
+          if (value !== null && value !== undefined) {
+            let strVal = String(value).trim();
+            const withoutSeps = strVal.replace(/[\s\-_.\/\\]/g, "");
+            if (withoutSeps === "" || ["na", "n/a", "null", "nil", "none"].includes(strVal.toLowerCase())) {
+              value = null;
+            } else if (newKey === "UID_NO") {
+              value = strVal.replace(/\D/g, "");
+            } else if (newKey === "BANKACCOUNTNO") {
+              let bVal = strVal.replace(/\.0+$/, "").replace(/[\s\-_.\/\\]/g, "");
+              if (
+                bVal === "" ||
+                bVal === "0" ||
+                /^0+$/.test(bVal) ||
+                ["na", "n/a", "null", "nil", "none", "cash", "cheque", "hold", "pending"].includes(bVal.toLowerCase())
+              ) {
+                value = null;
+              } else {
+                value = bVal;
+              }
+            } else {
+              value = strVal;
+            }
           }
-          acc[newKey] = value === "" ? null : String(value).trim();
+          acc[newKey] = (value === "" || value === null || value === undefined) ? null : String(value).trim();
         }
         return acc;
       }, {});
@@ -520,6 +569,21 @@ exports.excelimportFinal = async function (req, res) {
 
       if (row.MOBILE_NO) {
         row.MOBILE_NO = String(row.MOBILE_NO).trim().replace(/\D/g, "");
+      }
+
+      // 3. Bank Account sanitization
+      if (row.BANKACCOUNTNO !== null && row.BANKACCOUNTNO !== undefined) {
+        let cleanBank = String(row.BANKACCOUNTNO).trim().replace(/\.0+$/, "").replace(/[\s\-_.\/\\]/g, "");
+        const isDummyBank =
+          !cleanBank ||
+          cleanBank === "0" ||
+          /^0+$/.test(cleanBank) ||
+          ["NA", "N/A", "NULL", "NIL", "NONE", "CASH", "CHEQUE", "HOLD", "PENDING"].includes(cleanBank.toUpperCase());
+        if (isDummyBank) {
+          row.BANKACCOUNTNO = null;
+        } else {
+          row.BANKACCOUNTNO = cleanBank;
+        }
       }
     });
 
@@ -615,7 +679,7 @@ exports.excelimportFinal = async function (req, res) {
     const isBypassed = userCode === 1;
     let mandRows = [];
     if (!isBypassed) {
-      mandRows = await sequelize.query(
+      const rawMandRows = await sequelize.query(
         `SELECT LTRIM(RTRIM(field_name)) AS field_name, field_Abbr, IsMandtory 
          FROM Mand_Mst 
          WHERE misc_name = 'EMPLOYEEMASTER' 
@@ -623,6 +687,14 @@ exports.excelimportFinal = async function (req, res) {
            AND ISNULL(Export_Type, 0) < 3`,
         { type: sequelize.QueryTypes.SELECT }
       );
+      const seenMand = new Set();
+      for (const mr of rawMandRows) {
+        const fn = String(mr.field_name || "").toUpperCase().trim();
+        if (fn && !seenMand.has(fn)) {
+          seenMand.add(fn);
+          mandRows.push(mr);
+        }
+      }
     }
 
     // ===== Within-Excel duplicate counts =====
@@ -640,15 +712,35 @@ exports.excelimportFinal = async function (req, res) {
     const existingRecords = await EmployeeMaster.findAll({ raw: true });
     const existingByEmpCode = {};
     const uidOwner = {};
-    const bankOwner = {};
+    const bankOwnerActive = {};
     const panOwner = {};
     const mobileOwnerActive = {};
 
     existingRecords.forEach(e => {
       if (e.EMPCODE) existingByEmpCode[e.EMPCODE] = e;
-      if (e.UID_NO) uidOwner[e.UID_NO] = e.EMPCODE;
-      if (e.BANKACCOUNTNO) bankOwner[e.BANKACCOUNTNO] = e.EMPCODE;
-      if (e.PANNO) panOwner[e.PANNO] = e.EMPCODE;
+      if (e.UID_NO) {
+        const cleanUid = String(e.UID_NO).trim().replace(/\D/g, "");
+        if (cleanUid && cleanUid.length === 12) {
+          uidOwner[cleanUid] = e.EMPCODE;
+        }
+      }
+      if (e.BANKACCOUNTNO && (e.LASTWOR_DATE === null || e.LASTWOR_DATE === undefined)) {
+        let cleanDbBank = String(e.BANKACCOUNTNO).trim().replace(/\.0+$/, "").replace(/[\s\-_.\/\\]/g, "");
+        const isDummyDbBank =
+          !cleanDbBank ||
+          cleanDbBank === "0" ||
+          /^0+$/.test(cleanDbBank) ||
+          ["NA", "N/A", "NULL", "NIL", "NONE", "CASH", "CHEQUE", "HOLD", "PENDING"].includes(cleanDbBank.toUpperCase());
+        if (!isDummyDbBank) {
+          bankOwnerActive[cleanDbBank] = e.EMPCODE;
+        }
+      }
+      if (e.PANNO) {
+        const cleanPan = String(e.PANNO).trim().toUpperCase();
+        if (/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(cleanPan)) {
+          panOwner[cleanPan] = e.EMPCODE;
+        }
+      }
       if (e.MOBILE_NO && (e.LASTWOR_DATE === null || e.LASTWOR_DATE === undefined)) {
         mobileOwnerActive[e.MOBILE_NO] = e.EMPCODE;
       }
@@ -850,25 +942,25 @@ exports.excelimportFinal = async function (req, res) {
       if (row.UID_NO) {
         const owner = uidOwner[row.UID_NO];
         if (owner && owner !== targetEmpCode) {
-          rejectionReasons.push(`Aadhar Number already exists: ${row.UID_NO}`);
+          rejectionReasons.push(`Aadhar Number already exists (${owner}): ${row.UID_NO}`);
         }
       }
       if (row.BANKACCOUNTNO) {
-        const owner = bankOwner[row.BANKACCOUNTNO];
+        const owner = bankOwnerActive[row.BANKACCOUNTNO];
         if (owner && owner !== targetEmpCode) {
-          rejectionReasons.push(`Bank Account Number already exists: ${row.BANKACCOUNTNO}`);
+          rejectionReasons.push(`Bank Account Number already exists for an active employee (${owner}): ${row.BANKACCOUNTNO}`);
         }
       }
       if (row.PANNO) {
         const owner = panOwner[row.PANNO];
         if (owner && owner !== targetEmpCode) {
-          rejectionReasons.push(`PAN Number already exists: ${row.PANNO}`);
+          rejectionReasons.push(`PAN Number already exists (${owner}): ${row.PANNO}`);
         }
       }
       if (row.MOBILE_NO && !row._allowDuplicateMobile) {
         const owner = mobileOwnerActive[row.MOBILE_NO];
         if (owner && owner !== targetEmpCode) {
-          rejectionReasons.push(`Mobile Number already exists for an active employee: ${row.MOBILE_NO}`);
+          rejectionReasons.push(`Mobile Number already exists for an active employee (${owner}): ${row.MOBILE_NO}`);
         }
       }
 
@@ -1029,8 +1121,10 @@ exports.excelimportFinal = async function (req, res) {
 
       const enteredEmpCode = row.EMPCODE;
 
-      if (rejectionReasons.length) {
-        ErroredData.push({ ...row, EMPCODE: enteredEmpCode, rejectionReasons: rejectionReasons.join(", ") });
+      const uniqueReasons = Array.from(new Set(rejectionReasons.map(r => String(r || "").trim()))).filter(Boolean);
+
+      if (uniqueReasons.length) {
+        ErroredData.push({ ...row, EMPCODE: enteredEmpCode, rejectionReasons: uniqueReasons.join(", ") });
         continue;
       }
 

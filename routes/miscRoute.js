@@ -131,6 +131,7 @@ exports.getMiscType = async function (req, res) {
     }
 };
 
+
 // controllers/miscController.js mein add karo
 
 exports.createMiscData = async function (req, res) {
@@ -210,7 +211,18 @@ exports.createMiscData = async function (req, res) {
             Misc_Name,
         };
 
-        if (validColMap["export_type"]) allowedFields[validColMap["export_type"]] = 1;
+        if (validColMap["export_type"]) {
+            if (Misc_Type === 1002) {
+                // For Default Shift Master (1002), only 1 record can be active at a time
+                const activeExisting = await sequelize.query(
+                    `SELECT TOP 1 Misc_Code FROM Default_Mst WHERE Misc_Type = 1002 AND (Export_Type IS NULL OR Export_Type < 3)`,
+                    { type: QueryTypes.SELECT }
+                );
+                allowedFields[validColMap["export_type"]] = (activeExisting && activeExisting.length > 0) ? 33 : 1;
+            } else {
+                allowedFields[validColMap["export_type"]] = 1;
+            }
+        }
         if (validColMap["serverid"]) allowedFields[validColMap["serverid"]] = 1;
         if (validColMap["loc_code"]) allowedFields[validColMap["loc_code"]] = req.headers.loc_code || 1;
         if (Misc_Type === 1001 && validColMap["misc_hod"]) allowedFields[validColMap["misc_hod"]] = 10;
@@ -354,9 +366,36 @@ exports.updateMiscData = async function (req, res) {
             }
         });
 
-        // Set Export_Type = 2 if column exists and not provided
+        // Set Export_Type: preserve Inactive (>= 3) state on edit if not explicitly provided
         if (validColMap["export_type"] && updateFields[validColMap["export_type"]] === undefined) {
-            updateFields[validColMap["export_type"]] = 2;
+            const existingExp = existing[0]?.Export_Type;
+            if (existingExp !== null && existingExp !== undefined && existingExp >= 3) {
+                updateFields[validColMap["export_type"]] = existingExp;
+            } else {
+                updateFields[validColMap["export_type"]] = 2;
+            }
+        }
+
+        // For Default Shift Master (1002): if updated record is active, inactivate all other 1002 records
+        if (Misc_Type === 1002 && validColMap["export_type"]) {
+            const expVal = updateFields[validColMap["export_type"]];
+            if (expVal !== undefined && (expVal === null || expVal < 3)) {
+                const currentUtd = existing[0]?.UTD;
+                const currentMiscCode = existing[0]?.Misc_Code ?? Misc_Code;
+                const excludeCond = currentUtd ? `UTD <> :currentUtd` : `Misc_Code <> :currentMiscCode`;
+
+                await sequelize.query(
+                    `UPDATE Default_Mst 
+                     SET Export_Type = 33 
+                     WHERE Misc_Type = 1002 
+                       AND ${excludeCond} 
+                       AND (Export_Type IS NULL OR Export_Type < 3)`,
+                    {
+                        replacements: { currentUtd, currentMiscCode },
+                        type: QueryTypes.UPDATE,
+                    }
+                );
+            }
         }
 
         if (Misc_Type === 1001 && validColMap["misc_hod"] && updateFields[validColMap["misc_hod"]] === undefined) {
@@ -498,11 +537,34 @@ exports.toggleMiscStatus = async function (req, res) {
             }
         );
 
+        // For Misc_Type = 1002 (Default Shift Master), only 1 record can be active at a time
+        // If this record was activated (targetExportType === 1), set all other 1002 records to Inactive (33)
+        if (parseInt(currentRecord.Misc_Type, 10) === 1002 && targetExportType === 1) {
+            const currentUtd = currentRecord.UTD;
+            const currentMiscCode = currentRecord.Misc_Code;
+            const excludeCond = currentUtd ? `UTD <> :currentUtd` : `Misc_Code <> :currentMiscCode`;
+
+            await sequelize.query(
+                `UPDATE Default_Mst 
+                 SET Export_Type = 33 
+                 WHERE Misc_Type = 1002 
+                   AND ${excludeCond} 
+                   AND (Export_Type IS NULL OR Export_Type < 3)`,
+                {
+                    replacements: { currentUtd, currentMiscCode },
+                    type: QueryTypes.UPDATE,
+                }
+            );
+        }
+
         const statusLabel = targetExportType === 1 ? "Active" : "Inactive";
+        const successMessage = (parseInt(currentRecord.Misc_Type, 10) === 1002 && targetExportType === 1)
+            ? `Default Shift "${currentRecord.Misc_Name}" activated (other shifts set to Inactive)`
+            : `Record successfully marked as ${statusLabel} (Export_Type = ${targetExportType})`;
 
         return res.status(200).send({
             success: true,
-            message: `Record successfully marked as ${statusLabel} (Export_Type = ${targetExportType})`,
+            message: successMessage,
             data: {
                 UTD: currentRecord.UTD,
                 Misc_Type: currentRecord.Misc_Type,
