@@ -50,9 +50,19 @@ exports.getMiscData = async function (req, res) {
             .map((c) => `[${c.ColumnName}]`)
             .join(",\n                ");
 
-        // ── Step 3: Data fetch (Export_Type < 33) ──────────────
+        // ── Step 3: Data fetch (Export_Type < 3 for active) ──
+        const status = String(query.status || "").toLowerCase().trim();
+        let exportCondition = "(Export_Type IS NULL OR Export_Type < 3)";
+        if (status === "all") {
+            exportCondition = "(Export_Type IS NULL OR Export_Type <= 33)";
+        } else if (status === "inactive" || status === "33") {
+            exportCondition = "(Export_Type = 33 OR Export_Type >= 3)";
+        } else if (status === "active" || status === "1") {
+            exportCondition = "(Export_Type IS NULL OR Export_Type < 3)";
+        }
+
         const whereClause = hasExportType
-            ? `WHERE Misc_Type = :Misc_Type AND (Export_Type IS NULL OR Export_Type < 33)`
+            ? `WHERE Misc_Type = :Misc_Type AND ${exportCondition}`
             : `WHERE Misc_Type = :Misc_Type`;
 
         const records = await sequelize.query(
@@ -382,6 +392,129 @@ exports.updateMiscData = async function (req, res) {
 
     } catch (error) {
         console.error("Update Misc Data Error:", error);
+        return res.status(500).send({
+            success: false,
+            message: "Internal Server Error",
+            error: error.message,
+        });
+    } finally {
+        if (sequelize) await sequelize.close();
+    }
+};
+
+exports.toggleMiscStatus = async function (req, res) {
+    let sequelize;
+    try {
+        sequelize = await dbname(req, compcode);
+        const body = req.body || {};
+        const query = req.query || {};
+
+        const Misc_Type = parseInt(body.Misc_Type || query.Misc_Type);
+        const Misc_Code = body.Misc_Code !== undefined ? parseInt(body.Misc_Code) : (query.Misc_Code !== undefined ? parseInt(query.Misc_Code) : undefined);
+        const UTD = body.UTD ? parseInt(body.UTD) : (query.UTD ? parseInt(query.UTD) : null);
+
+        if (!UTD && (!Misc_Type || isNaN(Misc_Type) || Misc_Code === undefined || isNaN(Misc_Code))) {
+            return res.status(400).send({
+                success: false,
+                message: "UTD or (Misc_Type and Misc_Code) is required to update status",
+            });
+        }
+
+        // Verify record exists in Default_Mst
+        const checkWhere = UTD
+            ? `UTD = :UTD`
+            : `Misc_Type = :Misc_Type AND Misc_Code = :Misc_Code`;
+
+        const existing = await sequelize.query(
+            `SELECT TOP 1 UTD, Misc_Type, Misc_Code, Misc_Name, Export_Type 
+             FROM Default_Mst 
+             WHERE ${checkWhere}`,
+            {
+                replacements: { Misc_Type, Misc_Code, UTD },
+                type: QueryTypes.SELECT,
+            }
+        );
+
+        if (!existing || existing.length === 0) {
+            return res.status(404).send({
+                success: false,
+                message: "Record not found in Default_Mst",
+            });
+        }
+
+        const currentRecord = existing[0];
+        const currentExportType = parseInt(currentRecord.Export_Type, 10);
+
+        // Determine target Export_Type:
+        // Active => 1, Inactive => 33
+        let targetExportType;
+        if (body.status !== undefined) {
+            const s = String(body.status).toLowerCase().trim();
+            if (s === "1" || s === "active" || s === "true" || body.status === 1 || body.status === true) {
+                targetExportType = 1;
+            } else if (s === "33" || s === "inactive" || s === "false" || body.status === 33 || body.status === false) {
+                targetExportType = 33;
+            }
+        } else if (body.action !== undefined) {
+            const a = String(body.action).toLowerCase().trim();
+            if (a === "active" || a === "activate") {
+                targetExportType = 1;
+            } else if (a === "inactive" || a === "deactivate") {
+                targetExportType = 33;
+            }
+        }
+
+        // If not explicitly provided, toggle based on current state:
+        if (targetExportType === undefined) {
+            // Current < 3 is active -> toggle to 33 (Inactive)
+            // Current >= 3 is inactive -> toggle to 1 (Active)
+            targetExportType = (!isNaN(currentExportType) && currentExportType < 3) ? 33 : 1;
+        }
+
+        // Check if Export_Type column exists
+        const defaultMstCols = await sequelize.query(
+            `SELECT COLUMN_NAME
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = 'dbo'
+               AND TABLE_NAME = 'Default_Mst'
+               AND LOWER(COLUMN_NAME) = 'export_type'`,
+            { type: QueryTypes.SELECT }
+        );
+
+        if (!defaultMstCols || defaultMstCols.length === 0) {
+            return res.status(400).send({
+                success: false,
+                message: "Export_Type column does not exist in Default_Mst",
+            });
+        }
+
+        await sequelize.query(
+            `UPDATE Default_Mst 
+             SET Export_Type = :targetExportType 
+             WHERE ${checkWhere}`,
+            {
+                replacements: { targetExportType, Misc_Type, Misc_Code, UTD },
+                type: QueryTypes.UPDATE,
+            }
+        );
+
+        const statusLabel = targetExportType === 1 ? "Active" : "Inactive";
+
+        return res.status(200).send({
+            success: true,
+            message: `Record successfully marked as ${statusLabel} (Export_Type = ${targetExportType})`,
+            data: {
+                UTD: currentRecord.UTD,
+                Misc_Type: currentRecord.Misc_Type,
+                Misc_Code: currentRecord.Misc_Code,
+                Misc_Name: currentRecord.Misc_Name,
+                Export_Type: targetExportType,
+                status: statusLabel,
+            },
+        });
+
+    } catch (error) {
+        console.error("Toggle Misc Status Error:", error);
         return res.status(500).send({
             success: false,
             message: "Internal Server Error",

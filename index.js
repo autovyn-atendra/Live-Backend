@@ -25,6 +25,7 @@ const aiImageApi = require("./api/AI_Image_API");
 const leadRoute = require("./api/lead_route");
 const eicherRoute = require("./api/eicher_API")
 const defaultMst = require("./api/miscApi");
+const employeeImport = require("./api/employeeImport"); 
 
 
 
@@ -132,6 +133,7 @@ app.use("/backend/service-appointment", serviceReminder);
 app.use("/backend/Crm", serviceReminder);
 app.use("/excel",excelrouter);
 app.use("/employee",faceData);
+app.use("/employeeImport",employeeImport);
 // app.use("/call",GetCallRecordings)
 app.use("/ai", aiRoutes);
 app.use("/ai/image", aiImageApi);
