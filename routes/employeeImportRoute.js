@@ -9,6 +9,7 @@ function formatDate(date) {
   if (!date) return null;
   const d = new Date(date);
   if (isNaN(d.getTime())) return null;
+  if (d.getFullYear() <= 1900) return null;
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
@@ -30,66 +31,141 @@ const monthMap = {
 
 function formatResultDate(yyyy, mm, dd) {
   if (!yyyy || !mm || !dd || isNaN(yyyy) || isNaN(mm) || isNaN(dd)) {
-    return { date: null, displayDate: null, displayShort: null, invalid: true };
+    return { date: null, displayDate: null, displayShort: null, invalid: true, is1900: false };
   }
-  if (yyyy < 1920 || yyyy > 2100 || mm < 1 || mm > 12 || dd < 1 || dd > 31) {
-    return { date: null, displayDate: null, displayShort: null, invalid: true };
+  // User requested: 01/01/1900 agar aata hai to use null kar do aur data insert hone do
+  if (Number(yyyy) <= 1900 || (Number(yyyy) === 1900 && Number(mm) === 1 && Number(dd) === 1)) {
+    return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
+  }
+  if (yyyy < 1900 || yyyy > 2100 || mm < 1 || mm > 12 || dd < 1 || dd > 31) {
+    return { date: null, displayDate: null, displayShort: null, invalid: true, is1900: false };
   }
   const testDate = new Date(yyyy, mm - 1, dd);
   if (testDate.getFullYear() !== yyyy || testDate.getMonth() !== mm - 1 || testDate.getDate() !== dd) {
-    return { date: null, displayDate: null, displayShort: null, invalid: true };
+    return { date: null, displayDate: null, displayShort: null, invalid: true, is1900: false };
   }
 
   const pad = (n) => String(n).padStart(2, "0");
   const sqlDate = `${yyyy}-${pad(mm)}-${pad(dd)}`;
   const displayDate = `${pad(dd)}/${pad(mm)}/${yyyy}`;
   const displayShort = `${pad(dd)}/${pad(mm)}/${String(yyyy).slice(-2)}`;
-  return { date: sqlDate, displayDate, displayShort, invalid: false };
+  return { date: sqlDate, displayDate, displayShort, invalid: false, is1900: false };
 }
 
-// Comprehensive date parsing: accepts DD/MM/YYYY, DD/MM/YY, DD-MM-YYYY, YYYY-MM-DD,
-// YYYY/MM/DD, Excel serial numbers (e.g. 45427 or 45427.0), text months (01-Jan-90, 15-Apr-78, 01-Sep-21), and JS Date objects
+/**
+ * Resolves a 2-digit year using a 100-year window ending at the current date.
+ * If 2000 + yy is in the future compared to today, it belongs to the previous century (1900 + yy).
+ * If 2000 + yy is today or in the past, it belongs to 2000 + yy.
+ * Example (Assuming current date is 02/10/2026):
+ * - 01/07/26 -> 01/07/2026 (July 2026 is before October 2026)
+ * - 02/12/26 -> 02/12/1926 (December 2026 is after October 2026 -> future -> 1926)
+ * - 01/07/27 -> 01/07/1927 (2027 is after 2026 -> future -> 1927)
+ * - 15/08/98 -> 15/08/1998 (2098 is future -> 1998)
+ * - 10/05/15 -> 10/05/2015 (2015 is past -> 2015)
+ */
+function resolveTwoDigitYear(twoDigitYear, month, day) {
+  const numYear = parseInt(twoDigitYear, 10);
+  if (isNaN(numYear)) return null;
+  if (numYear >= 100) return numYear; // Already 4 digits
+
+  const now = new Date();
+  const currentFullYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1; // 1 to 12
+  const currentDay = now.getDate();
+
+  const candidateYear2000 = 2000 + numYear;
+
+  // 1. Candidate year is strictly in the future -> 1900s
+  if (candidateYear2000 > currentFullYear) {
+    return 1900 + numYear;
+  }
+
+  // 2. Candidate year is strictly in the past -> 2000s
+  if (candidateYear2000 < currentFullYear) {
+    return candidateYear2000;
+  }
+
+  // 3. Candidate year is the current year (e.g. 26 when current is 2026):
+  const m = parseInt(month, 10) || 1;
+  const d = parseInt(day, 10) || 1;
+
+  if (m > currentMonth) {
+    // Month is in future -> 1900s
+    return 1900 + numYear;
+  } else if (m < currentMonth) {
+    // Month is in past -> 2000s
+    return candidateYear2000;
+  } else {
+    // Same month -> compare day
+    if (d > currentDay) {
+      // Day is in future -> 1900s
+      return 1900 + numYear;
+    } else {
+      // Day is today or past -> 2000s
+      return candidateYear2000;
+    }
+  }
+}
+
+// Comprehensive date parsing: accepts DD/MM/YYYY, DD/MM/YY, DD-MM-YYYY, DD-MM-YY,
+// YYYY-MM-DD, YYYY/MM/DD, Excel serial numbers, text months (01-Jan-26, 15-Apr-98), and JS Date objects
 function parseExcelDate(value) {
   if (value === null || value === undefined || value === "") {
-    return { date: null, displayDate: null, displayShort: null, invalid: false };
+    return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: false };
   }
 
   // 1. If Date object
   if (value instanceof Date) {
-    if (isNaN(value.getTime())) return { date: null, displayDate: null, displayShort: null, invalid: true };
-    return formatResultDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
+    if (isNaN(value.getTime())) return { date: null, displayDate: null, displayShort: null, invalid: true, is1900: false };
+    const fy = value.getFullYear();
+    const fm = value.getMonth() + 1;
+    const fd = value.getDate();
+    if (fy <= 1900) {
+      return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
+    }
+    return formatResultDate(fy, fm, fd);
   }
 
   let strOriginal = String(value).replace(/^['"\s]+|['"\s]+$/g, "").trim();
-  if (!strOriginal) return { date: null, displayDate: null, displayShort: null, invalid: false };
+  if (!strOriginal) return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: false };
 
-  // Treat placeholder strings like '-  -', '- -', '--', '-', '.', '/', '0', '00-00-0000', 'N/A', 'NULL', etc. as null
-  const cleanLower = strOriginal.toLowerCase().trim();
+  // Strip time part first if present (e.g. '01/01/1900 00:00:00' or '1900-01-01T00:00:00.000Z')
+  let strWithoutTime = strOriginal.replace(/T.*$/i, "").replace(/\s+\d{1,2}:\d{2}(:\d{2})?.*$/, "").trim();
+
+  // Treat placeholder strings and 1900-01-01 / 01/01/1900 variants as null
+  const cleanLower = strWithoutTime.toLowerCase().trim();
   const withoutSeparators = cleanLower.replace(/[\s\-_.\/\\]/g, "");
   if (
     !withoutSeparators ||
     /^0+$/.test(withoutSeparators) ||
-    ["na", "n/a", "null", "nil", "none", "nan", "undefined", "notavailable", "notapplicable"].includes(cleanLower) ||
-    ["na", "n/a", "null", "nil", "none", "nan", "undefined"].includes(withoutSeparators)
+    ["na", "n/a", "null", "nil", "none", "nan", "undefined", "notavailable", "notapplicable", "01011900", "19000101", "111900", "010100", "1100"].includes(cleanLower) ||
+    ["na", "n/a", "null", "nil", "none", "nan", "undefined", "01011900", "19000101", "111900", "010100", "1100"].includes(withoutSeparators)
   ) {
-    return { date: null, displayDate: null, displayShort: null, invalid: false };
+    return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
   }
 
-  // 2. Excel numeric serial date (e.g. 45427 or 45427.0 or 32998)
+  // 2. Excel numeric serial date (e.g. 45427 or 45427.0 or 32998, 0 or 1 = 01/01/1900)
   if (!isNaN(strOriginal) && !/[a-zA-Z]/.test(strOriginal) && !strOriginal.includes("/") && !strOriginal.includes("-")) {
     const num = parseFloat(strOriginal);
-    if (num > 0 && num < 100000) {
+    if (num <= 1) {
+      // Excel 0 or 1 represents 01/01/1900 -> treat as null
+      return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
+    }
+    if (num > 1 && num < 100000) {
       // 25569 = days between 1900-01-01 and 1970-01-01
       const date = new Date(Math.round((num - 25569) * 86400 * 1000));
-      return formatResultDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+      const fy = date.getUTCFullYear();
+      const fm = date.getUTCMonth() + 1;
+      const fd = date.getUTCDate();
+      if (fy <= 1900) {
+        return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
+      }
+      return formatResultDate(fy, fm, fd);
     }
   }
 
-  // 3. String date: strip time part if present (e.g. '15/05/1990 00:00:00' or '1990-05-15T00:00:00.000Z')
-  let str = strOriginal.replace(/T\d{2}:\d{2}(:\d{2})?.*$/, "").replace(/\s+\d{1,2}:\d{2}(:\d{2})?.*$/, "").trim();
-
-  // Normalize delimiters to dash (e.g. '01 Jan 90', '01 - Jan - 90', '01.Jan.90', '01/Jan/90')
-  const normalized = str.replace(/[\s\-_.\/]+/g, "-");
+  // 3. String date: normalized delimiters to dash
+  const normalized = strWithoutTime.replace(/[\s\-_.\/]+/g, "-");
   const parts = normalized.split("-").filter(Boolean);
 
   if (parts.length === 3) {
@@ -100,34 +176,29 @@ function parseExcelDate(value) {
     const mKey0 = p0.toLowerCase();
 
     if (monthMap[mKey1]) {
+      // e.g. 01-Jan-26 or 01-Jan-2026
       mm = monthMap[mKey1];
       dd = parseInt(p0, 10);
-      yyyy = parseInt(p2, 10);
-      if (yyyy <= 40) yyyy = 2000 + yyyy;
-      else if (yyyy < 100) yyyy = 1900 + yyyy;
+      let rawY = parseInt(p2, 10);
+      yyyy = rawY > 1000 ? rawY : resolveTwoDigitYear(rawY, mm, dd);
     } else if (monthMap[mKey0]) {
+      // e.g. Jan-01-26 or Jan-01-2026
       mm = monthMap[mKey0];
       dd = parseInt(p1, 10);
-      yyyy = parseInt(p2, 10);
-      if (yyyy <= 40) yyyy = 2000 + yyyy;
-      else if (yyyy < 100) yyyy = 1900 + yyyy;
+      let rawY = parseInt(p2, 10);
+      yyyy = rawY > 1000 ? rawY : resolveTwoDigitYear(rawY, mm, dd);
     } else if (p0.length === 4) {
       // YYYY-MM-DD
       yyyy = parseInt(p0, 10);
       mm = parseInt(p1, 10);
       dd = parseInt(p2, 10);
     } else {
-      // DD-MM-YYYY or MM-DD-YYYY or DD-MM-YY
+      // DD-MM-YYYY, DD-MM-YY, MM-DD-YYYY, MM-DD-YY
       let v0 = parseInt(p0, 10);
       let v1 = parseInt(p1, 10);
       let v2 = parseInt(p2, 10);
 
-      if (v2 > 1000) {
-        yyyy = v2;
-      } else {
-        yyyy = v2 <= 40 ? 2000 + v2 : 1900 + v2;
-      }
-
+      // Determine day and month
       if (v0 > 12 && v1 <= 12) {
         dd = v0;
         mm = v1;
@@ -135,22 +206,41 @@ function parseExcelDate(value) {
         dd = v1;
         mm = v0;
       } else {
+        // Standard Indian / UK format: DD/MM
         dd = v0;
         mm = v1;
       }
+
+      // Determine year (preserving 4-digit years or applying 100-year sliding window for 2-digit years)
+      if (v2 > 1000) {
+        yyyy = v2;
+      } else {
+        yyyy = resolveTwoDigitYear(v2, mm, dd);
+      }
+    }
+
+    if (yyyy <= 1900) {
+      return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
     }
 
     const res = formatResultDate(yyyy, mm, dd);
+    if (res.is1900) return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
     if (!res.invalid) return res;
   }
 
   // Fallback to native JS Date
   const parsedNative = new Date(strOriginal);
   if (!isNaN(parsedNative.getTime())) {
-    return formatResultDate(parsedNative.getFullYear(), parsedNative.getMonth() + 1, parsedNative.getDate());
+    const fy = parsedNative.getFullYear();
+    const fm = parsedNative.getMonth() + 1;
+    const fd = parsedNative.getDate();
+    if (fy <= 1900) {
+      return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
+    }
+    return formatResultDate(fy, fm, fd);
   }
 
-  return { date: null, displayDate: null, displayShort: null, invalid: true };
+  return { date: null, displayDate: null, displayShort: null, invalid: true, is1900: false };
 }
 
 function validateIFSC(ifsc) {
@@ -203,18 +293,242 @@ return prefix + newNumber;
 }
 
 
-exports.excelimportFinal = async function (req, res) {
-  const sequelize = await dbname(req, req.headers.compcode);
-  const t = await sequelize.transaction();
+function formatUserFriendlyErrorMessage(error) {
+  if (!error) return "An unexpected error occurred during import.";
 
+  const rawMsg = error.original?.message || error.message || String(error);
+
+  // 1. Invalid column name in database table
+  if (/Invalid column name/i.test(rawMsg)) {
+    const match = rawMsg.match(/Invalid column name '([^']+)'/i);
+    return match
+      ? `Database Column Error: Column '${match[1]}' is invalid or missing in database. Please check your Excel column headers.`
+      : "Database Column Error: A column name in Excel does not match the database schema.";
+  }
+
+  // 2. Cannot insert NULL into column
+  if (/Cannot insert the value NULL into column/i.test(rawMsg)) {
+    const match = rawMsg.match(/column '([^']+)'/i);
+    return match
+      ? `Missing Required Value: Database column '${match[1]}' cannot be empty. Please ensure all required fields are filled.`
+      : "Missing Required Value: A mandatory database column was left blank in Excel.";
+  }
+
+  // 3. String or binary data would be truncated
+  if (/String or binary data would be truncated/i.test(rawMsg)) {
+    return "Data Length Error: One or more cell values in your Excel exceed the maximum allowed length. Please shorten long fields.";
+  }
+
+  // 4. Duplicate key / PRIMARY KEY constraint
+  if (/duplicate key/i.test(rawMsg) || /PRIMARY KEY/i.test(rawMsg) || /unique constraint/i.test(rawMsg)) {
+    const match = rawMsg.match(/The duplicate key value is \(([^)]+)\)/i);
+    return match
+      ? `Duplicate Record Error: Record with key (${match[1]}) already exists in database.`
+      : "Duplicate Record Error: A record with this code/key already exists in the database.";
+  }
+
+  // 5. Conversion failed (date/datetime/int)
+  if (/Conversion failed/i.test(rawMsg) || /converting date/i.test(rawMsg)) {
+    return "Data Format Error: Failed to convert date or number. Please check date (DD/MM/YYYY) and numeric values in Excel.";
+  }
+
+  // 6. Foreign key violation
+  if (/FOREIGN KEY constraint/i.test(rawMsg)) {
+    return "Reference Error: One or more referenced codes do not exist in master tables. Please check your data.";
+  }
+
+  // 7. Timeout
+  if (/timeout/i.test(rawMsg) || /ETIMEDOUT/i.test(rawMsg)) {
+    return "Database Timeout: The request took too long to complete. Please try importing in smaller batches.";
+  }
+
+  // Clean raw message fallback
+  const cleanFirstLine = rawMsg.split("\n")[0].replace(/^Error:\s*/i, "").trim();
+  return cleanFirstLine ? `Import Error: ${cleanFirstLine}` : "Error during import. Please check file format and data.";
+}
+
+exports.excelimportFinal = async function (req, res) {
+  // =========================================================================
+  // 1. FAST FILE & HEADER VALIDATION (In-Memory, Zero DB Connection/Transaction)
+  // =========================================================================
+  const excelFile = req.files?.["excel"]?.[0];
+  if (!excelFile || !excelFile.buffer || excelFile.buffer.length === 0) {
+    return res.status(400).send({ Message: "No file uploaded. Please select a valid Excel file to import." });
+  }
+
+  // File extension & mime validation
+  const allowedExtensions = [".xlsx", ".xls"];
+  const allowedMimeTypes = [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "application/octet-stream"
+  ];
+  const originalName = excelFile.originalname || "";
+  const dotIndex = originalName.lastIndexOf(".");
+  const fileExt = dotIndex !== -1 ? originalName.substring(dotIndex).toLowerCase() : "";
+  const isExtensionValid = allowedExtensions.includes(fileExt);
+  const isMimeTypeValid = !excelFile.mimetype || allowedMimeTypes.includes(excelFile.mimetype);
+
+  if (!isExtensionValid || !isMimeTypeValid) {
+    return res.status(400).send({
+      Message: "Unsupported file format. Please upload a valid Excel file (.xlsx or .xls) only."
+    });
+  }
+
+  let workbook;
   try {
-    const EmployeeMaster = _Employeemaster(sequelize, DataTypes);
-    const excelFile = req.files?.["excel"]?.[0];
-    if (!excelFile) {
-      await sequelize.close();
-      return res.status(400).send({ Message: "No file uploaded" });
+    workbook = xlsx.read(excelFile.buffer, {
+      type: "buffer",
+      cellDates: false,
+      cellNF: true,
+      cellText: true
+    });
+  } catch (readErr) {
+    return res.status(400).send({
+      Message: "Failed to read Excel file. The file may be corrupted, invalid, or password protected."
+    });
+  }
+
+  if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+    return res.status(400).send({ Message: "The uploaded Excel file contains no worksheets." });
+  }
+
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const allRows = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+
+  if (!allRows || !allRows.length) {
+    return res.status(400).send({ Message: "The uploaded Excel sheet is empty. Please provide an Excel file with data." });
+  }
+
+  // 2. Locate header row dynamically (Search first 25 rows for EmpName / EMPFIRSTNAME / Employee Name)
+  const empNameHeaderAliases = new Set([
+    "EMPNAME", "EMPFIRSTNAME", "EMPLOYEE NAME", "EMPLOYEE_NAME",
+    "EMP NAME", "EMP_NAME", "NAME"
+  ]);
+
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(allRows.length, 25); i++) {
+    const row = allRows[i];
+    if (Array.isArray(row) && row.some(cell => {
+      const str = String(cell || "").trim().toUpperCase();
+      return empNameHeaderAliases.has(str) || str === "EMPCODE";
+    })) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  if (headerIdx === -1) {
+    return res.status(400).send({
+      Message: "Missing required column 'EmpName' (Employee Name) in Excel. Please check column headers or use the download template."
+    });
+  }
+
+  const headers = allRows[headerIdx].map(h => String(h || "").trim());
+  const hasEmpNameInHeaders = headers.some(h => empNameHeaderAliases.has(h.toUpperCase()));
+  if (!hasEmpNameInHeaders) {
+    return res.status(400).send({
+      Message: "Missing required column 'EmpName' (Employee Name) in Excel headers. Please include the Employee Name column."
+    });
+  }
+
+  // 3. Extract data rows while immediately skipping reference guide tables and empty rows
+  const rawData = [];
+  const refDropdownWords = new Set([
+    "MALE", "FEMALE", "REGULAR", "CASUAL", "APPRENTICE",
+    "BANK TRANSFER", "CHEQUE", "CASH", "NEFT", "OTHER", "SALARY HOLD"
+  ]);
+
+  for (let i = headerIdx + 1; i < allRows.length; i++) {
+    const row = allRows[i];
+    if (!Array.isArray(row)) continue;
+
+    // Check if user left the reference guide table at the bottom (Row 7+ in template)
+    const isRefTable = row.some(cell => {
+      const val = String(cell || "").toLowerCase().trim();
+      return val.includes("shift timing") ||
+             val.includes("shfit timing") ||
+             val.includes("only for refrence") ||
+             val.includes("only for reference") ||
+             val.includes("copy these headings");
+    });
+    const isHeaderes2 = String(row[0] || "").trim().toUpperCase() === "GENDER" &&
+                        String(row[1] || "").trim().toUpperCase() === "EMPTYPE";
+
+    if (isRefTable || isHeaderes2) {
+      break; // Reference guide reached, stop reading completely
     }
 
+    // Check if row has any non-empty cell
+    const hasContent = row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== "");
+    if (!hasContent) continue;
+
+    const rowObj = {};
+    headers.forEach((h, colIdx) => {
+      if (!h) return;
+      const cleanH = String(h || "").trim();
+      const isDateCol = /dob|birth|join|joning|doj/i.test(cleanH);
+
+      const cellAddress = xlsx.utils.encode_cell({ r: i, c: colIdx });
+      const cell = sheet ? sheet[cellAddress] : null;
+
+      const isDateValue = cell && cell.w && /^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}/.test(String(cell.w).trim());
+
+      // For date columns or formatted date values: ALWAYS prefer formatted text (cell.w) from Excel
+      // (e.g. '10/1/1996', '15/06/26', '10/8/2025', '1/2/2023') to prevent Excel's internal numeric serial conversion
+      // from swapping Day and Month when regional settings differ.
+      if ((isDateCol || isDateValue) && cell && cell.w !== undefined && String(cell.w).trim() !== "") {
+        rowObj[h] = String(cell.w).trim();
+      } else {
+        rowObj[h] = row[colIdx] !== undefined ? row[colIdx] : "";
+      }
+    });
+
+    // Check for real employee identity fields
+    const empNameVal = String(
+      rowObj.EmpName || rowObj.EMPFIRSTNAME || rowObj["Employee Name"] || rowObj["EMPLOYEE NAME"] || ""
+    ).trim();
+    const empCodeVal = String(
+      rowObj.EMPCODE || rowObj.EmpCode || rowObj["Emp Code"] || ""
+    ).trim();
+    const mobileVal = String(
+      rowObj.PERSONAL_MOBILE_NUMBER || rowObj.MOBILE_NO || rowObj["Personal Mobile Number"] || rowObj["Mobile No"] || ""
+    ).trim();
+    const aadharVal = String(rowObj.AADHAR_CARD || rowObj.UID_NO || "").trim();
+    const panVal = String(rowObj.PANNO || "").trim();
+
+    // Skip reference guide option rows if header row was omitted or deleted
+    if (refDropdownWords.has(empNameVal.toUpperCase()) && !mobileVal && !empCodeVal && !aadharVal && !panVal) {
+      continue;
+    }
+
+    // Skip ghost/blank rows with zero employee identifiers
+    if (!empNameVal && !empCodeVal && !mobileVal && !aadharVal && !panVal) {
+      continue;
+    }
+
+    rawData.push(rowObj);
+  }
+
+  // FAST RETURN (< 10ms): If empty sheet or empty template was uploaded
+  if (!rawData.length) {
+    return res.status(400).send({
+      Message: "No employee data found in Excel. Please fill employee details below the header row."
+    });
+  }
+
+  // =========================================================================
+  // 2. DATABASE PROCESSING (Only Executed When Real Data Exists)
+  // =========================================================================
+  let sequelize = null;
+  let t = null;
+
+  try {
+    sequelize = await dbname(req, req.headers.compcode);
+    t = await sequelize.transaction();
+
+    const EmployeeMaster = _Employeemaster(sequelize, DataTypes);
     const { user, branch } = req.body;
     const locCode = branch ?? user?.branch ?? 1;
     const changedByUser = req.headers?.name || user?.name || "SYSTEM";
@@ -230,279 +544,259 @@ exports.excelimportFinal = async function (req, res) {
     }
     userCode = Number(userCode || 0);
 
-    // ===== File type validation =====
-    const allowedExtensions = [".xlsx", ".xls"];
-    const allowedMimeTypes = [
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.ms-excel",
-      "application/octet-stream"
-    ];
-    const originalName = excelFile.originalname || "";
-    const dotIndex = originalName.lastIndexOf(".");
-    const fileExt = dotIndex !== -1 ? originalName.substring(dotIndex).toLowerCase() : "";
-    const isExtensionValid = allowedExtensions.includes(fileExt);
-    const isMimeTypeValid = !excelFile.mimetype || allowedMimeTypes.includes(excelFile.mimetype);
+    // ===== Column mapping dictionary with extensive aliases =====
+    const keyMap = {
+      // Employee Name
+      EmpName: "EMPFIRSTNAME",
+      EMPNAME: "EMPFIRSTNAME",
+      EMPFIRSTNAME: "EMPFIRSTNAME",
+      "Employee Name": "EMPFIRSTNAME",
+      "EMPLOYEE NAME": "EMPFIRSTNAME",
+      "Employee_Name": "EMPFIRSTNAME",
+      "EMPLOYEE_NAME": "EMPFIRSTNAME",
+      "Emp Name": "EMPFIRSTNAME",
+      "EMP NAME": "EMPFIRSTNAME",
+      "Emp_Name": "EMPFIRSTNAME",
+      "EMP_NAME": "EMPFIRSTNAME",
+      Name: "EMPFIRSTNAME",
+      NAME: "EMPFIRSTNAME",
 
-    if (!isExtensionValid || !isMimeTypeValid) {
-      await sequelize.close();
-      return res.status(400).send({
-        Message: "Unsupported file format. Please upload a valid Excel file (.xlsx or .xls) only."
-      });
-    }
+      // Gender & Types
+      GENDER: "GENDER",
+      Gender: "GENDER",
+      gender: "GENDER",
+      EMPTYPE: "EMPTYPE",
+      EmpType: "EMPTYPE",
+      emptype: "EMPTYPE",
+      "Employee Type": "EMPTYPE",
+      "EMPLOYEE TYPE": "EMPTYPE",
+      CHANNEL: "CHANNEL",
+      Channel: "CHANNEL",
+      CLUSTER: "CLUSTER",
+      Cluster: "CLUSTER",
+      LOCATION: "LOCATION",
+      Location: "LOCATION",
+      location: "LOCATION",
+      SECTION: "SECTION",
+      Section: "SECTION",
+      Department: "DIVISION",
+      DEPARTMENT: "DIVISION",
+      department: "DIVISION",
+      DIVISION: "DIVISION",
+      Division: "DIVISION",
+      division: "DIVISION",
+      EMPLOYEEDESIGNATION: "EMPLOYEEDESIGNATION",
+      Designation: "EMPLOYEEDESIGNATION",
+      DESIGNATION: "EMPLOYEEDESIGNATION",
+      designation: "EMPLOYEEDESIGNATION",
 
-    const workbook = xlsx.read(excelFile.buffer, { type: "buffer", cellDates: false });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
+      // Punch / Pay Code
+      Punch_code: "PAY_CODE",
+      PUNCH_CODE: "PAY_CODE",
+      Punch_Code: "PAY_CODE",
+      "Punch Code": "PAY_CODE",
+      "PUNCH CODE": "PAY_CODE",
+      PunchCode: "PAY_CODE",
+      PUNCHCODE: "PAY_CODE",
+      punch_code: "PAY_CODE",
+      punchcode: "PAY_CODE",
+      PAY_CODE: "PAY_CODE",
+      PAYCODE: "PAY_CODE",
+      Pay_Code: "PAY_CODE",
+      "Pay Code": "PAY_CODE",
+      "PAY CODE": "PAY_CODE",
+      pay_code: "PAY_CODE",
+      paycode: "PAY_CODE",
+      MSPIN: "MSPIN",
+      Mspin: "MSPIN",
 
-    // Read all rows as 2D array
-    const allRows = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+      // Mobile Number (Personal)
+      PERSONAL_MOBILE_NUMBER: "MOBILE_NO",
+      Personal_Mobile_Number: "MOBILE_NO",
+      "Personal Mobile Number": "MOBILE_NO",
+      "PERSONAL MOBILE NUMBER": "MOBILE_NO",
+      Personal_Mobile_No: "MOBILE_NO",
+      "Personal Mobile No": "MOBILE_NO",
+      "PERSONAL MOBILE NO": "MOBILE_NO",
+      PERSONAL_MOBILE_NO: "MOBILE_NO",
+      PERSONAL_MOBILE: "MOBILE_NO",
+      Personal_Mobile: "MOBILE_NO",
+      MOBILE_NO: "MOBILE_NO",
+      Mobile_No: "MOBILE_NO",
+      mobile_no: "MOBILE_NO",
+      "Mobile No": "MOBILE_NO",
+      "MOBILE NO": "MOBILE_NO",
+      "Mobile Number": "MOBILE_NO",
+      "MOBILE NUMBER": "MOBILE_NO",
+      Mobile: "MOBILE_NO",
+      MOBILE: "MOBILE_NO",
 
-    if (!allRows.length) {
-      await sequelize.close();
-      return res.status(400).send({ Message: "No data found in Excel" });
-    }
+      // Official Number
+      OFFICIAL_MOBILE_NUMBER: "Official_number",
+      Official_Mobile_Number: "Official_number",
+      "Official Mobile Number": "Official_number",
+      "OFFICIAL MOBILE NUMBER": "Official_number",
+      OFFICIAL_MOBILE_NO: "Official_number",
+      Official_Mobile_No: "Official_number",
+      "Official Mobile No": "Official_number",
+      "OFFICIAL MOBILE NO": "Official_number",
+      OFFICIAL_MOBILE: "Official_number",
+      Official_Mobile: "Official_number",
+      Official_number: "Official_number",
+      Official_Number: "Official_number",
+      OFFICIAL_NUMBER: "Official_number",
+      "Official Number": "Official_number",
+      "OFFICIAL NUMBER": "Official_number",
+      Official_no: "Official_number",
+      Official_No: "Official_number",
+      OFFICIAL_NO: "Official_number",
+      "Official No": "Official_number",
+      "OFFICIAL NO": "Official_number",
+      OfficialNumber: "Official_number",
+      OFFICIALNUMBER: "Official_number",
 
-    // 1. Dynamically locate the actual employee header row (contains EmpName / EMPFIRSTNAME)
-    let headerIdx = -1;
-    for (let i = 0; i < Math.min(allRows.length, 15); i++) {
-      const row = allRows[i];
-      if (Array.isArray(row) && row.some(cell => {
-        const str = String(cell || "").trim().toUpperCase();
-        return str === "EMPNAME" || str === "EMPFIRSTNAME";
-      })) {
-        headerIdx = i;
-        break;
-      }
-    }
+      // DOB
+      DOB: "DOB",
+      "Date of Birth": "DOB",
+      "DATE OF BIRTH": "DOB",
+      Date_of_Birth: "DOB",
+      DATE_OF_BIRTH: "DOB",
+      dob: "DOB",
 
-    if (headerIdx === -1) {
-      headerIdx = 0;
-    }
+      // Joining Date
+      DATE_OF_JONING: "CURRENTJOINDATE",
+      DATE_OF_JOINING: "CURRENTJOINDATE",
+      "DATE OF JONING": "CURRENTJOINDATE",
+      "DATE OF JOINING": "CURRENTJOINDATE",
+      "Date of Joining": "CURRENTJOINDATE",
+      "Date of Joning": "CURRENTJOINDATE",
+      "Joining Date": "CURRENTJOINDATE",
+      "JOINING DATE": "CURRENTJOINDATE",
+      Joining_Date: "CURRENTJOINDATE",
+      JOINING_DATE: "CURRENTJOINDATE",
+      CURRENTJOINDATE: "CURRENTJOINDATE",
+      DOJ: "CURRENTJOINDATE",
+      doj: "CURRENTJOINDATE",
 
-    const headers = allRows[headerIdx].map(h => String(h || "").trim());
+      // Identity & Address
+      AADHAR_CARD: "UID_NO",
+      Aadhar_Card: "UID_NO",
+      "Aadhar Card": "UID_NO",
+      "AADHAR CARD": "UID_NO",
+      UID_NO: "UID_NO",
+      PANNO: "PANNO",
+      "PAN NO": "PANNO",
+      "Pan No": "PANNO",
+      "PAN No": "PANNO",
+      "PAN Number": "PANNO",
+      PERMANENTADDRESS1: "PERMANENTADDRESS1",
+      "Permanent Address": "PERMANENTADDRESS1",
 
-    // 2. Extract employee rows (and stop if reference guide table starts)
-    const rawData = [];
-    for (let i = headerIdx + 1; i < allRows.length; i++) {
-      const row = allRows[i];
-      if (!Array.isArray(row)) continue;
+      // Religion
+      RELEGION: "RELCODE",
+      RELIGION: "RELCODE",
+      Religion: "RELCODE",
+      Relegion: "RELCODE",
+      religion: "RELCODE",
+      relegion: "RELCODE",
+      RELCODE: "RELCODE",
+      relcode: "RELCODE",
 
-      // Stop reading if user left the reference guide table at the bottom (Row 7+)
-      const isRefTable = row.some(cell => {
-        const val = String(cell || "").toLowerCase();
-        return val.includes("shfit timing") || val.includes("shift timing") || val.includes("only for refrence");
-      });
-      if (isRefTable) {
-        break;
-      }
+      // Statutory PF/ESI/LWF
+      pfper: "pfper",
+      "PF Y/N": "PFNO",
+      PF_Y_N: "PFNO",
+      pfnumber: "pfnumber",
+      "ESI Y/N": "ESINO",
+      ESI_Y_N: "ESINO",
+      "LWF Y/N": "LWFNO",
+      LWF_Y_N: "LWFNO",
+      "Professional Tax Y/N": "pro_tax",
+      Professional_Tax_Y_N: "pro_tax",
 
-      // Check if row has any non-empty cell
-      const hasContent = row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== "");
-      if (hasContent) {
-        const rowObj = {};
-        headers.forEach((h, colIdx) => {
-          if (h) rowObj[h] = row[colIdx] !== undefined ? row[colIdx] : "";
-        });
-        rawData.push(rowObj);
-      }
-    }
+      // Banking
+      PAYMENTMODE: "PAYMENTMODE",
+      "Payment Mode": "PAYMENTMODE",
+      BANK_NAME: "BANKNAME",
+      BANKNAME: "BANKNAME",
+      "Bank Name": "BANKNAME",
+      BANKACCOUNTNO: "BANKACCOUNTNO",
+      "Bank Account No": "BANKACCOUNTNO",
+      "BANK ACCOUNT NO": "BANKACCOUNTNO",
+      "Bank Account Number": "BANKACCOUNTNO",
+      "BANK ACCOUNT NUMBER": "BANKACCOUNTNO",
+      "Account No": "BANKACCOUNTNO",
+      "ACCOUNT NO": "BANKACCOUNTNO",
+      "Account Number": "BANKACCOUNTNO",
+      "ACCOUNT NUMBER": "BANKACCOUNTNO",
+      "Bank_Account_No": "BANKACCOUNTNO",
+      "BANK_ACCOUNT_NO": "BANKACCOUNTNO",
+      "bank_account_no": "BANKACCOUNTNO",
+      "account_no": "BANKACCOUNTNO",
+      "accountno": "BANKACCOUNTNO",
+      AccountNo: "BANKACCOUNTNO",
+      BANKACCOUNTNUMBER: "BANKACCOUNTNO",
+      ifsc_code: "ifsc_code",
+      "IFSC Code": "ifsc_code",
+      "IFSC CODE": "ifsc_code",
+      IFSC_CODE: "ifsc_code",
 
-    if (!rawData.length) {
-      await sequelize.close();
-      return res.status(400).send({
-        Message: "No employee data found in Excel. Please fill employee details below the header row."
-      });
-    }
+      // Misc
+      WEEKLYOFF: "WEEKLYOFF",
+      "Weekly Off": "WEEKLYOFF",
+      "WEEKLY OFF": "WEEKLYOFF",
+      EMP_SHIFT: "EMP_SHIFT",
+      "Emp Shift": "EMP_SHIFT",
+      "EMP SHIFT": "EMP_SHIFT",
+      EMPCODE: "EMPCODE",
+      EmpCode: "EMPCODE",
+      PDIST: "PDIST",
+      "Permanent District": "PDIST",
+      CDIST: "CDIST",
+      "Current District": "CDIST",
+      PCITY: "PCITY",
+      "Permanent City": "PCITY",
+      CCITY: "CCITY",
+      "Current City": "CCITY",
+      Marital_Status: "Marital_Status",
+      "Marital Status": "Marital_Status",
+      MARITALSTATUS: "Marital_Status",
+      "MARITAL STATUS": "Marital_Status",
+      GRADE: "GRADE",
+      Grade: "GRADE",
+      Punch_Type: "Punch_Type",
+      "Punch Type": "Punch_Type",
+      PUNCH_TYPE: "Punch_Type"
+    };
 
-    const RELIGION = [
-      { value: "1", label: "HINDU" },
-      { value: "2", label: "MUSLIMS" },
-      { value: "3", label: "SIKH" },
-      { value: "4", label: "CHRISTIAN" },
-      { value: "5", label: "JAIN" },
-      { value: "6", label: "BUDDHA" },
-      { value: "7", label: "PERSIANS" },
-    ];
-
-    // ===== Column mapping =====
     const renameKeys = (obj) => {
-      const keyMap = {
-        EmpName: "EMPFIRSTNAME",
-        GENDER: "GENDER",
-        EMPTYPE: "EMPTYPE",
-        CHANNEL: "CHANNEL",
-        CLUSTER: "CLUSTER",
-        LOCATION: "LOCATION",
-        SECTION: "SECTION",
-        Department: "DIVISION",
-        DIVISION: "DIVISION",
-        EMPLOYEEDESIGNATION: "EMPLOYEEDESIGNATION",
-        Designation: "EMPLOYEEDESIGNATION",
-        // Punch / Pay Code
-        Punch_code: "PAY_CODE",
-        PUNCH_CODE: "PAY_CODE",
-        Punch_Code: "PAY_CODE",
-        "Punch Code": "PAY_CODE",
-        "PUNCH CODE": "PAY_CODE",
-        PunchCode: "PAY_CODE",
-        PUNCHCODE: "PAY_CODE",
-        punch_code: "PAY_CODE",
-        punchcode: "PAY_CODE",
-        PAY_CODE: "PAY_CODE",
-        PAYCODE: "PAY_CODE",
-        Pay_Code: "PAY_CODE",
-        "Pay Code": "PAY_CODE",
-        "PAY CODE": "PAY_CODE",
-        pay_code: "PAY_CODE",
-        paycode: "PAY_CODE",
-        MSPIN: "MSPIN",
-        // Mobile Number (Personal)
-        PERSONAL_MOBILE_NUMBER: "MOBILE_NO",
-        Personal_Mobile_Number: "MOBILE_NO",
-        "Personal Mobile Number": "MOBILE_NO",
-        "PERSONAL MOBILE NUMBER": "MOBILE_NO",
-        Personal_Mobile_No: "MOBILE_NO",
-        "Personal Mobile No": "MOBILE_NO",
-        "PERSONAL MOBILE NO": "MOBILE_NO",
-        PERSONAL_MOBILE_NO: "MOBILE_NO",
-        PERSONAL_MOBILE: "MOBILE_NO",
-        Personal_Mobile: "MOBILE_NO",
-        MOBILE_NO: "MOBILE_NO",
-        Mobile_No: "MOBILE_NO",
-        mobile_no: "MOBILE_NO",
-        "Mobile No": "MOBILE_NO",
-        "MOBILE NO": "MOBILE_NO",
-        // Official Number
-        OFFICIAL_MOBILE_NUMBER: "Official_number",
-        Official_Mobile_Number: "Official_number",
-        "Official Mobile Number": "Official_number",
-        "OFFICIAL MOBILE NUMBER": "Official_number",
-        OFFICIAL_MOBILE_NO: "Official_number",
-        Official_Mobile_No: "Official_number",
-        "Official Mobile No": "Official_number",
-        "OFFICIAL MOBILE NO": "Official_number",
-        OFFICIAL_MOBILE: "Official_number",
-        Official_Mobile: "Official_number",
-        Official_number: "Official_number",
-        Official_Number: "Official_number",
-        OFFICIAL_NUMBER: "Official_number",
-        "Official Number": "Official_number",
-        "OFFICIAL NUMBER": "Official_number",
-        Official_no: "Official_number",
-        Official_No: "Official_number",
-        OFFICIAL_NO: "Official_number",
-        "Official No": "Official_number",
-        "OFFICIAL NO": "Official_number",
-        OfficialNumber: "Official_number",
-        OFFICIALNUMBER: "Official_number",
-        MOBILE_No: "Official_number",
-        // DOB
-        DOB: "DOB",
-        "Date of Birth": "DOB",
-        "DATE OF BIRTH": "DOB",
-        Date_of_Birth: "DOB",
-        DATE_OF_BIRTH: "DOB",
-        dob: "DOB",
-        // Joining Date
-        DATE_OF_JONING: "CURRENTJOINDATE",
-        DATE_OF_JOINING: "CURRENTJOINDATE",
-        "DATE OF JONING": "CURRENTJOINDATE",
-        "DATE OF JOINING": "CURRENTJOINDATE",
-        "Date of Joining": "CURRENTJOINDATE",
-        "Date of Joning": "CURRENTJOINDATE",
-        "Joining Date": "CURRENTJOINDATE",
-        "JOINING DATE": "CURRENTJOINDATE",
-        Joining_Date: "CURRENTJOINDATE",
-        JOINING_DATE: "CURRENTJOINDATE",
-        CURRENTJOINDATE: "CURRENTJOINDATE",
-        DOJ: "CURRENTJOINDATE",
-        doj: "CURRENTJOINDATE",
-        AADHAR_CARD: "UID_NO",
-        PANNO: "PANNO",
-        PERMANENTADDRESS1: "PERMANENTADDRESS1",
-        // Religion
-        RELEGION: "RELCODE",
-        RELIGION: "RELCODE",
-        Religion: "RELCODE",
-        Relegion: "RELCODE",
-        religion: "RELCODE",
-        relegion: "RELCODE",
-        "RELIGION": "RELCODE",
-        RELCODE: "RELCODE",
-        relcode: "RELCODE",
-        pfper: "pfper",
-        "PF Y/N": "PFNO",
-        PF_Y_N: "PFNO",
-        pfnumber: "pfnumber",
-        "ESI Y/N": "ESINO",
-        ESI_Y_N: "ESINO",
-        "LWF Y/N": "LWFNO",
-        LWF_Y_N: "LWFNO",
-        "Professional Tax Y/N": "pro_tax",
-        Professional_Tax_Y_N: "pro_tax",
-        PAYMENTMODE: "PAYMENTMODE",
-        BANK_NAME: "BANKNAME",
-        BANKNAME: "BANKNAME",
-        BANKACCOUNTNO: "BANKACCOUNTNO",
-        "Bank Account No": "BANKACCOUNTNO",
-        "BANK ACCOUNT NO": "BANKACCOUNTNO",
-        "Bank Account Number": "BANKACCOUNTNO",
-        "BANK ACCOUNT NUMBER": "BANKACCOUNTNO",
-        "Account No": "BANKACCOUNTNO",
-        "ACCOUNT NO": "BANKACCOUNTNO",
-        "Account Number": "BANKACCOUNTNO",
-        "ACCOUNT NUMBER": "BANKACCOUNTNO",
-        "Bank_Account_No": "BANKACCOUNTNO",
-        "BANK_ACCOUNT_NO": "BANKACCOUNTNO",
-        "Bank_Account_Number": "BANKACCOUNTNO",
-        "BANK_ACCOUNT_NUMBER": "BANKACCOUNTNO",
-        "bank_account_no": "BANKACCOUNTNO",
-        "account_no": "BANKACCOUNTNO",
-        "accountno": "BANKACCOUNTNO",
-        "AccountNo": "BANKACCOUNTNO",
-        "BANKACCOUNTNUMBER": "BANKACCOUNTNO",
-        ifsc_code: "ifsc_code",
-        WEEKLYOFF: "WEEKLYOFF",
-        EMP_SHIFT: "EMP_SHIFT",
-        EMPCODE: "EMPCODE",
-        PDIST: "PDIST",
-        "Permanent District": "PDIST",
-        "PERMANENT DISTRICT": "PDIST",
-        CDIST: "CDIST",
-        "Current District": "CDIST",
-        "CURRENT DISTRICT": "CDIST",
-        PCITY: "PCITY",
-        "Permanent City": "PCITY",
-        "PERMANENT CITY": "PCITY",
-        CCITY: "CCITY",
-        "Current City": "CCITY",
-        "CURRENT CITY": "CCITY",
-        Marital_Status: "Marital_Status",
-        "Marital Status": "Marital_Status",
-        MARITALSTATUS: "Marital_Status",
-        "MARITAL STATUS": "Marital_Status",
-        maritalstatus: "Marital_Status",
-        GRADE: "GRADE",
-        Grade: "GRADE",
-        grade: "GRADE",
-        Punch_Type: "Punch_Type",
-        "Punch Type": "Punch_Type",
-        PUNCH_TYPE: "Punch_Type",
-        "PUNCH TYPE": "Punch_Type",
-        PunchType: "Punch_Type",
-        punch_type: "Punch_Type",
-        punchtype: "Punch_Type",
-      };
-
       return Object.keys(obj).reduce((acc, key) => {
         const cleanKey = String(key || "").trim();
         const newKey = keyMap[cleanKey] || keyMap[cleanKey.toUpperCase()] || cleanKey;
         if (newKey === "CURRENTJOINDATE" || newKey === "DOB") {
           if (obj[key] !== "" && obj[key] !== null && obj[key] !== undefined) {
+            const rawStr = String(obj[key]).trim();
             const parsed = parseExcelDate(obj[key]);
-            acc[newKey] = parsed.date;
-            acc[newKey + "_INVALID_FORMAT"] = parsed.invalid;
-            acc[newKey + "_RAW"] = obj[key];
+            const rawClean = rawStr.replace(/[\s\-_.\/\\]/g, "").toLowerCase();
+            const is1900Val =
+              parsed.is1900 ||
+              parsed.date === "1900-01-01" ||
+              ["01011900", "19000101", "111900", "010100", "1100"].includes(rawClean) ||
+              rawStr === "01/01/1900" ||
+              rawStr === "1900-01-01" ||
+              rawStr === "01-01-1900" ||
+              rawStr === "1/1/1900";
+
+            if (is1900Val) {
+              acc[newKey] = null;
+              acc[newKey + "_INVALID_FORMAT"] = false;
+              acc[newKey + "_RAW"] = obj[key];
+              acc["_was1900_" + newKey] = true;
+            } else {
+              acc[newKey] = parsed.date;
+              acc[newKey + "_INVALID_FORMAT"] = parsed.invalid;
+              acc[newKey + "_RAW"] = obj[key];
+            }
           } else {
             acc[newKey] = null;
             acc[newKey + "_INVALID_FORMAT"] = false;
@@ -512,7 +806,12 @@ exports.excelimportFinal = async function (req, res) {
           if (value !== null && value !== undefined) {
             let strVal = String(value).trim();
             const withoutSeps = strVal.replace(/[\s\-_.\/\\]/g, "");
-            if (withoutSeps === "" || ["na", "n/a", "null", "nil", "none"].includes(strVal.toLowerCase())) {
+            if (
+              withoutSeps === "" ||
+              ["na", "n/a", "null", "nil", "none", "01011900", "19000101", "111900", "010100", "1100"].includes(strVal.toLowerCase()) ||
+              ["na", "n/a", "null", "nil", "none", "01011900", "19000101", "111900", "010100", "1100"].includes(withoutSeps.toLowerCase()) ||
+              strVal === "01/01/1900" || strVal === "1900-01-01" || strVal === "01-01-1900" || strVal === "1/1/1900"
+            ) {
               value = null;
             } else if (newKey === "UID_NO") {
               value = strVal.replace(/\D/g, "");
@@ -587,9 +886,7 @@ exports.excelimportFinal = async function (req, res) {
       }
     });
 
-    // =========================================================================
-    // STEP 1: Insert ALL raw rows into EMPLOYEEMATER_ROW_DATA first
-    // =========================================================================
+    // Staging table insertion (EMPLOYEEMATER_ROW_DATA)
     try {
       const [tableExists] = await sequelize.query(
         `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'EMPLOYEEMATER_ROW_DATA'`
@@ -630,8 +927,8 @@ exports.excelimportFinal = async function (req, res) {
             MSPIN: rawRow.MSPIN ? String(rawRow.MSPIN).slice(0, 50) : null,
             MOBILE_NO: rawRow.MOBILE_NO ? String(rawRow.MOBILE_NO).slice(0, 15) : null,
             Official_number: rawRow.Official_number ? String(rawRow.Official_number).slice(0, 20) : null,
-            DOB: rawRow.DOB || null,
-            DATE_OF_JONING: rawRow.CURRENTJOINDATE || null,
+            DOB: (rawRow._was1900_DOB || rawRow.DOB === "1900-01-01" || rawRow.DOB === "01/01/1900") ? null : (rawRow.DOB || null),
+            DATE_OF_JONING: (rawRow._was1900_CURRENTJOINDATE || rawRow.CURRENTJOINDATE === "1900-01-01" || rawRow.CURRENTJOINDATE === "01/01/1900") ? null : (rawRow.CURRENTJOINDATE || null),
             AADHAR_CARD: rawRow.UID_NO ? String(rawRow.UID_NO).slice(0, 30) : null,
             PANNO: rawRow.PANNO ? String(rawRow.PANNO).slice(0, 25) : null,
             PERMANENTADDRESS1: rawRow.PERMANENTADDRESS1 ? String(rawRow.PERMANENTADDRESS1).slice(0, 250) : null,
@@ -671,11 +968,7 @@ exports.excelimportFinal = async function (req, res) {
       console.warn("Could not insert into EMPLOYEEMATER_ROW_DATA staging:", stagingErr.message);
     }
 
-    // =========================================================================
-    // STEP 2: Mandatory Fields Configuration from Mand_Mst
-    // If User Code == 1 -> BYPASS ALL MANDATORY CHECKS!
-    // If User Code > 1  -> Fetch mandatory fields from Mand_Mst
-    // =========================================================================
+    // Mandatory Fields Configuration from Mand_Mst
     const isBypassed = userCode === 1;
     let mandRows = [];
     if (!isBypassed) {
@@ -695,9 +988,45 @@ exports.excelimportFinal = async function (req, res) {
           mandRows.push(mr);
         }
       }
+
+      // Check if any mandatory column is completely missing from the Excel header
+      const mappedHeaderKeys = new Set(
+        headers.map(h => {
+          const cleanH = String(h || "").trim();
+          return (keyMap[cleanH] || keyMap[cleanH.toUpperCase()] || cleanH).toUpperCase();
+        })
+      );
+
+      const missingMandatoryHeaders = [];
+      for (const mf of mandRows) {
+        const colUpper = String(mf.field_name || "").toUpperCase().trim();
+        if (!mappedHeaderKeys.has(colUpper)) {
+          let found = false;
+          if (colUpper === "EMPFIRSTNAME" && (mappedHeaderKeys.has("EMPNAME") || mappedHeaderKeys.has("EMPLOYEENAME"))) found = true;
+          if (colUpper === "DIVISION" && (mappedHeaderKeys.has("DEPARTMENT") || mappedHeaderKeys.has("DIVISION"))) found = true;
+          if (colUpper === "PAY_CODE" && (mappedHeaderKeys.has("PUNCH_CODE") || mappedHeaderKeys.has("PAY_CODE"))) found = true;
+          if (colUpper === "UID_NO" && (mappedHeaderKeys.has("AADHAR_CARD") || mappedHeaderKeys.has("UID_NO"))) found = true;
+          if (colUpper === "CURRENTJOINDATE" && (mappedHeaderKeys.has("DATE_OF_JONING") || mappedHeaderKeys.has("DATE_OF_JOINING") || mappedHeaderKeys.has("CURRENTJOINDATE"))) found = true;
+          if (colUpper === "MOBILE_NO" && (mappedHeaderKeys.has("PERSONAL_MOBILE_NUMBER") || mappedHeaderKeys.has("MOBILE_NO"))) found = true;
+          if (colUpper === "EMPLOYEEDESIGNATION" && (mappedHeaderKeys.has("DESIGNATION") || mappedHeaderKeys.has("EMPLOYEEDESIGNATION"))) found = true;
+          if (colUpper === "RELCODE" && (mappedHeaderKeys.has("RELEGION") || mappedHeaderKeys.has("RELIGION") || mappedHeaderKeys.has("RELCODE"))) found = true;
+
+          if (!found) {
+            missingMandatoryHeaders.push(mf.field_Abbr || mf.field_name);
+          }
+        }
+      }
+
+      if (missingMandatoryHeaders.length > 0) {
+        await t.rollback();
+        await sequelize.close();
+        return res.status(400).send({
+          Message: `Missing mandatory column(s) in Excel: [${missingMandatoryHeaders.join(", ")}]. Please include all required columns and try again.`
+        });
+      }
     }
 
-    // ===== Within-Excel duplicate counts =====
+    // Within-Excel duplicate counts
     const mobileCounts = {}, aadharCounts = {}, bankCounts = {}, panCounts = {};
     data.forEach(row => {
       if (row.MOBILE_NO && !row._allowDuplicateMobile) {
@@ -708,7 +1037,7 @@ exports.excelimportFinal = async function (req, res) {
       if (row.PANNO) panCounts[row.PANNO] = (panCounts[row.PANNO] || 0) + 1;
     });
 
-    // ===== Existing DB records mapping =====
+    // Existing DB records mapping
     const existingRecords = await EmployeeMaster.findAll({ raw: true });
     const existingByEmpCode = {};
     const uidOwner = {};
@@ -760,24 +1089,7 @@ exports.excelimportFinal = async function (req, res) {
       "ifsc_code", "WEEKLYOFF", "EMP_SHIFT"
     ];
 
-    // =========================================================================
-    // STEP 3: Load MISC_MST Lookups & Auto-Creation Configuration (0% Duplicates)
-    // Types:
-    // 68: DIVISION (Department)
-    // 95: EMPLOYEEDESIGNATION (Store Name in EMPLOYEEMASTER)
-    // 81: SECTION
-    // 85: LOCATION
-    // 627: CHANNEL
-    // 626: CLUSTER
-    // 90: EMP_SHIFT
-    // 8: BANKNAME
-    // 2: PDIST, CDIST (District)
-    // 1: PCITY, CCITY (City)
-    // 657: Marital_Status
-    // 654: pfper (PF percentage)
-    // 672: GRADE
-    // 662: Punch_Type
-    // =========================================================================
+    // Pre-load MISC_MST lookups
     const miscTypes = [68, 95, 81, 85, 627, 626, 90, 8, 2, 1, 657, 654, 672, 662];
     const miscData = await sequelize.query(
       `SELECT MISC_TYPE, MISC_CODE, LTRIM(RTRIM(MISC_NAME)) as MISC_NAME 
@@ -789,12 +1101,11 @@ exports.excelimportFinal = async function (req, res) {
     const miscMap = {};
     const maxMiscCode = {};
 
-    miscTypes.forEach(t => {
-      miscMap[t] = {};
-      maxMiscCode[t] = 0;
+    miscTypes.forEach(tType => {
+      miscMap[tType] = {};
+      maxMiscCode[tType] = 0;
     });
 
-    // Query absolute MAX(MISC_CODE) from DB across all records to guarantee 0% duplicate codes
     const maxCodesData = await sequelize.query(
       `SELECT MISC_TYPE, ISNULL(MAX(TRY_CAST(MISC_CODE AS INT)), 0) as maxCode 
        FROM MISC_MST 
@@ -813,7 +1124,7 @@ exports.excelimportFinal = async function (req, res) {
       }
     });
 
-    // Resolve or Auto-Create in MISC_MST (Max + 1, 0% Duplicate)
+    // Resolve or Auto-Create in MISC_MST (Only called for VALID rows!)
     async function resolveOrAddMisc(miscType, rawVal) {
       if (rawVal === null || rawVal === undefined) return null;
       const originalTyped = String(rawVal).trim();
@@ -821,12 +1132,10 @@ exports.excelimportFinal = async function (req, res) {
 
       const upper = originalTyped.toUpperCase();
 
-      // Check if already in cache
       if (miscMap[miscType] && miscMap[miscType][upper] !== undefined) {
         return { code: miscMap[miscType][upper], name: originalTyped };
       }
 
-      // If not exists -> create with max + 1
       const newCode = (maxMiscCode[miscType] || 0) + 1;
       maxMiscCode[miscType] = newCode;
 
@@ -844,7 +1153,6 @@ exports.excelimportFinal = async function (req, res) {
         }
       );
 
-      // Cache immediately so subsequent rows in same batch reuse this code
       if (!miscMap[miscType]) miscMap[miscType] = {};
       miscMap[miscType][upper] = newCode;
 
@@ -870,14 +1178,27 @@ exports.excelimportFinal = async function (req, res) {
       abcd = MaxxSRNo[0][0]?.srno || 1;
     }
 
-    // Calculate max numeric EMPCODE for auto-generation fallback
-    let maxEmpCodeNum = 0;
-    {
-      const [maxRec] = await sequelize.query(
-        `SELECT ISNULL(MAX(TRY_CAST(EMPCODE AS BIGINT)), 0) AS maxCode FROM EMPLOYEEMASTER WHERE ISNUMERIC(EMPCODE) = 1`
+    // Pre-fetch GODOWN_MST code generation configuration ONCE before row loop
+    const [rangePrefixData] = await sequelize.query(
+      `SELECT TOP 1 RANGE_NAME, RANGE_CODE
+       FROM GODOWN_MST
+       WHERE ISNULL(EXPORT_TYPE, 0) < 3 ORDER BY RANGE_CODE DESC`
+    );
+    const rangeConfigured = !!(
+      rangePrefixData.length &&
+      rangePrefixData[0].RANGE_NAME &&
+      rangePrefixData[0].RANGE_CODE !== null &&
+      rangePrefixData[0].RANGE_CODE !== undefined
+    );
+    const currentGodownPrefix = rangeConfigured ? String(rangePrefixData[0].RANGE_NAME).toUpperCase() : null;
+    let currentGodownRangeCode = 0;
+    if (rangeConfigured) {
+      const [maxRangeData] = await sequelize.query(
+        `SELECT MAX(RANGE_CODE) as RANGE_CODEDATA FROM GODOWN_MST WHERE ISNULL(EXPORT_TYPE, 0) < 3`
       );
-      maxEmpCodeNum = Number(maxRec[0]?.maxCode) || 0;
+      currentGodownRangeCode = parseInt(maxRangeData[0]?.RANGE_CODEDATA) || 0;
     }
+    const initialGodownRangeCode = currentGodownRangeCode;
 
     // =========================================================================
     // STEP 4: Process Each Row for EMPLOYEEMASTER
@@ -889,13 +1210,18 @@ exports.excelimportFinal = async function (req, res) {
       const isUpdateRow = !!existingRecordForEmpCode;
 
       // ----- Mandatory Fields Check -----
-      // Bypassed if userCode === 1!
       if (!isUpdateRow && !isBypassed) {
         if (mandRows.length > 0) {
           for (const mf of mandRows) {
             const col = mf.field_name;
             if (col === "MOBILE_NO" && (row._hadZeroMobile || row._allowDuplicateMobile)) {
-              continue; // 0 mobile or official mobile number does not fail mandatory check
+              continue;
+            }
+            if ((col === "CURRENTJOINDATE" || col === "DATE_OF_JONING" || col === "DATE_OF_JOINING" || col === "DOJ") && row._was1900_CURRENTJOINDATE) {
+              continue;
+            }
+            if ((col === "DOB" || col === "Date_of_Birth" || col === "DATE_OF_BIRTH") && row._was1900_DOB) {
+              continue;
             }
             let val = row[col];
             if (col === "EMPFIRSTNAME" && !val) val = row.EmpName;
@@ -938,7 +1264,7 @@ exports.excelimportFinal = async function (req, res) {
       if (row.UID_NO && !/^\d{12}$/.test(row.UID_NO)) rejectionReasons.push(`Invalid Aadhar Number: ${row.UID_NO}`);
       if (row.PANNO && !/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(row.PANNO)) rejectionReasons.push(`Invalid PAN No.: ${row.PANNO}`);
 
-      // ----- DB Duplicate Checks (excluding own EMPCODE for updates and official numbers) -----
+      // ----- DB Duplicate Checks -----
       if (row.UID_NO) {
         const owner = uidOwner[row.UID_NO];
         if (owner && owner !== targetEmpCode) {
@@ -966,8 +1292,12 @@ exports.excelimportFinal = async function (req, res) {
 
       // ----- IFSC Validation -----
       if (row.ifsc_code) {
-        if (!validateIFSC(row.ifsc_code)) rejectionReasons.push(`Invalid IFSC Code: ${row.ifsc_code}`);
-        else row.ifsc_code = row.ifsc_code.toUpperCase();
+        if (!validateIFSC(row.ifsc_code)) {
+          row.ifsc_code = null;
+          row._ifscRemark = "IFSC this employee null then after check";
+        } else {
+          row.ifsc_code = String(row.ifsc_code).trim().toUpperCase();
+        }
       }
 
       // ----- Within-Excel Duplicate Checks -----
@@ -1052,15 +1382,30 @@ exports.excelimportFinal = async function (req, res) {
         row.RELCODE = null;
       }
 
-      // =======================================================================
-      // STEP 5: Resolve / Auto-Create MISC_MST Values
-      // =======================================================================
+      delete row.DOB_INVALID_FORMAT;
+      delete row.DOB_RAW;
+      delete row.CURRENTJOINDATE_INVALID_FORMAT;
+      delete row.CURRENTJOINDATE_RAW;
 
+      const enteredEmpCode = row.EMPCODE;
+      const uniqueReasons = Array.from(new Set(rejectionReasons.map(r => String(r || "").trim()))).filter(Boolean);
+
+      // ===== CRITICAL OPTIMIZATION: If row has errors, record it and SKIP immediately! =====
+      // NEVER run resolveOrAddMisc or DB operations for rejected rows.
+      if (uniqueReasons.length) {
+        const allReasons = row._ifscRemark ? [...uniqueReasons, row._ifscRemark] : uniqueReasons;
+        ErroredData.push({ ...row, EMPCODE: enteredEmpCode, rejectionReasons: allReasons.join(", ") });
+        continue;
+      }
+
+      // =======================================================================
+      // STEP 5: Resolve / Auto-Create MISC_MST Values (ONLY for VALID Rows)
+      // =======================================================================
       // 1. EMPLOYEEDESIGNATION (Misc_Type: 95) -> Stores Misc_Name in EMPLOYEEMASTER
       if (row.EMPLOYEEDESIGNATION) {
         const resDesig = await resolveOrAddMisc(95, row.EMPLOYEEDESIGNATION);
         if (resDesig) {
-          row.EMPLOYEEDESIGNATION = resDesig.name; // Stores NAME in EmployeeMaster
+          row.EMPLOYEEDESIGNATION = resDesig.name;
           row.EMPLOYEEDESIGNATION_CODE = resDesig.code;
         }
       }
@@ -1095,10 +1440,10 @@ exports.excelimportFinal = async function (req, res) {
         if (row[mf.field]) {
           const resMisc = await resolveOrAddMisc(mf.type, row[mf.field]);
           if (resMisc) {
-            row[`${mf.field}_NAME`] = resMisc.name; // Keep name for frontend UI table
-            row[mf.field] = resMisc.code;           // Save code in EmployeeMaster
+            row[`${mf.field}_NAME`] = resMisc.name;
+            row[mf.field] = resMisc.code;
             if (mf.field === "Marital_Status") {
-              row.MARITALSTATUS = resMisc.name;     // Also populate text in MARITALSTATUS
+              row.MARITALSTATUS = resMisc.name;
             }
           }
         }
@@ -1114,20 +1459,6 @@ exports.excelimportFinal = async function (req, res) {
         }
       }
 
-      delete row.DOB_INVALID_FORMAT;
-      delete row.DOB_RAW;
-      delete row.CURRENTJOINDATE_INVALID_FORMAT;
-      delete row.CURRENTJOINDATE_RAW;
-
-      const enteredEmpCode = row.EMPCODE;
-
-      const uniqueReasons = Array.from(new Set(rejectionReasons.map(r => String(r || "").trim()))).filter(Boolean);
-
-      if (uniqueReasons.length) {
-        ErroredData.push({ ...row, EMPCODE: enteredEmpCode, rejectionReasons: uniqueReasons.join(", ") });
-        continue;
-      }
-
       // =======================================================================
       // STEP 6: Execute UPDATE or INSERT
       // =======================================================================
@@ -1137,13 +1468,30 @@ exports.excelimportFinal = async function (req, res) {
           "EMPCODE", "SRNO", "CREATED_ON", "CREATED_BY",
           "Inserted_By", "ServerId", "Export_Type", "ENTERED_EMPCODE",
           "Official_number", "_hadZeroMobile", "_isOfficialMobile", "_allowDuplicateMobile",
-          "EMPLOYEEDESIGNATION_CODE", "BANKNAME_CODE"
+          "EMPLOYEEDESIGNATION_CODE", "BANKNAME_CODE", "rejectionReasons"
         ]);
         const updateFields = {};
         for (const [k, v] of Object.entries(row)) {
           if (skipKeys.has(k)) continue;
           if (k.startsWith("_") || k.endsWith("_NAME") || (k.endsWith("_CODE") && k !== "PAY_CODE")) continue;
-          if (v === null || v === undefined) continue;
+          if (v === null || v === undefined) {
+            if (k === "ifsc_code" && row._ifscRemark) {
+              updateFields[k] = null;
+            } else if (k === "DOB" && row._was1900_DOB) {
+              updateFields[k] = null;
+            } else if (k === "CURRENTJOINDATE" && row._was1900_CURRENTJOINDATE) {
+              updateFields[k] = null;
+            }
+            continue;
+          }
+          if (k === "DOB" && (v === "1900-01-01" || v === "01/01/1900" || row._was1900_DOB)) {
+            updateFields[k] = null;
+            continue;
+          }
+          if (k === "CURRENTJOINDATE" && (v === "1900-01-01" || v === "01/01/1900" || row._was1900_CURRENTJOINDATE)) {
+            updateFields[k] = null;
+            continue;
+          }
           updateFields[k] = v;
         }
 
@@ -1184,14 +1532,23 @@ exports.excelimportFinal = async function (req, res) {
           console.warn("EmployeeMasterHistory snapshot warning:", histErr.message);
         }
 
-        UpdatedData.push({ ...row, EMPCODE: targetEmpCode, ENTERED_EMPCODE: enteredEmpCode });
+        UpdatedData.push({
+          ...row,
+          DOB: (row._was1900_DOB || row.DOB === "1900-01-01" || row.DOB === "01/01/1900") ? null : (row.DOB || null),
+          CURRENTJOINDATE: (row._was1900_CURRENTJOINDATE || row.CURRENTJOINDATE === "1900-01-01" || row.CURRENTJOINDATE === "01/01/1900") ? null : (row.CURRENTJOINDATE || null),
+          EMPCODE: targetEmpCode,
+          ENTERED_EMPCODE: enteredEmpCode,
+          rejectionReasons: row._ifscRemark || null
+        });
       } else {
         // ----- INSERT PATH -----
         let empCode;
 
-        // Check GODOWN_MST range config first
-        const rangeConfigured = await isEmpCodeRangeConfigured(sequelize);
-        empCode = rangeConfigured ? await generateNextEmployeeCode(sequelize) : null;
+        // Auto-generate code using pre-fetched GODOWN_MST sequence
+        if (rangeConfigured) {
+          currentGodownRangeCode++;
+          empCode = currentGodownPrefix + currentGodownRangeCode;
+        }
 
         // If RANGE_CODE/RANGE_NAME not configured in GODOWN_MST -> fall back to entered EMPCODE
         if (!empCode) {
@@ -1232,13 +1589,19 @@ exports.excelimportFinal = async function (req, res) {
 
         // Clean row for insertion into EmployeeMaster
         const insertRow = { ...row };
+        if (insertRow._was1900_DOB || insertRow.DOB === "1900-01-01" || insertRow.DOB === "01/01/1900") {
+          insertRow.DOB = null;
+        }
+        if (insertRow._was1900_CURRENTJOINDATE || insertRow.CURRENTJOINDATE === "1900-01-01" || insertRow.CURRENTJOINDATE === "01/01/1900") {
+          insertRow.CURRENTJOINDATE = null;
+        }
         delete insertRow.Official_number;
         delete insertRow._hadZeroMobile;
         delete insertRow._isOfficialMobile;
         delete insertRow._allowDuplicateMobile;
         delete insertRow.EMPLOYEEDESIGNATION_CODE;
         delete insertRow.BANKNAME_CODE;
-        // Remove virtual helper keys, preserving PAY_CODE
+        delete insertRow.rejectionReasons;
         Object.keys(insertRow).forEach(k => {
           if (k.startsWith("_") || k.endsWith("_NAME") || (k.endsWith("_CODE") && k !== "PAY_CODE")) {
             delete insertRow[k];
@@ -1247,6 +1610,8 @@ exports.excelimportFinal = async function (req, res) {
 
         CorrectData.push({
           ...insertRow,
+          DOB: (insertRow._was1900_DOB || insertRow.DOB === "1900-01-01" || insertRow.DOB === "01/01/1900") ? null : (insertRow.DOB || null),
+          CURRENTJOINDATE: (insertRow._was1900_CURRENTJOINDATE || insertRow.CURRENTJOINDATE === "1900-01-01" || insertRow.CURRENTJOINDATE === "01/01/1900") ? null : (insertRow.CURRENTJOINDATE || null),
           SRNO: abcd++,
           CHANNEL: row.CHANNEL ? row.CHANNEL : 1,
           CLUSTER: row.CLUSTER ? row.CLUSTER : 1,
@@ -1257,8 +1622,24 @@ exports.excelimportFinal = async function (req, res) {
           ServerId: 1,
           EMPCODE: empCode,
           ENTERED_EMPCODE: enteredEmpCode || null,
+          rejectionReasons: row._ifscRemark || null,
         });
       }
+    }
+
+    // Update GODOWN_MST once after all rows processed (transaction-safe)
+    if (rangeConfigured && currentGodownRangeCode > initialGodownRangeCode) {
+      await sequelize.query(
+        `UPDATE GODOWN_MST SET RANGE_CODE = :newCode
+         WHERE RANGE_NAME = :prefix AND ISNULL(EXPORT_TYPE,0) < 3`,
+        {
+          replacements: {
+            newCode: currentGodownRangeCode,
+            prefix: currentGodownPrefix
+          },
+          transaction: t
+        }
+      );
     }
 
     if (CorrectData.length > 0) {
@@ -1269,14 +1650,32 @@ exports.excelimportFinal = async function (req, res) {
 
     const formatRowDatesForClient = (r) => {
       const copy = { ...r };
-      if (copy.DOB) {
-        const p = parseExcelDate(copy.DOB);
-        if (p.displayDate) copy.DOB = p.displayDate;
-      }
-      if (copy.CURRENTJOINDATE) {
-        const p = parseExcelDate(copy.CURRENTJOINDATE);
-        if (p.displayDate) copy.CURRENTJOINDATE = p.displayDate;
-      }
+      const dateKeys = ["DOB", "CURRENTJOINDATE", "DATE_OF_JONING", "DATE_OF_JOINING", "DOJ", "Date_of_Birth"];
+      dateKeys.forEach(k => {
+        if (copy[k] !== undefined && copy[k] !== null && copy[k] !== "") {
+          const rawStr = String(copy[k]).trim();
+          const cleanStr = rawStr.replace(/[\s\-_.\/\\]/g, "").toLowerCase();
+          if (
+            copy["_was1900_" + k] ||
+            rawStr === "01/01/1900" ||
+            rawStr === "1900-01-01" ||
+            rawStr === "01-01-1900" ||
+            rawStr === "1/1/1900" ||
+            ["01011900", "19000101", "111900", "010100", "1100"].includes(cleanStr)
+          ) {
+            copy[k] = null;
+          } else {
+            const p = parseExcelDate(copy[k]);
+            if (p.is1900 || !p.displayDate || p.date === "1900-01-01") {
+              copy[k] = null;
+            } else {
+              copy[k] = p.displayDate;
+            }
+          }
+        } else if (copy[k] !== undefined) {
+          copy[k] = null;
+        }
+      });
       return copy;
     };
 
@@ -1288,11 +1687,24 @@ exports.excelimportFinal = async function (req, res) {
     });
 
   } catch (error) {
-    if (t) await t.rollback();
+    if (t) {
+      try {
+        await t.rollback();
+      } catch (rbErr) {
+        console.warn("Rollback warning:", rbErr.message);
+      }
+    }
     console.error("Error during employee import:", error);
-    return res.status(500).send({ Message: "Error during import", Error: error.message });
+    const friendlyMessage = formatUserFriendlyErrorMessage(error);
+    return res.status(500).send({ Message: friendlyMessage, Error: error.message });
   } finally {
-    await sequelize.close();
+    if (sequelize) {
+      try {
+        await sequelize.close();
+      } catch (closeErr) {
+        console.warn("Sequelize close warning:", closeErr.message);
+      }
+    }
   }
 };
 

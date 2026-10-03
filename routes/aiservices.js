@@ -22,6 +22,35 @@ try {
   console.warn("[aiservices] aiservices2 load notice:", err?.message);
 }
 
+// ── Global Central AI Database Multi-Tenant Resolution ──
+const getGlobalAICompCode = () => {
+  if (AI_V6?.getGlobalAICompCode) {
+    return AI_V6.getGlobalAICompCode();
+  }
+  return (
+    process.env.GLOBAL_AI_COMPCODE ||
+    process.env.AI_GLOBAL_COMPCODE ||
+    process.env.CENTRAL_AI_COMPCODE ||
+    process.env.GLOBAL_COMPCODE ||
+    "autovyn"
+  ).trim();
+};
+
+const getGlobalAISequelize = async (req, fallbackSequelize = null) => {
+  if (AI_V6?.getGlobalAISequelize) {
+    return AI_V6.getGlobalAISequelize(req, fallbackSequelize);
+  }
+  const globalCompCode = getGlobalAICompCode();
+  if (!globalCompCode) return fallbackSequelize;
+  try {
+    const globalSeq = await dbname(req, globalCompCode);
+    if (globalSeq?.query) return globalSeq;
+  } catch (err) {
+    console.warn(`[getGlobalAISequelize] Could not connect to Global AI DB (${globalCompCode}):`, err?.message);
+  }
+  return fallbackSequelize;
+};
+
 const misc_type_list = exports.misc_type_list = [
   { id: 31, name: "Product Group Master" },
   { id: 85, name: "Branch Master" },
@@ -630,14 +659,17 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
     throw new ApiError(401, "Valid numeric user ID is unavailable");
   }
 
-  // ── DB connection ─────────────────────────────────────────────────────────
+  // ── DB connection (Tenant ERP DB) ─────────────────────────────────────────
   const sequelize = await dbname(req, userContext.compcode);
   if (!sequelize?.query) throw new ApiError(500, "Database connection failed");
+
+  // ── Global AI Central DB Connection ───────────────────────────────────────
+  const globalSequelize = await getGlobalAISequelize(req, sequelize);
 
   // ── Conversation Persistence Setup ─────────────────────────────────────────
   if (AI_V6?.ensureAllAITables) {
     try {
-      await AI_V6.ensureAllAITables(sequelize);
+      await AI_V6.ensureAllAITables(sequelize, globalSequelize);
     } catch (_) {}
   }
 
@@ -11562,6 +11594,8 @@ const createTrace = exports.createTrace = (requestId = "") => {
 
 // =============================================================================
 // ANTIGRAVITY MASTER AI QUERY INTELLIGENCE ENGINE — CORE IMPLEMENTATION
+
+
 // =============================================================================
 
 /**
@@ -11575,15 +11609,18 @@ const syncSchemaIntelligence = exports.syncSchemaIntelligence = async function (
     const compCode = String(process.env.DEFAULT_COMPCODE || req?.headers?.compcode || "").trim();
     sequelize = await dbname(req, compCode);
 
-    if (sequelize && AI_V6?.ensureAllAITables) {
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
+
+    if (AI_V6?.ensureAllAITables) {
       try {
-        await AI_V6.ensureAllAITables(sequelize);
+        await AI_V6.ensureAllAITables(sequelize, globalSequelize);
       } catch (tableErr) {
         console.warn("[AI-SCHEMA-SYNC] ensureAllAITables notice:", tableErr?.message);
       }
     }
 
-    console.log("[AI-SCHEMA-SYNC] Starting MSSQL Schema Discovery...");
+    console.log("[AI-SCHEMA-SYNC] Starting MSSQL Schema Discovery on Tenant ERP DB...");
 
     // 1. Fetch tables with approximate row counts
     const tablesQuery = `
@@ -11649,11 +11686,11 @@ const syncSchemaIntelligence = exports.syncSchemaIntelligence = async function (
     `;
     const fks = await sequelize.query(fkQuery, { type: QueryTypes.SELECT }).catch(() => []);
 
-    // Upsert into AI_Schema_Table_Tbl (if table exists)
+    // Upsert into AI_Schema_Table_Tbl on Global Central AI DB
     let tablesSynced = 0;
     for (const t of tables) {
       try {
-        await sequelize.query(`
+        await targetSeq.query(`
           IF EXISTS (SELECT 1 FROM dbo.AI_Schema_Table_Tbl WHERE Table_Name = :tableName)
             UPDATE dbo.AI_Schema_Table_Tbl 
             SET Approx_Row_Count = :rowCount, Last_Synced_At = GETDATE(), Updated_At = GETDATE()
@@ -11701,6 +11738,8 @@ exports.getSchemaTables = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const search = String(req.query?.search || req.body?.search || "").trim();
     const moduleName = String(req.query?.module || req.body?.module || "").trim();
 
@@ -11724,7 +11763,7 @@ exports.getSchemaTables = async function (req, res) {
         ORDER BY t.name ASC
       END
     `;
-    const rows = await sequelize.query(query, {
+    const rows = await targetSeq.query(query, {
       replacements: { moduleName, search: `%${search}%` },
       type: QueryTypes.SELECT
     });
@@ -11738,6 +11777,8 @@ exports.getSchemaColumns = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const tableName = String(req.params?.tableName || req.query?.table || req.body?.table || "").trim();
 
     let query = `
@@ -11758,7 +11799,7 @@ exports.getSchemaColumns = async function (req, res) {
         ORDER BY t.name, c.column_id ASC
       END
     `;
-    const rows = await sequelize.query(query, { replacements: { tableName }, type: QueryTypes.SELECT });
+    const rows = await targetSeq.query(query, { replacements: { tableName }, type: QueryTypes.SELECT });
     return res.status(200).json({ success: true, count: rows.length, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -11769,6 +11810,8 @@ exports.getSchemaRelationships = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
 
     let query = `
       IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Schema_Relationship_Tbl')
@@ -11783,7 +11826,7 @@ exports.getSchemaRelationships = async function (req, res) {
         SELECT 0 AS UTD, 'EMPLOYEEMASTER' AS From_Table, 'EMPCODE' AS From_Column, 'attendancetable' AS To_Table, 'empcode' AS To_Column, 'ONE_TO_MANY' AS Relationship_Type, 'BUSINESS_DEFINED' AS Relationship_Source, 'Employee Attendance' AS Business_Meaning, 1.0 AS Confidence, 1 AS Priority, 1 AS Is_Active
       END
     `;
-    const rows = await sequelize.query(query, { type: QueryTypes.SELECT });
+    const rows = await targetSeq.query(query, { type: QueryTypes.SELECT });
     return res.status(200).json({ success: true, count: rows.length, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -11794,6 +11837,8 @@ exports.saveSchemaRelationship = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const { fromTable, fromColumn, toTable, toColumn, relationshipType, businessMeaning, confidence, priority } = req.body || {};
 
     if (!fromTable || !fromColumn || !toTable || !toColumn) {
@@ -11806,7 +11851,7 @@ exports.saveSchemaRelationship = async function (req, res) {
       VALUES 
       (:fromTable, :fromColumn, :toTable, :toColumn, :relationshipType, 'USER_DEFINED', :businessMeaning, :confidence, :priority, 1, GETDATE())
     `;
-    await sequelize.query(query, {
+    await targetSeq.query(query, {
       replacements: {
         fromTable, fromColumn, toTable, toColumn,
         relationshipType: relationshipType || 'ONE_TO_MANY',
@@ -11830,6 +11875,8 @@ exports.getBusinessRules = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const query = `
       IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Business_Rule_Tbl')
       BEGIN
@@ -11842,7 +11889,7 @@ exports.getBusinessRules = async function (req, res) {
         SELECT 0 AS UTD, 'ACTIVE_EMP' AS Rule_Code, 'Active Employee' AS Rule_Name, 'EMPLOYEEMASTER' AS Target_Table, 'LASTWOR_DATE IS NULL' AS SQL_Expression, 'Filters active employees' AS Description, 'HR' AS Module_Name, 1 AS Is_Active
       END
     `;
-    const rows = await sequelize.query(query, { type: QueryTypes.SELECT });
+    const rows = await targetSeq.query(query, { type: QueryTypes.SELECT });
     return res.status(200).json({ success: true, count: rows.length, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -11853,6 +11900,8 @@ exports.saveBusinessRule = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const { ruleCode, ruleName, targetTable, sqlExpression, description, moduleName } = req.body || {};
 
     if (!ruleCode || !ruleName || !targetTable || !sqlExpression) {
@@ -11865,7 +11914,7 @@ exports.saveBusinessRule = async function (req, res) {
       VALUES 
       (:ruleCode, :ruleName, :targetTable, :sqlExpression, :description, :moduleName, 1, GETDATE())
     `;
-    await sequelize.query(query, {
+    await targetSeq.query(query, {
       replacements: { ruleCode, ruleName, targetTable, sqlExpression, description: description || '', moduleName: moduleName || 'GENERAL' },
       type: QueryTypes.RAW
     });
@@ -11880,6 +11929,8 @@ exports.getMetrics = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const query = `
       IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Metric_Definition_Tbl')
       BEGIN
@@ -11892,7 +11943,7 @@ exports.getMetrics = async function (req, res) {
         SELECT 0 AS UTD, 'ATTENDANCE_PCT' AS Metric_Code, 'Attendance Percentage' AS Metric_Name, 'attendancetable' AS Source_Table, 'Present / NULLIF(MonthDays, 0) * 100' AS SQL_Formula, 'Employee, Location, Month' AS Supported_Dimensions, 'Monthly attendance percentage' AS Description, 'HR' AS Module_Name, 1 AS Is_Active
       END
     `;
-    const rows = await sequelize.query(query, { type: QueryTypes.SELECT });
+    const rows = await targetSeq.query(query, { type: QueryTypes.SELECT });
     return res.status(200).json({ success: true, count: rows.length, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -11903,6 +11954,8 @@ exports.saveMetric = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const { metricCode, metricName, sourceTable, sqlFormula, supportedDimensions, description, moduleName } = req.body || {};
 
     if (!metricCode || !metricName || !sourceTable || !sqlFormula) {
@@ -11915,7 +11968,7 @@ exports.saveMetric = async function (req, res) {
       VALUES 
       (:metricCode, :metricName, :sourceTable, :sqlFormula, :supportedDimensions, :description, :moduleName, 1, GETDATE())
     `;
-    await sequelize.query(query, {
+    await targetSeq.query(query, {
       replacements: { metricCode, metricName, sourceTable, sqlFormula, supportedDimensions: supportedDimensions || '', description: description || '', moduleName: moduleName || 'GENERAL' },
       type: QueryTypes.RAW
     });
@@ -11930,6 +11983,8 @@ exports.getSynonyms = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const query = `
       IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AI_Business_Synonym_Tbl')
       BEGIN
@@ -11942,7 +11997,7 @@ exports.getSynonyms = async function (req, res) {
         SELECT 0 AS UTD, 'hazri' AS Synonym_Word, 'ATTENDANCE' AS Standard_Term, 'HR' AS Category, 1 AS Is_Active
       END
     `;
-    const rows = await sequelize.query(query, { type: QueryTypes.SELECT });
+    const rows = await targetSeq.query(query, { type: QueryTypes.SELECT });
     return res.status(200).json({ success: true, count: rows.length, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -11953,6 +12008,8 @@ exports.saveSynonym = async function (req, res) {
   try {
     const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || "").trim();
     const sequelize = await dbname(req, compCode);
+    const globalSequelize = await getGlobalAISequelize(req, sequelize);
+    const targetSeq = globalSequelize || sequelize;
     const { synonymWord, standardTerm, category } = req.body || {};
 
     if (!synonymWord || !standardTerm) {
@@ -11965,7 +12022,7 @@ exports.saveSynonym = async function (req, res) {
       VALUES 
       (:synonymWord, :standardTerm, :category, 1, GETDATE())
     `;
-    await sequelize.query(query, {
+    await targetSeq.query(query, {
       replacements: { synonymWord, standardTerm, category: category || 'GENERAL' },
       type: QueryTypes.RAW
     });
@@ -12560,40 +12617,57 @@ exports.getAuditLogs = async function (req, res) {
       END
     `, { type: QueryTypes.RAW }).catch(() => {});
 
+    // Check if AI_Conversation_Tbl exists
+    const [convTableCheck] = await sequelize.query(`
+      SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'AI_Conversation_Tbl'
+    `, { type: QueryTypes.SELECT }).catch(() => []);
+    const hasConvTbl = Boolean(convTableCheck);
+
     // Dynamic Filter Clauses
     let whereClauses = ["1=1"];
     let replacements = { limit, offset };
 
     if (search) {
-      whereClauses.push("(User_Query LIKE :search OR Normalized_Query LIKE :search OR Generated_SQL LIKE :search OR Intent LIKE :search OR Emp_Code LIKE :search OR User_Id LIKE :search OR AI_Response LIKE :search)");
+      if (hasConvTbl) {
+        whereClauses.push("(A.User_Query LIKE :search OR A.Normalized_Query LIKE :search OR A.Generated_SQL LIKE :search OR A.Intent LIKE :search OR A.Emp_Code LIKE :search OR A.User_Id LIKE :search OR A.AI_Response LIKE :search OR A.Conversation_Id LIKE :search OR C.Title LIKE :search)");
+      } else {
+        whereClauses.push("(A.User_Query LIKE :search OR A.Normalized_Query LIKE :search OR A.Generated_SQL LIKE :search OR A.Intent LIKE :search OR A.Emp_Code LIKE :search OR A.User_Id LIKE :search OR A.AI_Response LIKE :search OR A.Conversation_Id LIKE :search)");
+      }
       replacements.search = `%${search}%`;
     }
 
     if (status && status !== "ALL") {
-      whereClauses.push("Status_Code = :status");
+      whereClauses.push("A.Status_Code = :status");
       replacements.status = status;
     }
 
     if (intent && intent !== "ALL") {
-      whereClauses.push("Intent = :intent");
+      whereClauses.push("A.Intent = :intent");
       replacements.intent = intent;
     }
 
     if (startDate) {
-      whereClauses.push("Created_At >= :startDate");
+      whereClauses.push("A.Created_At >= :startDate");
       replacements.startDate = `${startDate} 00:00:00`;
     }
 
     if (endDate) {
-      whereClauses.push("Created_At <= :endDate");
+      whereClauses.push("A.Created_At <= :endDate");
       replacements.endDate = `${endDate} 23:59:59`;
     }
 
     const whereSql = whereClauses.join(" AND ");
 
+    const joinConvSql = hasConvTbl 
+      ? "LEFT JOIN [dbo].[AI_Conversation_Tbl] C WITH (NOLOCK) ON A.[Conversation_Id] = C.[Conversation_Id]"
+      : "";
+
     // Fetch Total Count
     const countResult = await sequelize.query(`
-      SELECT COUNT(1) AS TotalRecords FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE ${whereSql}
+      SELECT COUNT(1) AS TotalRecords 
+      FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
+      ${joinConvSql}
+      WHERE ${whereSql}
     `, { replacements, type: QueryTypes.SELECT }).catch(() => [{ TotalRecords: 0 }]);
 
     const totalRecords = Number(countResult[0]?.TotalRecords || 0);
@@ -12602,27 +12676,29 @@ exports.getAuditLogs = async function (req, res) {
     // Fetch Paginated Logs
     const rows = await sequelize.query(`
       SELECT 
-        [UTD],
-        [Conversation_Id] AS conversationId,
-        [User_Id] AS userId,
-        [Emp_Code] AS empCode,
-        [Role] AS role,
-        [Comp_Code] AS compCode,
-        [User_Query] AS userQuery,
-        [Normalized_Query] AS normalizedQuery,
-        [Intent] AS intent,
-        [Tables_Used] AS tablesUsed,
-        [Generated_SQL] AS generatedSql,
-        [AI_Response] AS aiResponse,
-        ISNULL([Rows_Returned], 0) AS rowsReturned,
-        ISNULL([Execution_Time_Ms], 0) AS executionTimeMs,
-        ISNULL([Confidence_Score], 0.95) AS confidenceScore,
-        ISNULL([Status_Code], 'SUCCESS') AS statusCode,
-        [Error_Message] AS errorMessage,
-        CONVERT(VARCHAR(19), [Created_At], 120) AS createdAt
-      FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
+        A.[UTD],
+        A.[Conversation_Id] AS conversationId,
+        ${hasConvTbl ? "ISNULL(C.[Title], '')" : "''"} AS conversationTitle,
+        A.[User_Id] AS userId,
+        A.[Emp_Code] AS empCode,
+        A.[Role] AS role,
+        A.[Comp_Code] AS compCode,
+        A.[User_Query] AS userQuery,
+        A.[Normalized_Query] AS normalizedQuery,
+        A.[Intent] AS intent,
+        A.[Tables_Used] AS tablesUsed,
+        A.[Generated_SQL] AS generatedSql,
+        A.[AI_Response] AS aiResponse,
+        ISNULL(A.[Rows_Returned], 0) AS rowsReturned,
+        ISNULL(A.[Execution_Time_Ms], 0) AS executionTimeMs,
+        ISNULL(A.[Confidence_Score], 0.95) AS confidenceScore,
+        ISNULL(A.[Status_Code], 'SUCCESS') AS statusCode,
+        A.[Error_Message] AS errorMessage,
+        CONVERT(VARCHAR(19), A.[Created_At], 120) AS createdAt
+      FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
+      ${joinConvSql}
       WHERE ${whereSql}
-      ORDER BY [UTD] DESC
+      ORDER BY A.[UTD] DESC
       OFFSET :offset ROWS
       FETCH NEXT :limit ROWS ONLY
     `, { replacements, type: QueryTypes.SELECT }).catch(() => []);

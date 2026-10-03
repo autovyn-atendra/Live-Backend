@@ -1,24 +1,3 @@
-/**
- * AUTOVYN ENTERPRISE AI COPILOT V6 — COMPLETE ENTERPRISE AI ENGINE
- * ============================================================================
- * Architecture: 12-Engine Pipeline + Universal 257-Column Enterprise Master Intelligence
- * + Autonomous Adaptive Cross-Table Search & Self-Learning Fallback
- * 
- * Engines:
- *   1.  Intent Engine (Hindi, English, Hinglish Classification)
- *   2.  Entity Extraction Engine (EMPCODE, Dates, Branches, Numbers, Names, Identifiers)
- *   3.  Schema Knowledge Graph Engine (257 Columns EMPLOYEEMASTER + 30+ ERP Tables)
- *   4.  Synonym Engine (Comprehensive Hindi/English ERP Business & Column Dictionary)
- *   5.  SQL Planner & Optimizer (Readable MSSQL, TOP Limits, NOLOCK, Correct Joins)
- *   6.  SQL Validator & Auto-Repair (AST Guardrails, Read-Only, Exact Column Normalization)
- *   7.  Cache Engine (L1 Hash + L2 Templates + L3 Semantic Embedding Cosine)
- *   8.  Memory Engine (Multi-Turn Context, Anaphora Resolution)
- *   9.  Autonomous Adaptive Cross-Table Fallback & Deep Entity Search Engine
- *   10. Formatter Engine (Natural Hindi/English, Indian Currency, Markdown Tables)
- *   11. Confidence & Critic Engine (SQL Evidence Verification, Anti-Hallucination)
- *   12. Self-Learning & Telemetry Engine (AI_SQL_Learning_Tbl, Hit Counters)
- * ============================================================================
- */
 
 "use strict";
 
@@ -318,6 +297,31 @@ const buildUserContext = (req = {}) => {
     department: user.department || headers.department || null,
     isAdmin: role.includes("ADMIN") || role.includes("SUPER") || role === "HR" || role === "CEO" || role === "MD"
   };
+};
+
+// ============================================================================
+// DUAL-DATABASE MULTI-TENANT CONFIGURATION: GLOBAL & TENANT RESOLVERS
+// ============================================================================
+
+const getGlobalAICompCode = () => {
+  return String(
+    process.env.GLOBAL_AI_COMPCODE ||
+    process.env.GLOBAL_COMPCODE ||
+    process.env.DEFAULT_COMP_CODE ||
+    process.env.DEFAULT_COMPCODE ||
+    "AUTOVYN"
+  ).trim();
+};
+
+const getGlobalAISequelize = async (req, fallbackSequelize = null) => {
+  const globalCompCode = getGlobalAICompCode();
+  try {
+    const globalSeq = await dbname(req, globalCompCode);
+    if (globalSeq?.query) return globalSeq;
+  } catch (err) {
+    console.warn("[Global-AI-DB] Notice: Could not connect to global DB, using fallback:", err?.message);
+  }
+  return fallbackSequelize;
 };
 
 // ============================================================================
@@ -3575,12 +3579,13 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) = '${cleanEmp}';`;
 // RLHF & DYNAMIC FEW-SHOT AUTO-LEARNING ENGINE
 // ============================================================================
 
-const fetchLearnedGoldenExamplesAndRules = async ({ sequelize, intent, message }) => {
+const fetchLearnedGoldenExamplesAndRules = async ({ sequelize, globalSequelize = null, intent, message }) => {
   const result = { goldenExamples: [], learnedRules: [] };
-  if (!sequelize?.query) return result;
+  const targetGlobalSeq = globalSequelize || sequelize;
+  if (!sequelize?.query && !targetGlobalSeq?.query) return result;
 
   try {
-    // 1. Fetch Golden SQL Examples from AI_SQL_Learning_Tbl & AI_Query_Audit_Tbl
+    // 1. Fetch Golden SQL Examples from AI_SQL_Learning_Tbl (Global DB)
     const escapedIntent = (intent || "").replace(/'/g, "''");
     const exampleQuery = `
       SELECT TOP 5 Normalized_Question AS question, SQL_Query AS sql, Success_Count
@@ -3588,7 +3593,7 @@ const fetchLearnedGoldenExamplesAndRules = async ({ sequelize, intent, message }
       WHERE Intent = '${escapedIntent}' OR Intent = 'DYNAMIC_CUSTOM'
       ORDER BY Success_Count DESC, Created_At DESC;
     `;
-    const rows = await sequelize.query(exampleQuery, { type: QueryTypes.SELECT }).catch(() => []);
+    const rows = await targetGlobalSeq.query(exampleQuery, { type: QueryTypes.SELECT }).catch(() => []);
     if (rows && rows.length > 0) {
       result.goldenExamples = rows.map(r => ({ question: r.question, sql: r.sql }));
     }
@@ -3601,7 +3606,7 @@ const fetchLearnedGoldenExamplesAndRules = async ({ sequelize, intent, message }
         WHERE Status_Code = 'SUCCESS' AND Rows_Returned > 0 AND Generated_SQL IS NOT NULL AND Generated_SQL <> ''
         ORDER BY UTD DESC;
       `;
-      const auditRows = await sequelize.query(auditQuery, { type: QueryTypes.SELECT }).catch(() => []);
+      const auditRows = await (sequelize || targetGlobalSeq).query(auditQuery, { type: QueryTypes.SELECT }).catch(() => []);
       for (const ar of auditRows) {
         if (ar.question && ar.sql && !result.goldenExamples.some(e => e.question === ar.question)) {
           result.goldenExamples.push({ question: ar.question, sql: ar.sql });
@@ -3609,7 +3614,7 @@ const fetchLearnedGoldenExamplesAndRules = async ({ sequelize, intent, message }
       }
     }
 
-    // 2. Fetch Active Corrections & Rules from AI_SQL_Corrections & AI_Business_Rule_Tbl
+    // 2. Fetch Active Corrections & Rules from AI_SQL_Corrections & AI_Business_Rule_Tbl (Global DB)
     const correctionsQuery = `
       IF OBJECT_ID('dbo.AI_SQL_Corrections', 'U') IS NOT NULL
       BEGIN
@@ -3626,7 +3631,7 @@ const fetchLearnedGoldenExamplesAndRules = async ({ sequelize, intent, message }
         ORDER BY UTD DESC;
       END
     `;
-    const corrRows = await sequelize.query(correctionsQuery, { type: QueryTypes.SELECT }).catch(() => []);
+    const corrRows = await targetGlobalSeq.query(correctionsQuery, { type: QueryTypes.SELECT }).catch(() => []);
     if (corrRows && corrRows.length > 0) {
       result.learnedRules = corrRows.map(r => ({ description: r.description, table: r.table, pattern: r.pattern }));
     }
@@ -3689,8 +3694,9 @@ const getPatternTokens = (text) => {
   return new Set(canon.split(/\s+/).filter(t => t.length >= 2 && !LEARNED_STOP_WORDS.has(t)));
 };
 
-const matchLearnedSimilarQuery = async ({ sequelize, message, originalMessage, intent, entities = {}, exactOnly = false }) => {
-  if (!sequelize?.query || !message) return null;
+const matchLearnedSimilarQuery = async ({ sequelize, globalSequelize = null, message, originalMessage, intent, entities = {}, exactOnly = false }) => {
+  const targetGlobalSeq = globalSequelize || sequelize;
+  if ((!sequelize?.query && !targetGlobalSeq?.query) || !message) return null;
   const normQuery = normalizeLower(message);
   const normOriginal = originalMessage ? normalizeLower(originalMessage) : "";
   const cleanQuery = normQuery.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -3718,7 +3724,7 @@ const matchLearnedSimilarQuery = async ({ sequelize, message, originalMessage, i
         AND ISNULL(Success_Count, 0) > 0
       ORDER BY Success_Count DESC, Created_At DESC;
     `;
-    const rows = await sequelize.query(fetchSql, { type: QueryTypes.SELECT }).catch(() => []);
+    const rows = await targetGlobalSeq.query(fetchSql, { type: QueryTypes.SELECT }).catch(() => []);
 
     // Helper for entity & date adaptation into SQL
     const adaptSQLForEntities = (rawSQL, sourceRule = null) => {
@@ -4326,7 +4332,7 @@ const matchLearnedSimilarQuery = async ({ sequelize, message, originalMessage, i
           ORDER BY UTD DESC;
         END
       `;
-      const corrRows = await sequelize.query(corrSql, { type: QueryTypes.SELECT }).catch(() => []);
+      const corrRows = await targetGlobalSeq.query(corrSql, { type: QueryTypes.SELECT }).catch(() => []);
       for (const cr of corrRows) {
         // Domain / Intent Compatibility Guard:
         const targetTable = (cr.Target_Table || "").toLowerCase();
@@ -4680,6 +4686,7 @@ Return a valid JSON object with:
  */
 const persistLearnedDataRule = async ({
   sequelize,
+  globalSequelize = null,
   originalQuestion,
   validatedSQL,
   parameterizedSQL = null,
@@ -4690,7 +4697,8 @@ const persistLearnedDataRule = async ({
   rawMessage = "",
   entities = {}
 }) => {
-  if (!sequelize?.query || !validatedSQL) return;
+  const targetGlobalSeq = globalSequelize || sequelize;
+  if ((!sequelize?.query && !targetGlobalSeq?.query) || !validatedSQL) return;
 
   try {
     const escapedOrig = (originalQuestion || "").replace(/'/g, "''");
@@ -4699,11 +4707,14 @@ const persistLearnedDataRule = async ({
     const escapedTable = (targetTable || "ERP_MASTER").replace(/'/g, "''");
     const escapedDesc = `User instructed that data for "${escapedOrig}" is in table ${escapedTable} ${filterClause ? 'where ' + filterClause.replace(/'/g, "''") : ''}`.replace(/'/g, "''");
 
-    // 1. Ensure Learning Tables Exist
-    await ensureLearningTablesExist(sequelize);
+    // 1. Ensure Learning Tables Exist on Global DB (and Tenant DB)
+    await ensureLearningTablesExist(targetGlobalSeq);
+    if (targetGlobalSeq !== sequelize && sequelize?.query) {
+      await ensureLearningTablesExist(sequelize).catch(() => {});
+    }
 
-    // Purge any mis-learned cross-domain entries or corrupt dummy queries
-    await sequelize.query(`
+    // Purge any mis-learned cross-domain entries or corrupt dummy queries on targetGlobalSeq
+    await targetGlobalSeq.query(`
       IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NOT NULL
       BEGIN
         DELETE FROM [dbo].[AI_SQL_Learning_Tbl]
@@ -4814,7 +4825,10 @@ const persistLearnedDataRule = async ({
             VALUES (source.Question, source.Intent, '${sqlToSave}', '${escapedTable}', 100, 35, GETDATE(), GETDATE());
         END
       `;
-      await sequelize.query(mergeSql, { type: QueryTypes.RAW }).catch(() => { });
+      await targetGlobalSeq.query(mergeSql, { type: QueryTypes.RAW }).catch(() => { });
+      if (targetGlobalSeq !== sequelize && sequelize?.query) {
+        await sequelize.query(mergeSql, { type: QueryTypes.RAW }).catch(() => { });
+      }
     }
 
     // 4. Save into AI_SQL_Corrections (store templateSQL so future matches can parameterize)
@@ -4825,7 +4839,10 @@ const persistLearnedDataRule = async ({
         VALUES ('USER_DATA_LOCATION', '${escapedMsg}', '${escapedTable}', '${templateSQL}', '${escapedDesc}', 1, GETDATE());
       END
     `;
-    await sequelize.query(corrInsertSql, { type: QueryTypes.RAW }).catch(() => { });
+    await targetGlobalSeq.query(corrInsertSql, { type: QueryTypes.RAW }).catch(() => { });
+    if (targetGlobalSeq !== sequelize && sequelize?.query) {
+      await sequelize.query(corrInsertSql, { type: QueryTypes.RAW }).catch(() => { });
+    }
 
     // 5. Save into AI_Business_Rule_Tbl if table exists
     const ruleCode = `LEARNED_${escapedTable.toUpperCase()}_${Date.now()}`;
@@ -4836,7 +4853,10 @@ const persistLearnedDataRule = async ({
         VALUES ('${ruleCode}', 'Learned ${escapedTable} Rule', '${escapedTable}', '${(filterClause || '1=1').replace(/'/g, "''")}', '${escapedDesc}', 'AUTO_LEARNED', 1, GETDATE());
       END
     `;
-    await sequelize.query(ruleInsertSql, { type: QueryTypes.RAW }).catch(() => { });
+    await targetGlobalSeq.query(ruleInsertSql, { type: QueryTypes.RAW }).catch(() => { });
+    if (targetGlobalSeq !== sequelize && sequelize?.query) {
+      await sequelize.query(ruleInsertSql, { type: QueryTypes.RAW }).catch(() => { });
+    }
 
     // 6. In-Memory Dynamic Knowledge Registration (Takes effect instantly on live process)
     if (targetTable) {
@@ -4881,7 +4901,9 @@ const persistLearnedDataRule = async ({
  */
 const handleUserCorrectionAndDataLocation = async ({
   sequelize,
+  globalSequelize = null,
   rawMessage,
+  englishQuery,
   conversationId,
   userContext = {},
   startedAt = Date.now()
@@ -5185,6 +5207,7 @@ const handleUserCorrectionAndDataLocation = async ({
   // 10. PERMANENT AUTONOMOUS SELF-LEARNING (Auto-train golden rule with parameterized SQL)
   await persistLearnedDataRule({
     sequelize,
+    globalSequelize,
     originalQuestion,
     validatedSQL: finalSQL,
     parameterizedSQL,
@@ -7979,6 +8002,7 @@ const verifyAnswerAgainstEvidence = ({ answer = "", rows = [] }) => {
 
 const recordLearningAndTelemetry = async ({
   sequelize,
+  globalSequelize = null,
   conversationId = null,
   userContext = {},
   rawQuery = "",
@@ -7996,6 +8020,7 @@ const recordLearningAndTelemetry = async ({
 }) => {
   try {
     if (!sequelize?.query) return;
+    const targetGlobalSeq = globalSequelize || sequelize;
 
     const escapedRaw = (rawQuery || normalizedQuery || "").replace(/'/g, "''");
     const escapedNormalized = (normalizedQuery || "").replace(/'/g, "''");
@@ -8010,7 +8035,7 @@ const recordLearningAndTelemetry = async ({
       (intent?.toUpperCase().includes("EMPLOYEE") || /employee|emp|salary|staff/i.test(rawQuery))
     );
 
-    // 1. Update existing Golden Rule in AI_SQL_Learning_Tbl if matched
+    // 1. Update existing Golden Rule in AI_SQL_Learning_Tbl (Global DB) if matched
     // (Only persistLearnedDataRule creates new golden rules to prevent unverified queries from polluting the knowledge base)
     if (success && sql && rowCount > 0 && !isFallback && !isMiscMstOnEmployeeQuestion) {
       const updateSql = `
@@ -8023,7 +8048,7 @@ const recordLearningAndTelemetry = async ({
           WHERE Normalized_Question = N'${escapedNormalized}' AND Intent = '${escapedIntent}';
         END
       `;
-      await sequelize.query(updateSql, { type: QueryTypes.RAW }).catch(() => { });
+      await targetGlobalSeq.query(updateSql, { type: QueryTypes.RAW }).catch(() => { });
     }
 
     // 2. Ensure Table & Record in AI_Query_Audit_Tbl
@@ -8103,6 +8128,8 @@ const submitFeedback = async (reqOrPayload, maybePayload = {}) => {
 
   const userContext = buildUserContext(effectiveReq);
   const sequelize = await dbname(effectiveReq, userContext.compcode);
+  const globalSequelize = await getGlobalAISequelize(effectiveReq, sequelize);
+  const targetGlobalSeq = globalSequelize || sequelize;
 
   const conversationId = payload.conversationId || payload.conversation_id || null;
   const auditUtd = payload.auditUtd || payload.audit_utd || null;
@@ -8123,8 +8150,14 @@ const submitFeedback = async (reqOrPayload, maybePayload = {}) => {
   CacheEngineInstance.l1ExactCache.clear();
   CacheEngineInstance.l3VectorCache = [];
 
-  if (sequelize?.query) {
+  if (sequelize?.query || targetGlobalSeq?.query) {
     // 0. Ensure Learning & Feedback Tables exist
+    if (targetGlobalSeq?.query) {
+      await ensureLearningTablesExist(targetGlobalSeq).catch(() => {});
+    }
+    if (targetGlobalSeq !== sequelize && sequelize?.query) {
+      await ensureLearningTablesExist(sequelize).catch(() => {});
+    }
     const ensureTablesSql = `
       IF OBJECT_ID('dbo.AI_Query_Feedback_Tbl', 'U') IS NULL
       BEGIN
@@ -8272,7 +8305,10 @@ const submitFeedback = async (reqOrPayload, maybePayload = {}) => {
         DELETE FROM [dbo].[AI_SQL_Learning_Tbl]
         WHERE CONVERT(NVARCHAR(500), Normalized_Question) = '${norm.replace(/'/g, "''")}';
       `;
-      await sequelize.query(demoteSql, { type: QueryTypes.RAW }).catch(() => { });
+      await targetGlobalSeq.query(demoteSql, { type: QueryTypes.RAW }).catch(() => { });
+      if (targetGlobalSeq !== sequelize && sequelize?.query) {
+        await sequelize.query(demoteSql, { type: QueryTypes.RAW }).catch(() => { });
+      }
     }
 
     // Extract all question variations (including synonyms)
@@ -8309,21 +8345,21 @@ const submitFeedback = async (reqOrPayload, maybePayload = {}) => {
             INSERT (Normalized_Question, Intent, SQL_Query, Tables_Used, Success_Count, Last_Execution_Time_Ms, Created_At, Last_Verified_At)
             VALUES (source.Question, source.Intent, N'${effectiveSQL.replace(/'/g, "''")}', ${targetTable ? `'${targetTable.replace(/'/g, "''")}'` : "'EMPLOYEEMASTER'"}, 50, 50, GETDATE(), GETDATE());
         `;
-        await sequelize.query(insertLearnSql, { type: QueryTypes.RAW }).catch((err) => {
+        await targetGlobalSeq.query(insertLearnSql, { type: QueryTypes.RAW }).catch((err) => {
           console.warn("[V6-RLHF] Merge learning query warning:", err?.message);
         });
       }
-      console.log(`🎯 [V6-RLHF] Successfully trained & learned golden SQL for ${questionList.length} question variation(s) on intent '${targetIntent}'!`);
+      console.log(`🎯 [V6-RLHF] Successfully trained & learned golden SQL into Central AI DB for ${questionList.length} question variation(s) on intent '${targetIntent}'!`);
     }
 
-    // 2. If it's correction or training rule, insert into AI_SQL_Corrections
+    // 2. If it's correction or training rule, insert into AI_SQL_Corrections (Global)
     if (feedbackType !== "HELPFUL" || userComment || effectiveSQL) {
       const ruleDesc = userComment || (effectiveSQL ? `User specified correct SQL: ${effectiveSQL}` : "Feedback rule override");
       const insertCorrectionSql = `
         INSERT INTO [dbo].[AI_SQL_Corrections] (Correction_Type, User_Message, Target_Table, Correct_SQL_Pattern, Rule_Description, Is_Active, Created_At)
         VALUES ('${feedbackType.replace(/'/g, "''")}', N'${userComment.replace(/'/g, "''")}', ${targetTable ? `'${targetTable.replace(/'/g, "''")}'` : 'NULL'}, ${effectiveSQL ? `N'${effectiveSQL.replace(/'/g, "''")}'` : 'NULL'}, N'${ruleDesc.replace(/'/g, "''")}', 1, GETDATE());
       `;
-      await sequelize.query(insertCorrectionSql, { type: QueryTypes.RAW }).catch(() => { });
+      await targetGlobalSeq.query(insertCorrectionSql, { type: QueryTypes.RAW }).catch(() => { });
     }
   }
 
@@ -8389,18 +8425,23 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
   const conversationId = effectivePayload.conversationId || `conv_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
 
   let sequelize = null;
+  let globalSequelize = null;
   const queryEmbedding = null;
 
   try {
-    // 2. Database Connection
+    // 2. Database Connection (Tenant ERP DB)
     sequelize = await dbname(effectiveReq, userContext.compcode);
     if (!sequelize?.query) {
       throw new ApiError(500, "Unable to establish connection with AutoVyn ERP Database");
     }
 
+    // 2.0 Global AI Database Connection (Central DB for learning, rules, schemas, metrics, synonyms)
+    globalSequelize = await getGlobalAISequelize(effectiveReq, sequelize);
+
     // 2.1 RLHF Continuous Learning & Follow-Up Data Location Handler
     const correctionResult = await handleUserCorrectionAndDataLocation({
       sequelize,
+      globalSequelize,
       rawMessage,
       englishQuery: englishQuery || rawMessage,
       conversationId,
@@ -8618,6 +8659,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
       let learnedMatch = await matchLearnedSimilarQuery({
         sequelize,
+        globalSequelize,
         message: englishQuery || rawMessage,
         originalMessage: rawMessage,
         intent: initialClassification?.intent,
@@ -8887,6 +8929,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
       recordLearningAndTelemetry({
         sequelize,
+        globalSequelize,
         conversationId,
         userContext,
         rawQuery: rawMessage,
@@ -8904,6 +8947,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     } else {
       recordLearningAndTelemetry({
         sequelize,
+        globalSequelize,
         conversationId,
         userContext,
         rawQuery: rawMessage,
@@ -8995,6 +9039,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     if (sequelize?.query) {
       recordLearningAndTelemetry({
         sequelize,
+        globalSequelize,
         conversationId,
         userContext,
         rawQuery: rawMessage,
@@ -9085,11 +9130,13 @@ const getAILearnedRules = async (reqOrPayload) => {
   const effectiveReq = reqOrPayload?.headers ? reqOrPayload : { body: reqOrPayload, headers: {}, user: {} };
   const userContext = buildUserContext(effectiveReq);
   const sequelize = await dbname(effectiveReq, userContext.compcode);
-  if (!sequelize?.query) {
+  const globalSequelize = await getGlobalAISequelize(effectiveReq, sequelize);
+  const targetSeq = globalSequelize || sequelize;
+  if (!targetSeq?.query) {
     throw new ApiError(500, "Database connection not available");
   }
 
-  await ensureLearningTablesExist(sequelize);
+  await ensureLearningTablesExist(targetSeq);
 
   const query = `
     SELECT 
@@ -9104,7 +9151,7 @@ const getAILearnedRules = async (reqOrPayload) => {
     FROM [dbo].[AI_SQL_Learning_Tbl] WITH (NOLOCK)
     ORDER BY UTD DESC;
   `;
-  const rules = await sequelize.query(query, { type: QueryTypes.SELECT }).catch(() => []);
+  const rules = await targetSeq.query(query, { type: QueryTypes.SELECT }).catch(() => []);
   return {
     success: true,
     data: rules || [],
@@ -9117,7 +9164,9 @@ const saveAILearnedRule = async (reqOrPayload) => {
   const effectiveReq = reqOrPayload?.headers ? reqOrPayload : { body: payload, headers: {}, user: {} };
   const userContext = buildUserContext(effectiveReq);
   const sequelize = await dbname(effectiveReq, userContext.compcode);
-  if (!sequelize?.query) {
+  const globalSequelize = await getGlobalAISequelize(effectiveReq, sequelize);
+  const targetSeq = globalSequelize || sequelize;
+  if (!targetSeq?.query) {
     throw new ApiError(500, "Database connection not available");
   }
 
@@ -9135,7 +9184,7 @@ const saveAILearnedRule = async (reqOrPayload) => {
     throw new ApiError(400, "Only read-only SELECT queries are allowed for security.");
   }
 
-  await ensureLearningTablesExist(sequelize);
+  await ensureLearningTablesExist(targetSeq);
 
   const questionsToSave = [question];
   if (synonyms && typeof synonyms === "string") {
@@ -9166,7 +9215,7 @@ const saveAILearnedRule = async (reqOrPayload) => {
         VALUES (source.Question, source.Intent, N'${sql.replace(/'/g, "''")}', '${table.replace(/'/g, "''")}', 50, 50, GETDATE(), GETDATE());
     `;
     try {
-      await sequelize.query(mergeSql, { type: QueryTypes.RAW });
+      await targetSeq.query(mergeSql, { type: QueryTypes.RAW });
     } catch (sqlErr) {
       console.error(`[saveAILearnedRule] MERGE error for question "${q}":`, sqlErr?.message || sqlErr?.original?.message);
       throw sqlErr;
@@ -9188,7 +9237,9 @@ const deleteAILearnedRule = async (reqOrPayload) => {
   const effectiveReq = reqOrPayload?.headers ? reqOrPayload : { body: payload, headers: {}, user: {} };
   const userContext = buildUserContext(effectiveReq);
   const sequelize = await dbname(effectiveReq, userContext.compcode);
-  if (!sequelize?.query) {
+  const globalSequelize = await getGlobalAISequelize(effectiveReq, sequelize);
+  const targetSeq = globalSequelize || sequelize;
+  if (!targetSeq?.query) {
     throw new ApiError(500, "Database connection not available");
   }
 
@@ -9203,7 +9254,7 @@ const deleteAILearnedRule = async (reqOrPayload) => {
   if (utd) deleteSql += `UTD = ${parseInt(utd, 10)}`;
   else deleteSql += `CONVERT(NVARCHAR(500), Normalized_Question) = '${normalizeLower(question).replace(/'/g, "''")}'`;
 
-  await sequelize.query(deleteSql, { type: QueryTypes.RAW });
+  await targetSeq.query(deleteSql, { type: QueryTypes.RAW });
 
   // Clear in-memory caches
   CacheEngineInstance.l1ExactCache.clear();
@@ -9260,9 +9311,12 @@ const testSQLQuery = async (reqOrPayload) => {
   }
 };
 
-const ensureAllAITables = async (sequelize) => {
-  if (!sequelize?.query) return;
-  const ddl = `
+const ensureAllAITables = async (tenantSequelize, maybeGlobalSequelize = null) => {
+  if (!tenantSequelize?.query) return;
+  const globalSeq = maybeGlobalSequelize || tenantSequelize;
+
+  // 1. Tenant-isolated Tables (6 tables on tenantSequelize)
+  const tenantDdl = `
     IF OBJECT_ID('dbo.AI_Conversation_Tbl', 'U') IS NULL
     BEGIN
       CREATE TABLE [dbo].[AI_Conversation_Tbl] (
@@ -9345,6 +9399,51 @@ const ensureAllAITables = async (sequelize) => {
       );
     END;
 
+    IF OBJECT_ID('dbo.AI_Knowledge_Document_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Knowledge_Document_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Comp_Code] VARCHAR(50) NOT NULL,
+        [Module_Name] VARCHAR(50) NOT NULL,
+        [Document_Type] VARCHAR(50) NOT NULL,
+        [Title] NVARCHAR(500) NOT NULL,
+        [Source_Name] NVARCHAR(200) NULL,
+        [Source_Reference] NVARCHAR(500) NULL,
+        [Content] NVARCHAR(MAX) NULL,
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_By] VARCHAR(100) NULL,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        [Updated_By] VARCHAR(100) NULL,
+        [Updated_At] DATETIME2(7) NULL
+      );
+    END;
+
+    IF OBJECT_ID('dbo.AI_Knowledge_Chunk_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Knowledge_Chunk_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+        [Document_UTD] BIGINT NOT NULL,
+        [Comp_Code] VARCHAR(50) NOT NULL,
+        [Module_Name] VARCHAR(50) NOT NULL,
+        [Chunk_Index] INT NOT NULL,
+        [Chunk_Content] NVARCHAR(MAX) NOT NULL,
+        [Embedding_JSON] NVARCHAR(MAX) NULL,
+        [Token_Count] INT NULL DEFAULT 0,
+        [Metadata_JSON] NVARCHAR(MAX) NULL,
+        [Is_Active] BIT NOT NULL DEFAULT 1,
+        [Created_By] VARCHAR(100) NULL,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        [Updated_By] VARCHAR(100) NULL,
+        [Updated_At] DATETIME2(7) NULL
+      );
+    END;
+  `;
+  await tenantSequelize.query(tenantDdl, { type: QueryTypes.RAW }).catch((err) => {
+    console.warn("[ensureAllAITables:Tenant] Notice during tenant table check:", err?.message || err?.original?.message);
+  });
+
+  // 2. Centralized Global AI Tables (8 tables on globalSeq)
+  const globalDdl = `
     IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NULL
     BEGIN
       CREATE TABLE [dbo].[AI_SQL_Learning_Tbl] (
@@ -9486,8 +9585,8 @@ const ensureAllAITables = async (sequelize) => {
       );
     END;
   `;
-  await sequelize.query(ddl, { type: QueryTypes.RAW }).catch((err) => {
-    console.warn("[ensureAllAITables] Notice during table check:", err?.message || err?.original?.message);
+  await globalSeq.query(globalDdl, { type: QueryTypes.RAW }).catch((err) => {
+    console.warn("[ensureAllAITables:Global] Notice during global table check:", err?.message || err?.original?.message);
   });
 };
 
@@ -9507,38 +9606,55 @@ const getAuditLogs = async (reqOrPayload, maybeRes) => {
 
   await ensureAllAITables(sequelize);
 
+  // Check if AI_Conversation_Tbl exists
+  const [convTableCheck] = await sequelize.query(`
+    SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'AI_Conversation_Tbl'
+  `, { type: QueryTypes.SELECT }).catch(() => []);
+  const hasConvTbl = Boolean(convTableCheck);
+
   let whereClauses = ["1=1"];
   let replacements = { limit, offset };
 
   if (search) {
-    whereClauses.push("(User_Query LIKE :search OR Normalized_Query LIKE :search OR Generated_SQL LIKE :search OR Intent LIKE :search OR Emp_Code LIKE :search OR User_Id LIKE :search OR AI_Response LIKE :search)");
+    if (hasConvTbl) {
+      whereClauses.push("(A.User_Query LIKE :search OR A.Normalized_Query LIKE :search OR A.Generated_SQL LIKE :search OR A.Intent LIKE :search OR A.Emp_Code LIKE :search OR A.User_Id LIKE :search OR A.AI_Response LIKE :search OR A.Conversation_Id LIKE :search OR C.Title LIKE :search)");
+    } else {
+      whereClauses.push("(A.User_Query LIKE :search OR A.Normalized_Query LIKE :search OR A.Generated_SQL LIKE :search OR A.Intent LIKE :search OR A.Emp_Code LIKE :search OR A.User_Id LIKE :search OR A.AI_Response LIKE :search OR A.Conversation_Id LIKE :search)");
+    }
     replacements.search = `%${search}%`;
   }
 
   if (status && status !== "ALL") {
-    whereClauses.push("Status_Code = :status");
+    whereClauses.push("A.Status_Code = :status");
     replacements.status = status;
   }
 
   if (intent && intent !== "ALL") {
-    whereClauses.push("Intent = :intent");
+    whereClauses.push("A.Intent = :intent");
     replacements.intent = intent;
   }
 
   if (startDate) {
-    whereClauses.push("Created_At >= :startDate");
+    whereClauses.push("A.Created_At >= :startDate");
     replacements.startDate = `${startDate} 00:00:00`;
   }
 
   if (endDate) {
-    whereClauses.push("Created_At <= :endDate");
+    whereClauses.push("A.Created_At <= :endDate");
     replacements.endDate = `${endDate} 23:59:59`;
   }
 
   const whereSql = whereClauses.join(" AND ");
 
+  const joinConvSql = hasConvTbl 
+    ? "LEFT JOIN [dbo].[AI_Conversation_Tbl] C WITH (NOLOCK) ON A.[Conversation_Id] = C.[Conversation_Id]"
+    : "";
+
   const countResult = await sequelize.query(`
-    SELECT COUNT(1) AS TotalRecords FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE ${whereSql}
+    SELECT COUNT(1) AS TotalRecords 
+    FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
+    ${joinConvSql}
+    WHERE ${whereSql}
   `, { replacements, type: QueryTypes.SELECT }).catch(() => [{ TotalRecords: 0 }]);
 
   const totalRecords = Number(countResult[0]?.TotalRecords || 0);
@@ -9546,27 +9662,29 @@ const getAuditLogs = async (reqOrPayload, maybeRes) => {
 
   const rows = await sequelize.query(`
     SELECT 
-      [UTD],
-      [Conversation_Id] AS conversationId,
-      [User_Id] AS userId,
-      [Emp_Code] AS empCode,
-      [Role] AS role,
-      [Comp_Code] AS compCode,
-      [User_Query] AS userQuery,
-      [Normalized_Query] AS normalizedQuery,
-      [Intent] AS intent,
-      [Tables_Used] AS tablesUsed,
-      [Generated_SQL] AS generatedSql,
-      [AI_Response] AS aiResponse,
-      ISNULL([Rows_Returned], 0) AS rowsReturned,
-      ISNULL([Execution_Time_Ms], 0) AS executionTimeMs,
-      ISNULL([Confidence_Score], 0.95) AS confidenceScore,
-      ISNULL([Status_Code], 'SUCCESS') AS statusCode,
-      [Error_Message] AS errorMessage,
-      CONVERT(VARCHAR(19), [Created_At], 120) AS createdAt
-    FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
+      A.[UTD],
+      A.[Conversation_Id] AS conversationId,
+      ${hasConvTbl ? "ISNULL(C.[Title], '')" : "''"} AS conversationTitle,
+      A.[User_Id] AS userId,
+      A.[Emp_Code] AS empCode,
+      A.[Role] AS role,
+      A.[Comp_Code] AS compCode,
+      A.[User_Query] AS userQuery,
+      A.[Normalized_Query] AS normalizedQuery,
+      A.[Intent] AS intent,
+      A.[Tables_Used] AS tablesUsed,
+      A.[Generated_SQL] AS generatedSql,
+      A.[AI_Response] AS aiResponse,
+      ISNULL(A.[Rows_Returned], 0) AS rowsReturned,
+      ISNULL(A.[Execution_Time_Ms], 0) AS executionTimeMs,
+      ISNULL(A.[Confidence_Score], 0.95) AS confidenceScore,
+      ISNULL(A.[Status_Code], 'SUCCESS') AS statusCode,
+      A.[Error_Message] AS errorMessage,
+      CONVERT(VARCHAR(19), A.[Created_At], 120) AS createdAt
+    FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
+    ${joinConvSql}
     WHERE ${whereSql}
-    ORDER BY [UTD] DESC
+    ORDER BY A.[UTD] DESC
     OFFSET :offset ROWS
     FETCH NEXT :limit ROWS ONLY
   `, { replacements, type: QueryTypes.SELECT }).catch(() => []);
@@ -9619,6 +9737,8 @@ const getAuditLogs = async (reqOrPayload, maybeRes) => {
 // ============================================================================
 
 module.exports = {
+  getGlobalAICompCode,
+  getGlobalAISequelize,
   askEnterpriseCopilotV6,
   askERPAssistant: askEnterpriseCopilotV6,
   translateToEnglishIfVernacular,
