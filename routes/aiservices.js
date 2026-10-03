@@ -737,7 +737,13 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
               confidence: v6Result.confidence,
               lastEmployeeCode: v6Result.resolvedEntities?.employeeCode || v6Result.data?.[0]?.EmployeeCode || v6Result.data?.[0]?.EMPCODE || v6Result.data?.[0]?.Emp_Code || null,
               lastEmployeeName: v6Result.resolvedEntities?.employeeName || v6Result.data?.[0]?.EmployeeName || v6Result.data?.[0]?.EMPFIRSTNAME || null,
-              resolvedEntities: v6Result.resolvedEntities || null
+              resolvedEntities: v6Result.resolvedEntities || null,
+              count: v6Result.count || v6Result.data?.[0]?.TotalPresentCount || v6Result.data?.[0]?.TotalAbsentCount || v6Result.data?.[0]?.TotalCount || v6Result.data?.[0]?.TotalEmployees || null,
+              specificDate: v6Result.specificDate || v6Result.resolvedEntities?.specificDate || null,
+              branch: v6Result.branch || v6Result.resolvedEntities?.branch || null,
+              branches: v6Result.branches || v6Result.resolvedEntities?.branches || null,
+              flag: v6Result.flag || v6Result.resolvedEntities?.flag || null,
+              rewrittenQuestion: v6Result.rewrittenQuestion || v6Result.resolvedEntities?.rewrittenQuestion || null
             }
           });
         } catch (asstMsgErr) {

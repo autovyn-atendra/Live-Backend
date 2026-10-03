@@ -167,6 +167,79 @@ const cosineSimilarity = (vecA, vecB) => {
 // MULTILINGUAL TRANSLATION & CANONICALIZATION ENGINE
 // ============================================================================
 
+/**
+ * Detects the user's conversational language & script with 100% precision:
+ * - hi_deva: Hindi in Devanagari script (e.g. "दीपक शर्मा का वेतन बताओ")
+ * - hi_latn: Hinglish - Hindi written in Roman/English alphabet (e.g. "Deepak Sharma ka salary batao")
+ * - en: Standard English (e.g. "Show the salary of Deepak Sharma")
+ * - gu: Gujarati, bn: Bengali, pa: Punjabi, mr: Marathi, etc.
+ */
+const detectUserLanguage = (text) => {
+  const str = String(text || "").trim();
+  if (!str) return { code: "en", label: "English", script: "Latin", instructions: "Respond in clear, professional English." };
+
+  // 1. Devanagari script (Hindi, Marathi, Sanskrit)
+  if (/[\u0900-\u097F]/.test(str)) {
+    return {
+      code: "hi_deva",
+      label: "Hindi in Devanagari script (हिंदी)",
+      script: "Devanagari",
+      instructions: "The user asked in Hindi (Devanagari script). You MUST reply strictly in pure, respectful, natural Hindi written in Devanagari script (e.g. 'ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, दीपक शर्मा का वेतन विवरण निम्नलिखित है:'). Do NOT use English or Hinglish except for ERP codes/IDs (like 1924108) or amounts (like ₹45,000)."
+    };
+  }
+
+  // 2. Gujarati script
+  if (/[\u0A80-\u0AFF]/.test(str)) {
+    return {
+      code: "gu",
+      label: "Gujarati",
+      script: "Gujarati",
+      instructions: "The user asked in Gujarati script. You MUST reply strictly in natural, respectful Gujarati script."
+    };
+  }
+
+  // 3. Bengali script
+  if (/[\u0980-\u09FF]/.test(str)) {
+    return {
+      code: "bn",
+      label: "Bengali",
+      script: "Bengali",
+      instructions: "The user asked in Bengali script. You MUST reply strictly in natural, respectful Bengali script."
+    };
+  }
+
+  // 4. Punjabi Gurmukhi script
+  if (/[\u0A00-\u0A7F]/.test(str)) {
+    return {
+      code: "pa",
+      label: "Punjabi",
+      script: "Gurmukhi",
+      instructions: "The user asked in Punjabi script. You MUST reply strictly in natural Punjabi script."
+    };
+  }
+
+  // 5. Hinglish (Hindi written in Roman / English alphabets)
+  // Check for unambiguous Hindi/Hinglish marker words, pronouns, question words, verbs
+  const hasVernacularMarkers = /\b(batao|bataiye|bata|batana|dikhao|dikhaye|dikhana|dekhna|dekho|kiska|kiske|kiski|kisko|kitne|kitna|kitni|kitno|sabse|jyada|zyada|adhik|kam|bada|badi|chhota|chhoti|pagar|tankha|tankhwa|vetan|chhutti|chutti|chhutiyan|haziri|hazri|karmchari|janamdin|saalgirah|salgirah|aaj|kal|parso|pichhla|pichhle|mahina|mahine|saal|hoga|hogi|honge|hota|hoti|hote|hai|hain|thi|hu|hoon|mein|se|ko|ka|ki|ke|pe|kare|karo|karen|karna|nikalo|nikalna|chahiye|milega|milna|kon|kaun|jinka|jinke|jinki|wale|wali|walo|rakhta|rakhti|rakhte|kripya|dijiye|apna|apni|apne|mera|meri|mere|uska|uski|uske|inka|inki|inke|unka|unki|unke|sabhi|sabka|sabki|sabke|saare|sare|pure|puri|pura|poora|poori|mujhe|mujhko|hume|humko|hamara|hamari|hamare|aapka|aapki|aapke|tumhara|tumhari|tumhare|kya|kyon|kyu|kaise|kaha|kahan|kab|shadi|shaadi|vivah|byah|patni|pati|dono|sabko|lekin|magar|aur|phir|fir|bhi|toh|namaste|pranam|kaisa|kaisi|gaya|gayi|gaye|raha|rahi|rahe|aaya|aayi|aaye)\b/i.test(str);
+
+  if (hasVernacularMarkers) {
+    return {
+      code: "hi_latn",
+      label: "Hinglish (Hindi written in Roman/English alphabet)",
+      script: "Latin",
+      instructions: "The user asked in Hinglish (Hindi written in Roman/English alphabet, e.g. 'Deepak Sharma ka salary batao'). You MUST reply strictly in natural, polite, fluent Hinglish (Roman script, e.g. 'AutoVyn ERP ke anusar, Deepak Sharma ka salary vivaran niche diya gaya hai...'). Match the user's conversational tone and language. Do NOT answer in pure English."
+    };
+  }
+
+  // 6. Default: Standard English
+  return {
+    code: "en",
+    label: "English",
+    script: "Latin",
+    instructions: "The user asked in English. You MUST reply strictly in clean, professional, fluent English (e.g. 'According to AutoVyn ERP records, the salary details for Deepak Sharma are as follows:'). Do NOT mix Hindi or Hinglish words."
+  };
+};
+
 const TranslationCache = new Map();
 
 /**
@@ -629,7 +702,9 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     salaryField: null,
     salaryMin: null,
     salaryMax: null,
-    isSalaryRange: false
+    isSalaryRange: false,
+    rawMessage: originalMessage || message || "",
+    isAllRequested: /\b(all|every|everyone|sabhi|sabka|sabki|sabke|saare|sare|pura|puri|complete|entire|full list|poora|poori|total list)\b/i.test(fullMessageText)
   };
 
   // --------------------------------------------------------------------------
@@ -771,6 +846,19 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     }
   }
 
+  // Row count / subset limit extraction (e.g. "inme se 1000 employee", "top 100", "first 50", "1000 employees", "50 log")
+  let subsetLimit = null;
+  const subsetLimitMatch = message.match(/\b(?:inme\s*se|unme\s*se|isme\s*se|usme\s*se|in\s*(?:\d+\s*)?(?:logo|karmchari|employee|employees)\s*me\s*se|among\s*them|out\s*of\s*(?:these|them|those|\d+)?|from\s*(?:these|them|those)?|top|first|pehle|pahle)\s*(\d{1,6})\b/i) ||
+    message.match(/\b(\d{1,6})\s*(?:employees?|karmchari|log|records?|staff|people|peoples?|names?|naam)\b/i);
+  if (subsetLimitMatch) {
+    const parsedLimit = parseInt(subsetLimitMatch[1], 10);
+    const isYear = (parsedLimit >= 1990 && parsedLimit <= 2035) && !/\b(?:top|first|pehle|pahle|inme\s*se|unme\s*se|out\s*of)\s*\d+\b/i.test(message);
+    if (!isYear && parsedLimit > 0) {
+      subsetLimit = parsedLimit;
+      entities.limit = parsedLimit;
+    }
+  }
+
   // Employee Code patterns (e.g. 1004, 1047, 2800035, 1953081, AU19795967, EMP102)
   const empCodeMatch = message.match(/\b([A-Za-z]{1,4}\d{1,8}|\d{3,9})\b/i);
   if (empCodeMatch) {
@@ -778,9 +866,12 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     const isYearNumber = /^(19\d{2}|20\d{2})$/.test(rawCode) && (parseInt(rawCode, 10) >= 1990 && parseInt(rawCode, 10) <= 2035);
     const hasDirectEmpPrefix = new RegExp(`\\b(?:emp|employee|karmchari|code|empcode|emp_code|id)\\s*[:=]?\\s*${rawCode}\\b`, 'i').test(normalized);
     const isSalaryNumber = salaryNumbers.has(rawCode) || salaryNumbers.has(String(parseFloat(rawCode)));
+    const isLimitNumber = subsetLimit && (parseInt(rawCode, 10) === subsetLimit || rawCode === String(subsetLimit));
+    const isPrecededBySubset = new RegExp(`\\b(?:inme\\s*se|unme\\s*se|isme\\s*se|usme\\s*se|out\\s*of|top|first|pehle|pahle)\\s*${rawCode}\\b`, 'i').test(normalized);
+    const isFollowedByEntityCount = new RegExp(`\\b${rawCode}\\s*(?:employees?|karmchari|log|records?|staff|people|naam|names?)\\b`, 'i').test(normalized);
 
-    // Never treat a salary range/threshold number or 4-digit year as an employee code unless explicitly prefixed with "emp 2026" or "code 50000"
-    if ((!isYearNumber && !isSalaryNumber) || hasDirectEmpPrefix) {
+    // Never treat a salary range/threshold number, 4-digit year, or subset limit count as an employee code unless explicitly prefixed with "emp 2026" or "code 50000"
+    if (((!isYearNumber && !isSalaryNumber && !isLimitNumber && !isPrecededBySubset && !isFollowedByEntityCount) || hasDirectEmpPrefix)) {
       if ((!entities.accountNumber || entities.accountNumber.length <= 9) && !entities.aadharNumber) {
         entities.employeeCode = rawCode;
       }
@@ -793,7 +884,8 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     const candidate = genericTokenMatch[1].trim();
     const isSalaryNumber = salaryNumbers.has(candidate) || salaryNumbers.has(String(parseFloat(candidate)));
     const isYearNumber = /^(19\d{2}|20\d{2})$/.test(candidate) && (parseInt(candidate, 10) >= 1990 && parseInt(candidate, 10) <= 2035);
-    if (!isSalaryNumber && !isYearNumber && !SEARCH_STOP_WORDS.has(candidate.toLowerCase()) && !/^(salary|payslip|detail|details|attendance|leave|record|update|status)$/i.test(candidate)) {
+    const isLimitCandidate = subsetLimit && (parseInt(candidate, 10) === subsetLimit || candidate === String(subsetLimit));
+    if (!isSalaryNumber && !isYearNumber && !isLimitCandidate && !SEARCH_STOP_WORDS.has(candidate.toLowerCase()) && !/^(salary|payslip|detail|details|attendance|leave|record|update|status)$/i.test(candidate)) {
       entities.searchToken = candidate;
     }
   }
@@ -1104,11 +1196,17 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     entities.leaveType = "ALL_LEAVES";
   }
 
-  // Aggregation
-  const isTotalOrSumKeyword = /\b(total|sum|kul|jog|add|addition|addisition|milakar|sabka|sabhi\s*ka|sabhi\s*karmchari|all\s*employee|all\s*employees|total\s*basic|total\s*gross|total\s*net|total\s*pay|total\s*salary|total\s*amount)\b/i.test(normalized);
-  if (/\b(kitne|count|total count|how many|sankhya|ginti)\b/i.test(normalized)) {
+  // Aggregation & Count Detection
+  const COUNT_KEYWORD_REGEX = /\b(kitne|kitna|kitni|kitno|count|total\s*count|how\s*many|how\s*much|number\s*of|no\s*of|no\.\s*of|headcount|head\s*count|sankhya|ginti)\b/i;
+  const isCountKeyword = COUNT_KEYWORD_REGEX.test(normalized) ||
+    (/\b(total)\b/i.test(normalized) && /\b(present|absent|employee|employees|staff|log|karmchari|leave|mispunch)\b/i.test(normalized) && !/\b(salary|pay|payout|amount|basic|gross|net|ctc|earning|deduction)\b/i.test(normalized));
+
+  const isTotalOrSumKeyword = /\b(sum|kul\s*rashi|total\s*pay|total\s*basic|total\s*gross|total\s*net|total\s*salary|total\s*amount|total\s*deduction)\b/i.test(normalized) ||
+    (/\b(total|sum|kul|jog|add|addition|milakar)\b/i.test(normalized) && /\b(salary|pay|payout|amount|basic|gross|net|ctc|earning|deduction|pf)\b/i.test(normalized));
+
+  if (isCountKeyword) {
     entities.aggregation = "COUNT";
-  } else if (isTotalOrSumKeyword || /\b(sum|kul rashi|total pay)\b/i.test(normalized)) {
+  } else if (isTotalOrSumKeyword) {
     entities.aggregation = "SUM";
   }
 
@@ -1130,14 +1228,8 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     /\b(deduct\w*|kata|katoti|kat\s*gaya|jama|contribution|salmnth|salyear|salary|payslip|slip|vetan|pagar|tankha|pension|eps)\b/i.test(normalized);
 
   const isPFQuery = /\b(pf|provident\s*fund|pf\s*number|pf\s*no|pfnumber|uan|esi)\b/i.test(normalized);
-  const isPFDeductionCount = isPFDeduction && (
-    /\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized) ||
-    entities.aggregation === "COUNT"
-  );
-  const isPFCount = isPFQuery && !isPFDeduction && (
-    /\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized) ||
-    entities.aggregation === "COUNT"
-  );
+  const isPFDeductionCount = isPFDeduction && (isCountKeyword || entities.aggregation === "COUNT");
+  const isPFCount = isPFQuery && !isPFDeduction && (isCountKeyword || entities.aggregation === "COUNT");
   const isPFList = isPFQuery && !isPFDeduction && (
     /\b(kiske kiske|kiske pass|kaun kaun|list|all|employees|karmchari|details|detail|nikalo|batao|walo|wale|records)\b/i.test(normalized) ||
     !entities.employeeCode
@@ -1187,23 +1279,25 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
   const isAttendancePattern = /\b(attendance|aattendance|attandance|atendance|attendence|atendence|haziri|hazri|upsthiti|punch|in\s*out|present|absent|attendance\s*detail|attandance\s*detail|aattendance\s*detail|punch\s*detail)\b/i.test(normalized);
 
   const isPresentCount = /\b(present|upasthit|aaya|duty)\b/i.test(normalized) &&
-    (/\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized) || entities.aggregation === "COUNT");
+    (isCountKeyword || entities.aggregation === "COUNT");
 
   const isAbsentCount = /\b(absent|anupasthit|nahi aaya|chhutti pe)\b/i.test(normalized) &&
-    (/\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized) || entities.aggregation === "COUNT");
+    (isCountKeyword || entities.aggregation === "COUNT");
 
-  const isPresentList = /\b(present|upasthit)\b/i.test(normalized) &&
-    (/\b(list|all|kaun kaun|employees|karmchari|details|detail|nikalo|batao)\b/i.test(normalized) || !entities.employeeCode);
+  const isExplicitList = /\b(list|names?|naam|kaun\s*kaun|kon\s*kon|kiske\s*kiske|who\s*all|which\s*employees|table|poori\s*list|pura\s*list|full\s*list|all\s*records|sheet)\b/i.test(normalized);
 
-  const isAbsentList = /\b(absent|anupasthit)\b/i.test(normalized) &&
-    (/\b(list|all|kaun kaun|employees|karmchari|details|detail|nikalo|batao)\b/i.test(normalized) || !entities.employeeCode);
+  const isPresentList = !isPresentCount && /\b(present|upasthit)\b/i.test(normalized) &&
+    (isExplicitList || (/\b(employees|karmchari|details|detail|nikalo|batao)\b/i.test(normalized) && !entities.employeeCode));
+
+  const isAbsentList = !isAbsentCount && /\b(absent|anupasthit)\b/i.test(normalized) &&
+    (isExplicitList || (/\b(employees|karmchari|details|detail|nikalo|batao)\b/i.test(normalized) && !entities.employeeCode));
 
   const isSalaryTotalOrSum = /\b(salary|pagar|tankha|vetan|pay|payout|earning|basic|gross|net|deduction|deductions|salaryfile)\b/i.test(normalized) &&
     (isTotalOrSumKeyword || entities.aggregation === "SUM" || /\b(total|sum|kul|add|addition|addisition)\b/i.test(normalized)) &&
     !entities.employeeCode;
 
   const isSalaryCount = /\b(salary|pagar|tankha|vetan|salaryfile)\b/i.test(normalized) &&
-    (/\b(kitne|how many|sankhya|ginti|total\s*count|kitne\s*log|kitne\s*karmchari|kitne\s*employees)\b/i.test(normalized) || ((entities.salaryThreshold != null || entities.isSalaryRange) && /\b(kitne|how many|count|sankhya|ginti)\b/i.test(normalized))) &&
+    (isCountKeyword || entities.aggregation === "COUNT" || ((entities.salaryThreshold != null || entities.isSalaryRange) && isCountKeyword)) &&
     !entities.employeeCode;
 
   // Miss Punch / Regularization Queries (AutoVyn attendancetable.mipunch_reason = 1 or 53, Misc_Type = 92)
@@ -1293,9 +1387,9 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
   } else if (/\b(salary|pagar|tankha|vetan|payslip|slip|basic|basic_earn|gross|gross_earn|net_pay|in\s*hand|ctc)\b/i.test(normalized)) {
     intent = entities.isSelf ? "SELF_SALARY" : "SALARY_REPORT";
   } else if (isLeaveAppliedQuery && !isLeavePolicyQuery) {
-    if (entities.employeeCode && !/\b(kitne|count|all|sabka|total)\b/i.test(normalized)) {
+    if (entities.employeeCode && !isCountKeyword && !/\b(all|sabka|total)\b/i.test(normalized)) {
       intent = "EMPLOYEE_LEAVE_LOOKUP";
-    } else if (entities.aggregation === "COUNT" || /\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized)) {
+    } else if (entities.aggregation === "COUNT" || isCountKeyword) {
       intent = "EMPLOYEE_LEAVE_COUNT";
     } else {
       intent = "EMPLOYEE_LEAVE_LIST";
@@ -1317,7 +1411,7 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
   } else if (/\b(detail|details|profile|designation|post|pad|kya\s*kaam|mobile|phone|contact|address|pata|joining|doj|kab\s*join|joining\s*date)\b/i.test(normalized)) {
     intent = "EMPLOYEE_LOOKUP";
   } else if (/\b(bank verify|account verify|penny drop|account_no_api)\b/i.test(normalized)) {
-    if (entities.aggregation === "COUNT" || /\b(kitne|total|count)\b/i.test(normalized)) {
+    if (entities.aggregation === "COUNT" || isCountKeyword) {
       intent = "BANK_ACCOUNT_VERIFY_COUNT";
     } else if (entities.employeeCode || entities.accountNumber) {
       intent = "BANK_ACCOUNT_VERIFY_LOOKUP";
@@ -1325,7 +1419,7 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
       intent = "BANK_ACCOUNT_VERIFY_LIST";
     }
   } else if (/\b(aadhaar|aadhar)\b/i.test(normalized) && /\b(verify|verified|verification|link)\b/i.test(normalized)) {
-    if (entities.aggregation === "COUNT" || /\b(kitne|total|count)\b/i.test(normalized)) {
+    if (entities.aggregation === "COUNT" || isCountKeyword) {
       intent = "AADHAAR_VERIFY_COUNT";
     } else if (entities.employeeCode) {
       intent = "AADHAAR_VERIFY_LOOKUP";
@@ -1333,7 +1427,7 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
       intent = "AADHAAR_VERIFY_LIST";
     }
   } else if (/\b(pan)\b/i.test(normalized) && /\b(verify|verified|verification)\b/i.test(normalized)) {
-    if (entities.aggregation === "COUNT" || /\b(kitne|total|count)\b/i.test(normalized)) {
+    if (entities.aggregation === "COUNT" || isCountKeyword) {
       intent = "PAN_VERIFY_COUNT";
     } else {
       intent = "PAN_VERIFY_LIST";
@@ -1341,7 +1435,7 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
   } else if (/\b(employeemaster_hst|hst|audit|history|kya\s*update|kaun\s*kaun\s*si\s*field|field\s*update|badla\s*gaya|change\s*hua|kya\s*badla|kya\s*change|badla\s*hai|update\s*ki\s*gai|kya\s*kya\s*update)\b/i.test(normalized) && /\b(update|updated|badla|change|modified|modi|aaj|today|detail|hst|field|fields|column|coloumn|kiska|kiske|kiski)\b/i.test(normalized)) {
     intent = "EMPLOYEE_AUDIT_HISTORY_DIFF";
   } else if (/\b(kyc|verify|verification)\b/i.test(normalized)) {
-    if (entities.aggregation === "COUNT" || /\b(kitne|total|count)\b/i.test(normalized)) {
+    if (entities.aggregation === "COUNT" || isCountKeyword) {
       intent = "KYC_COUNT";
     } else {
       intent = "KYC_LOOKUP";
@@ -1352,7 +1446,7 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
   } else {
     // Employee Count Queries (Active / Inactive / Total Count / Separation Events / Designation Counts / Name Counts)
     const isEmployeeCountQuery = (
-      /\b(kitne|count|total count|how many|sankhya|ginti|total)\b/i.test(normalized) &&
+      (isCountKeyword || entities.aggregation === "COUNT") &&
       (/\b(employee|employees|karmchari|karmachari|log|staff|worker|workers|bande|person)\b/i.test(normalized) || Boolean(entities.designation) || Boolean(entities.employeeName))
     ) || /\b(active\s*employee|inactive\s*employee|active\s*employees|inactive\s*employees)\b/i.test(normalized) || entities.isSeparationEvent;
 
@@ -1655,17 +1749,17 @@ class MemoryEngine {
     return this.getLastTurn(conversationId);
   }
 
-  async ensureContextFromDB(conversationId, sequelize) {
+  async ensureContextFromDB(conversationId, sequelize, currentMessage = "") {
     if (!conversationId || !sequelize?.query) return null;
     let existing = this.sessions.get(conversationId);
     // If in-memory context already has the latest turn details, never re-query DB to avoid stale turn bleeding
-    if (existing && (existing.lastEmployeeCode || existing.lastEmployeeName || existing.lastUserMessage)) {
+    if (existing && (existing.lastEmployeeCode || existing.lastEmployeeName || existing.lastUserMessage || existing.lastIntent || existing.lastSpecificDate)) {
       return existing;
     }
 
     try {
       const rows = await sequelize.query(`
-        SELECT TOP 4 [Role], [Message_Content], [Metadata]
+        SELECT TOP 6 [Role], [Message_Content], [Metadata]
         FROM [dbo].[AI_Message_Tbl] WITH (NOLOCK)
         WHERE [Conversation_Id] = :conversationId
         ORDER BY [UTD] DESC
@@ -1673,13 +1767,53 @@ class MemoryEngine {
 
       if (Array.isArray(rows) && rows.length > 0) {
         let lastUserMsg = null;
+        let lastAsstMsg = null;
         let empCode = null;
         let empName = null;
         let intent = null;
+        let specificDate = null;
+        let lastCount = null;
+        let branch = null;
+        let branches = null;
+        let lastFlag = null;
+        let lastEntities = {};
 
-        for (const row of rows) {
+        // In aiservices.js, the current user message is saved to AI_Message_Tbl BEFORE askEnterpriseCopilotV6 runs.
+        // Therefore, rows[0] is the current turn's user message. We must skip it to restore context from the PREVIOUS turn!
+        let startIndex = 0;
+        if (rows.length > 0 && rows[0].Role === 'user') {
+          if (!currentMessage || rows[0].Message_Content?.trim() === currentMessage.trim() || rows[1]?.Role === 'assistant') {
+            startIndex = 1;
+          }
+        }
+
+        for (let i = startIndex; i < rows.length; i++) {
+          const row = rows[i];
+          if (row.Role === 'assistant' && !lastAsstMsg && row.Message_Content) {
+            lastAsstMsg = row.Message_Content;
+            const cMatch = row.Message_Content.match(/\b(?:total\s*of\s*[*]*|total\s*[*]*|total\s*karmchari\s*[*]*|total\s*employees\s*[*]*|hai\s*[*]*|the\s*[*]*|hain\s*[*]*|kul\s*[*]*)\s*(\d{1,6})\b/i) ||
+              row.Message_Content.match(/\b(\d{1,6})\s*(?:employees?|karmchari|log|records?)\b/i);
+            if (cMatch && !lastCount) {
+              lastCount = parseInt(cMatch[1], 10);
+            }
+            const dMatch = row.Message_Content.match(/\b(\d{4}-\d{2}-\d{2})\b/) ||
+              row.Message_Content.match(/\b(\d{1,2}\/\d{1,2}\/\d{4})\b/);
+            if (dMatch && !specificDate) {
+              const dStr = dMatch[1];
+              if (dStr.includes('/')) {
+                const parts = dStr.split('/');
+                specificDate = `${parts[2]}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
+              } else {
+                specificDate = dStr;
+              }
+            }
+            const locAsstMatch = String(row.Message_Content).match(/\b(?:location|branch)\s*[*]*(\d+|[A-Z0-9_-]+)[*]*\b/i);
+            if (locAsstMatch && !branch) branch = locAsstMatch[1];
+          }
           if (row.Role === 'user' && !lastUserMsg && row.Message_Content) {
             lastUserMsg = row.Message_Content;
+            const locMatch = String(row.Message_Content).match(/\b(?:location|branch|loc)\s*[:=]?\s*(\d+|[A-Z0-9_-]+)\b/i);
+            if (locMatch && !branch) branch = locMatch[1];
           }
           if (row.Metadata) {
             try {
@@ -1687,6 +1821,12 @@ class MemoryEngine {
               if (!empCode) empCode = meta.lastEmployeeCode || meta.resolvedEntities?.employeeCode || meta.employeeCode;
               if (!empName) empName = meta.lastEmployeeName || meta.resolvedEntities?.employeeName || meta.employeeName || meta.nameFilter;
               if (!intent) intent = meta.intent || meta.effectiveIntent;
+              if (!specificDate) specificDate = meta.specificDate || meta.resolvedEntities?.specificDate;
+              if (!lastCount && meta.count !== undefined && meta.count !== null) lastCount = meta.count;
+              if (!branch) branch = meta.branch || meta.lastBranch || meta.resolvedEntities?.branch || meta.entities?.branch;
+              if (!branches) branches = meta.branches || meta.lastBranches || meta.resolvedEntities?.branches || meta.entities?.branches;
+              if (!lastFlag) lastFlag = meta.flag || meta.lastFlag || meta.resolvedEntities?.flag;
+              if (meta.resolvedEntities) lastEntities = { ...meta.resolvedEntities, ...lastEntities };
             } catch (_) {}
           }
           if (!empCode && row.Message_Content) {
@@ -1696,21 +1836,28 @@ class MemoryEngine {
             if (nameMatch) empName = nameMatch[1];
           }
 
-          // Strictly limit to the immediate latest turn (stop after first user message)
-          if (lastUserMsg) break;
+          // Stop after we have gathered both previous assistant response and user query
+          if (lastUserMsg && lastAsstMsg) break;
         }
 
-        if (empCode || empName) {
+        if (empCode || empName || intent || specificDate || lastUserMsg || lastCount || branch) {
           existing = {
             ...(existing || {}),
             lastEmployeeCode: empCode ? String(empCode) : null,
             lastEmployeeName: empName || null,
             lastIntent: intent || null,
+            lastSpecificDate: specificDate || null,
+            lastCount: lastCount || null,
+            lastBranch: branch || (lastEntities.branch ? String(lastEntities.branch) : null),
+            lastBranches: branches || lastEntities.branches || (branch ? [branch] : null),
+            lastFlag: lastFlag || lastEntities.flag || (intent === 'PRESENT_COUNT' || intent === 'PRESENT_EMPLOYEE_LIST' ? 'P' : (intent === 'ABSENT_COUNT' || intent === 'ABSENT_EMPLOYEE_LIST' ? 'A' : null)),
+            lastAssistantAnswer: lastAsstMsg || null,
             lastUserMessage: lastUserMsg || null,
+            lastEntities: { ...(existing?.lastEntities || {}), ...lastEntities, ...(branch ? { branch } : {}), ...(specificDate ? { specificDate } : {}) },
             lastUpdated: Date.now()
           };
           this.sessions.set(conversationId, existing);
-          console.log(`🧠 [V6-MemoryEngine] Restored persistent context from DB: ${empName || ''} (${empCode || 'No Code'}) for ${conversationId}`);
+          console.log(`🧠 [V6-MemoryEngine] Restored persistent context from DB: intent=${intent || 'none'}, date=${specificDate || 'none'}, count=${lastCount || 'none'}, branch=${branch || 'none'}, emp=${empName || ''} (${empCode || 'No Code'}) for ${conversationId}`);
           return existing;
         }
       }
@@ -1743,7 +1890,104 @@ class MemoryEngine {
     const isGlobalAggregateOrRanking = /\b(top\s*\d+|bottom\s*\d+|sabse\s*jyada|sabse\s*kam|highest|lowest|all\s*employees|sabhi\s*karmchari|total\s*employees|kitne\s*log|kitne\s*employee|total\s*count)\b/i.test(norm);
     const isGlobalEventQuery = /\b(aaj\s*kiska|aaj\s*kiski|kiska\s*birthday|kiski\s*anniversary|kiska\s*janamdin|kiski\s*saalgirah)\b/i.test(norm);
 
-    if (!isContinuationParticle && !isPronounFollowup && !isListOrIdentityFollowup && (hasExplicitNewEmployee || isGlobalAggregateOrRanking || isGlobalEventQuery)) {
+    // 1.5 Subset / Referential Dataset Follow-Up (e.g. "inme se 1000 employee...", "in sabhi ka...", "in sabka...", "inka...", "unka...")
+    const isSubsetFollowup = /\b(inme\s*se|unme\s*se|isme\s*se|usme\s*se|in\s*(?:\d+\s*)?(?:logo|karmchari|employee|employees)\s*me\s*se|in\s*sab\s*me\s*se|inhi\s*me\s*se|among\s*them|out\s*of\s*(?:these|them|those|\d+)?|from\s*(?:these|them|those|this\s*list)?|in\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|un\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|in\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|un\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*karmchari(?:yo)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*employees\s*(?:ka|ki|ke|ko|se|me\s*se)?|these\s*employees|inka|unka|in\s*me\s*se|is\s*list\s*(?:se|me\s*se)|all\s*of\s*(?:these|them|those)?|their\s*(?:name|details|mobile|pf|salary)?|sabhi\s*ka|sabka)\b/i.test(norm) ||
+      (Boolean(resolved.limit) && !resolved.employeeCode && (
+        history.lastIntent === "PRESENT_COUNT" ||
+        history.lastIntent === "ABSENT_COUNT" ||
+        history.lastIntent === "EMPLOYEE_COUNT" ||
+        history.lastIntent === "PRESENT_EMPLOYEE_LIST" ||
+        history.lastIntent === "ABSENT_EMPLOYEE_LIST"
+      ));
+
+    if (isSubsetFollowup && (history.lastIntent || history.lastCount || history.lastSpecificDate)) {
+      if (resolved.limit && resolved.employeeCode && (String(resolved.employeeCode) === String(resolved.limit) || parseInt(resolved.employeeCode, 10) === resolved.limit)) {
+        resolved.employeeCode = null;
+      }
+
+      const prevIntent = history.lastIntent;
+      const prevDate = history.lastSpecificDate || history.lastEntities?.specificDate || null;
+      const prevCount = history.lastCount || history.lastEntities?.count || null;
+
+      // CRITICAL RULE FROM USER:
+      // "jab tak mai ye na bolu ki itne employee ya itna ka hi data tab tak query me top nahi lagana ok ye yad hi rakhana hai ok"
+      // Only set numeric limit if the user explicitly specified a count in their current message
+      const explicitLimitMatch = norm.match(/\b(?:top\s*(\d+)|(\d+)\s*(?:employee|employees|karmchari|log|records?|data|ka\s*data|ki\s*list|ki\s*suchi))\b/i);
+      let limitVal = null;
+      if (explicitLimitMatch) {
+        limitVal = parseInt(explicitLimitMatch[1] || explicitLimitMatch[2], 10);
+        resolved.limit = limitVal;
+      } else if (resolved.limit && resolved.limit > 0) {
+        limitVal = resolved.limit;
+      } else {
+        // No explicit limit requested -> User wants ALL records ("in sabhi ka")!
+        resolved.limit = null;
+        resolved.isAllRequested = true;
+      }
+
+      let rewrittenQuestion = "";
+
+      if (prevIntent === "PRESENT_COUNT" || prevIntent === "PRESENT_EMPLOYEE_LIST") {
+        resolvedIntent = "PRESENT_EMPLOYEE_LIST";
+        if (prevDate) resolved.specificDate = prevDate;
+        if (history.lastBranch) resolved.branch = history.lastBranch;
+        if (history.lastBranches) resolved.branches = history.lastBranches;
+        if (history.lastExcludeBranch) resolved.excludeBranch = history.lastExcludeBranch;
+        resolved.flag = "P";
+        resolved.priorCount = prevCount;
+
+        const dateLabel = prevDate ? `${prevDate}` : "diye gaye din";
+        const countLabel = prevCount ? `${prevCount} ` : "";
+        const limitStr = limitVal ? `${limitVal} ` : "sabhi ";
+        rewrittenQuestion = `According to AutoVyn ERP records, ${countLabel ? `${countLabel}employees were present on ${dateLabel}. ` : ''}Out of these ${countLabel ? countLabel : ''}present employees, provide the details of ${limitStr}employees.`;
+      } else if (prevIntent === "ABSENT_COUNT" || prevIntent === "ABSENT_EMPLOYEE_LIST") {
+        resolvedIntent = "ABSENT_EMPLOYEE_LIST";
+        if (prevDate) resolved.specificDate = prevDate;
+        if (history.lastBranch) resolved.branch = history.lastBranch;
+        if (history.lastBranches) resolved.branches = history.lastBranches;
+        if (history.lastExcludeBranch) resolved.excludeBranch = history.lastExcludeBranch;
+        resolved.flag = "A";
+        resolved.priorCount = prevCount;
+
+        const dateLabel = prevDate ? `${prevDate}` : "diye gaye din";
+        const countLabel = prevCount ? `${prevCount} ` : "";
+        const limitStr = limitVal ? `${limitVal} ` : "sabhi ";
+        rewrittenQuestion = `According to AutoVyn ERP records, ${countLabel ? `${countLabel}employees were absent on ${dateLabel}. ` : ''}Out of these ${countLabel ? countLabel : ''}absent employees, provide the details of ${limitStr}employees.`;
+      } else if (prevIntent === "EMPLOYEE_COUNT" || prevIntent === "EMPLOYEE_LOOKUP") {
+        resolvedIntent = "EMPLOYEE_LOOKUP";
+        if (history.lastBranch) resolved.branch = history.lastBranch;
+        if (history.lastBranches) resolved.branches = history.lastBranches;
+        if (history.lastExcludeBranch) resolved.excludeBranch = history.lastExcludeBranch;
+        if (history.lastEmployeeStatus) resolved.employeeStatus = history.lastEmployeeStatus;
+        if (history.lastDesignation) resolved.designation = history.lastDesignation;
+        resolved.priorCount = prevCount;
+
+        const countLabel = prevCount ? `${prevCount} ` : "";
+        const limitStr = limitVal ? `${limitVal} ` : "sabhi ";
+        rewrittenQuestion = `Out of ${countLabel}employees, provide the details of ${limitStr}employees.`;
+      } else if (prevDate) {
+        resolvedIntent = "PRESENT_EMPLOYEE_LIST";
+        if (prevDate) resolved.specificDate = prevDate;
+        if (history.lastBranch) resolved.branch = history.lastBranch;
+        if (history.lastBranches) resolved.branches = history.lastBranches;
+        if (history.lastExcludeBranch) resolved.excludeBranch = history.lastExcludeBranch;
+        resolved.flag = "P";
+        resolved.priorCount = prevCount;
+        const limitStr = limitVal ? `${limitVal} ` : "sabhi ";
+        rewrittenQuestion = `Present employees on ${prevDate} me se ${limitStr}employees ka details do.`;
+      }
+
+      console.log(`🧠 [V6-MemoryEngine] Resolved subset follow-up: intent=${resolvedIntent}, limit=${limitVal || 'ALL (No Limit)'}, date=${resolved.specificDate || 'none'}, branch=${resolved.branch || 'none'}, priorCount=${prevCount || 'none'}`);
+      return {
+        entities: resolved,
+        intent: resolvedIntent,
+        isFollowup: true,
+        rewrittenQuestion,
+        previousTurn: history
+      };
+    }
+
+    if (!isContinuationParticle && !isPronounFollowup && !isListOrIdentityFollowup && !isSubsetFollowup && (hasExplicitNewEmployee || isGlobalAggregateOrRanking || isGlobalEventQuery)) {
       // Independent query - start fresh context for this domain
       return { entities: resolved, intent: resolvedIntent, isFollowup: false, previousTurn: history };
     }
@@ -1913,6 +2157,14 @@ class MemoryEngine {
     const newExcludeBranch = entities.excludeBranch || (isNewSubject ? null : existing.lastExcludeBranch) || null;
     const newEmployeeStatus = entities.employeeStatus || (isNewSubject ? null : existing.lastEmployeeStatus) || null;
     const newDesignation = entities.designation || (isNewSubject ? null : existing.lastDesignation) || null;
+    const countVal = extra.count !== undefined ? extra.count : (
+      extra.rows?.[0]?.TotalPresentCount ||
+      extra.rows?.[0]?.TotalAbsentCount ||
+      extra.rows?.[0]?.TotalCount ||
+      extra.rows?.[0]?.TotalEmployees ||
+      (extra.rows?.length === 1 && typeof Object.values(extra.rows[0])[0] === 'number' ? Object.values(extra.rows[0])[0] : null) ||
+      existing.lastCount || null
+    );
 
     this.sessions.set(conversationId, {
       ...existing,
@@ -1923,6 +2175,10 @@ class MemoryEngine {
       lastExcludeBranch: newExcludeBranch,
       lastEmployeeStatus: newEmployeeStatus,
       lastDesignation: newDesignation,
+      lastSpecificDate: entities.specificDate || (isNewSubject ? null : existing.lastSpecificDate) || null,
+      lastCount: countVal !== undefined && countVal !== null ? countVal : (existing.lastCount || null),
+      lastAssistantAnswer: extra.assistantAnswer || extra.answer || existing.lastAssistantAnswer || null,
+      lastFlag: entities.flag || existing.lastFlag || (intent === 'PRESENT_COUNT' || intent === 'PRESENT_EMPLOYEE_LIST' ? 'P' : (intent === 'ABSENT_COUNT' || intent === 'ABSENT_EMPLOYEE_LIST' ? 'A' : null)),
       lastMonth: entities.month || (isNewSubject ? null : existing.lastMonth) || null,
       lastYear: entities.year || (isNewSubject ? null : existing.lastYear) || null,
       lastIntent: intent || existing.lastIntent || null,
@@ -2696,9 +2952,17 @@ ORDER BY ISNULL(S.[Final_Payment], ISNULL(S.[Gross_Earn], ISNULL(E.[MONTHLY_CTC]
 
     case "PRESENT_EMPLOYEE_LIST":
       {
-        let sql = `SELECT TOP 1000
+        const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+        let sql = `SELECT ${topClause}
   LTRIM(RTRIM(CONVERT(varchar(50), ISNULL([E].[EMPCODE], [A].[Emp_Code])))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation],
+  [E].[MOBILENO] AS [MobileNo],
+  LTRIM(RTRIM(ISNULL([E].[PFNUMBER], ''))) AS [PFNumber],
+  ISNULL([E].[UAN_No], '') AS [UANNumber],
+  ISNULL([E].[ESINO], '') AS [ESINumber],
+  ISNULL(NULLIF(LTRIM(RTRIM([E].[PERMANENTADDRESS1])), ''), ISNULL(NULLIF(LTRIM(RTRIM([E].[CURRENTADDRESS1])), ''), 'Not Updated')) AS [Address],
+  [E].[LOCATION] AS [Location],
   CONVERT(varchar(10), [A].[dateoffice], 120) AS [AttendanceDate],
   DATENAME(weekday, [A].[dateoffice]) AS [DayName],
   LTRIM(RTRIM([A].[flag])) AS [Flag],
@@ -2706,9 +2970,7 @@ ORDER BY ISNULL(S.[Final_Payment], ISNULL(S.[Gross_Earn], ISNULL(E.[MONTHLY_CTC]
   [A].[presentvalue] AS [PresentValue],
   CONVERT(varchar(8), [A].[in1], 108) AS [InTime],
   CONVERT(varchar(8), [A].[out1], 108) AS [OutTime],
-  [A].[hoursworked] AS [HoursWorked],
-  [E].[LOCATION] AS [Location],
-  [E].[EMPLOYEEDESIGNATION] AS [Designation]
+  [A].[hoursworked] AS [HoursWorked]
 FROM [dbo].[attendancetable] AS [A] WITH (NOLOCK)
 INNER JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
   ON LTRIM(RTRIM(CONVERT(varchar(50), [A].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
@@ -2719,23 +2981,39 @@ WHERE (LTRIM(RTRIM([A].[flag])) = 'P' OR [A].[flag] LIKE 'P%' OR [A].[presentval
           if (month) sql += ` AND MONTH([A].[dateoffice]) = ${month}`;
           if (year) sql += ` AND YEAR([A].[dateoffice]) = ${year}`;
         }
-        if (branch) sql += ` AND [E].[LOCATION] = '${branch.replace(/'/g, "''")}'`;
+        if (entities.branches && Array.isArray(entities.branches) && entities.branches.length > 0) {
+          const formattedBranches = entities.branches.map(b => {
+            const clean = String(b).replace(/'/g, "''");
+            return /^\d+$/.test(clean) ? clean : `'${clean}'`;
+          }).join(", ");
+          sql += ` AND [E].[LOCATION] IN (${formattedBranches})`;
+        } else if (branch || entities.locCode) {
+          const loc = branch || entities.locCode;
+          const cleanLoc = String(loc).replace(/'/g, "''");
+          const isNum = /^\d+$/.test(cleanLoc);
+          sql += ` AND ([E].[LOCATION] = '${cleanLoc}' OR CONVERT(varchar(50), [E].[LOCATION]) = '${cleanLoc}'${isNum ? ` OR [E].[LOCATION] = ${cleanLoc}` : ""})`;
+        }
         sql += ` ORDER BY CASE WHEN LTRIM(RTRIM([A].[flag])) = 'P' THEN 0 ELSE 1 END, [E].[EMPFIRSTNAME] ASC, [A].[Emp_Code] ASC;`;
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99 };
       }
 
     case "ABSENT_EMPLOYEE_LIST":
       {
-        let sql = `SELECT TOP 1000
+        const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+        let sql = `SELECT ${topClause}
   LTRIM(RTRIM(CONVERT(varchar(50), ISNULL([E].[EMPCODE], [A].[Emp_Code])))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  [E].[EMPLOYEEDESIGNATION] AS [Designation],
+  [E].[MOBILENO] AS [MobileNo],
+  LTRIM(RTRIM(ISNULL([E].[PFNUMBER], ''))) AS [PFNumber],
+  ISNULL([E].[UAN_No], '') AS [UANNumber],
+  ISNULL([E].[ESINO], '') AS [ESINumber],
+  ISNULL(NULLIF(LTRIM(RTRIM([E].[PERMANENTADDRESS1])), ''), ISNULL(NULLIF(LTRIM(RTRIM([E].[CURRENTADDRESS1])), ''), 'Not Updated')) AS [Address],
+  [E].[LOCATION] AS [Location],
   CONVERT(varchar(10), [A].[dateoffice], 120) AS [AttendanceDate],
   DATENAME(weekday, [A].[dateoffice]) AS [DayName],
   LTRIM(RTRIM([A].[flag])) AS [Flag],
-  [A].[status] AS [Status],
-  [E].[LOCATION] AS [Location],
-  [E].[EMPLOYEEDESIGNATION] AS [Designation],
-  [E].[MOBILENO] AS [MobileNo]
+  [A].[status] AS [Status]
 FROM [dbo].[attendancetable] AS [A] WITH (NOLOCK)
 INNER JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK)
   ON LTRIM(RTRIM(CONVERT(varchar(50), [A].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
@@ -2746,7 +3024,18 @@ WHERE (LTRIM(RTRIM([A].[flag])) = 'A' OR [A].[flag] LIKE 'A%' OR [A].[absentvalu
           if (month) sql += ` AND MONTH([A].[dateoffice]) = ${month}`;
           if (year) sql += ` AND YEAR([A].[dateoffice]) = ${year}`;
         }
-        if (branch) sql += ` AND [E].[LOCATION] = '${branch.replace(/'/g, "''")}'`;
+        if (entities.branches && Array.isArray(entities.branches) && entities.branches.length > 0) {
+          const formattedBranches = entities.branches.map(b => {
+            const clean = String(b).replace(/'/g, "''");
+            return /^\d+$/.test(clean) ? clean : `'${clean}'`;
+          }).join(", ");
+          sql += ` AND [E].[LOCATION] IN (${formattedBranches})`;
+        } else if (branch || entities.locCode) {
+          const loc = branch || entities.locCode;
+          const cleanLoc = String(loc).replace(/'/g, "''");
+          const isNum = /^\d+$/.test(cleanLoc);
+          sql += ` AND ([E].[LOCATION] = '${cleanLoc}' OR CONVERT(varchar(50), [E].[LOCATION]) = '${cleanLoc}'${isNum ? ` OR [E].[LOCATION] = ${cleanLoc}` : ""})`;
+        }
         sql += ` ORDER BY [E].[EMPFIRSTNAME] ASC, [A].[Emp_Code] ASC;`;
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99 };
       }
@@ -3293,9 +3582,11 @@ ORDER BY E.[EMPCODE];`;
 
     case "PF_EMPLOYEE_LIST":
       {
-        let sql = `SELECT TOP 1000
+        const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+        let sql = `SELECT ${topClause}
   LTRIM(RTRIM(CONVERT(varchar(50), [EMPCODE]))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL([EMPFIRSTNAME], '') + ' ' + ISNULL([EMPLASTNAME], ''))) AS [EmployeeName],
+  [MOBILENO] AS [MobileNo],
   LTRIM(RTRIM([PFNUMBER])) AS [PFNumber],
   ISNULL([UAN_No], '') AS [UANNumber],
   ISNULL([ESINO], '') AS [ESINumber],
@@ -3306,7 +3597,18 @@ FROM [dbo].[EMPLOYEEMASTER] WITH (NOLOCK)
 WHERE [PFNUMBER] IS NOT NULL 
   AND LTRIM(RTRIM([PFNUMBER])) <> '' 
   AND LTRIM(RTRIM([PFNUMBER])) NOT IN ('-', '--', '---', '0', 'NA', 'N/A', 'N.A.', 'null', 'NULL', 'None', 'none')`;
-        if (branch) sql += ` AND [LOCATION] = '${branch.replace(/'/g, "''")}'`;
+        if (entities.branches && Array.isArray(entities.branches) && entities.branches.length > 0) {
+          const formattedBranches = entities.branches.map(b => {
+            const clean = String(b).replace(/'/g, "''");
+            return /^\d+$/.test(clean) ? clean : `'${clean}'`;
+          }).join(", ");
+          sql += ` AND [LOCATION] IN (${formattedBranches})`;
+        } else if (branch || entities.locCode) {
+          const loc = branch || entities.locCode;
+          const cleanLoc = String(loc).replace(/'/g, "''");
+          const isNum = /^\d+$/.test(cleanLoc);
+          sql += ` AND ([LOCATION] = '${cleanLoc}' OR CONVERT(varchar(50), [LOCATION]) = '${cleanLoc}'${isNum ? ` OR [LOCATION] = ${cleanLoc}` : ""})`;
+        }
         sql += ` ORDER BY [EMPFIRSTNAME] ASC, [EMPCODE] ASC;`;
         return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
       }
@@ -3658,8 +3960,20 @@ const canonicalizeQueryPattern = (text) => {
   norm = norm.replace(/\b(sallary|salery|selary|tankha|vetan)\b/g, "salary");
   norm = norm.replace(/\b(presant|persent)\b/g, "present");
   norm = norm.replace(/\b(absant)\b/g, "absent");
-  norm = norm.replace(/\b(itne|itna)\b/g, "kitne");
-  norm = norm.replace(/\b(karmchari|karmachari)\b/g, "employee");
+  norm = norm.replace(/\b(how\s+many|how\s+much|kitne|kitna|kitni|itne|itna|total\s+count\s+of|count\s+of)\b/g, "kitne");
+  norm = norm.replace(/\b(tell\s+me|batao|bataiye|dikhao|show\s+me|give\s+me|display)\b/g, "batao");
+  norm = norm.replace(/\b(karmchari|karmachari|staff|employees|workers?)\b/g, "employee");
+
+  // 1.2. Normalize full calendar dates (e.g. 21/10/2025, 2025-10-21, 21-10-2025, 21.10.2025)
+  norm = norm.replace(/\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/g, "<DATE>");
+  norm = norm.replace(/\b\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}\b/g, "<DATE>");
+
+  // 1.3. Normalize mobile numbers (10 digits starting with 6-9)
+  norm = norm.replace(/\b[6-9]\d{9}\b/g, "<MOBILE_NO>");
+
+  // 1.4. Normalize PAN and Aadhaar
+  norm = norm.replace(/\b[a-zA-Z]{5}\d{4}[a-zA-Z]\b/gi, "<PAN_NO>");
+  norm = norm.replace(/\b\d{4}\s*\d{4}\s*\d{4}\b/g, "<AADHAAR_NO>");
 
   // 1.5. Normalize branch/location designations (e.g. branch 1, branch 2, location 1, loc 1, branch one)
   norm = norm.replace(/\b(?:branch|location|loc|godw|godown|br)\s*(?:code\s*|no\s*|number\s*|:\s*|#\s*)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/gi, "branch <BRANCH>");
@@ -5312,12 +5626,13 @@ Generate a high-performance, strictly READ-ONLY Microsoft SQL Server query.
 
 RULES:
 1. Output ONLY valid JSON in format: {"sql": "...", "explanation": "...", "tables": ["..."], "confidence": 0.95}
-2. Always use TOP 500 (or TOP 100/200) limit. Never use SELECT *.
-3. Always include WITH (NOLOCK) on every table reference.
-4. Use standard MSSQL functions (CONVERT, YEAR, MONTH, DATEDIFF, ISNULL, LTRIM, RTRIM).
-5. Never write INSERT, UPDATE, DELETE, DROP, ALTER, EXEC, or TRUNCATE.
-6. Scope: For general statistics / counts / reports across the company, do NOT restrict to a single EMPCODE unless specifically requested.
-7. Table Aliases: Always give meaningful aliases (E for EMPLOYEEMASTER, S for SALARYFILE, A for attendancetable, V for emp_varify).
+2. TOP Limit Rule: If the user asks for 'all', 'sabhi', 'sabka', 'saare', 'everyone', 'complete', 'entire', or 'full list', DO NOT include any TOP clause (e.g. use SELECT directly). For normal sample queries without an 'all' requirement, use TOP 500. Never use SELECT *.
+3. COUNT / AGGREGATION MANDATE: If the user query asks for a count, quantity, or number of records (e.g. 'how many', 'how much', 'kitne', 'sankhya', 'ginti', 'number of employees present/absent/on leave'): You MUST generate a query that returns ONLY the aggregate COUNT (e.g. SELECT COUNT(DISTINCT ...) AS TotalCount ...). NEVER return a list or rows of employees when a count was requested!
+4. Always include WITH (NOLOCK) on every table reference.
+5. Use standard MSSQL functions (CONVERT, YEAR, MONTH, DATEDIFF, ISNULL, LTRIM, RTRIM).
+6. Never write INSERT, UPDATE, DELETE, DROP, ALTER, EXEC, or TRUNCATE.
+7. Scope: For general statistics / counts / reports across the company, do NOT restrict to a single EMPCODE unless specifically requested.
+8. Table Aliases: Always give meaningful aliases (E for EMPLOYEEMASTER, S for SALARYFILE, A for attendancetable, V for emp_varify).
 8. CRITICAL SCHEMA RULES FOR AUTOVYN MSSQL DATABASE:
    - EMPLOYEEMASTER (257 columns):
      - Name: LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName]
@@ -5419,23 +5734,29 @@ const validateAndRepairSQL = (rawSql, userContext, options = {}) => {
     throw new ApiError(400, "Invalid SQL: Statement must be a SELECT query.");
   }
 
-  // 2. Ensure TOP limit OR handle unrestricted employee/record queries (e.g. "kon kon employee", "sabka", "all")
-  const isNoTopExplicit = Boolean(
+  // 2. Ensure TOP limit OR handle unrestricted employee/record queries (e.g. "sabhi", "sabka", "all", "kon kon")
+  const allKeywordsRegex = /\b(all|every|everyone|everybody|sabhi|sabka|sabki|sabke|saare|sare|pura|puri|poora|poori|complete|entire|full\s*list|total\s*list|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i;
+  const hasExplicitLimit = Boolean(options?.limit || options?.entities?.limit || userContext?.limit);
+  const isNoTopExplicit = !hasExplicitLimit && Boolean(
     options?.noTopLimit ||
     options?.isKonKonQuery ||
+    options?.isAllRequested ||
     userContext?.noTopLimit ||
+    userContext?.isAllRequested ||
     options?.intent === "SALARY_PF_DEDUCTION" ||
-    /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(userContext?.rawMessage || "") ||
-    /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(userContext?.message || "") ||
-    /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(options?.rawMessage || "")
+    allKeywordsRegex.test(userContext?.rawMessage || "") ||
+    allKeywordsRegex.test(userContext?.message || "") ||
+    allKeywordsRegex.test(options?.rawMessage || "") ||
+    allKeywordsRegex.test(options?.englishQuery || "") ||
+    allKeywordsRegex.test(sql)
   );
 
   if (isNoTopExplicit) {
-    // If the user specifically asks "kon kon employee" or full list, strip any arbitrary TOP limits
-    sql = sql.replace(/\bSELECT\s+TOP\s+\d+\b/i, "SELECT");
+    // If the user specifically asks for all / sabhi or full list, strip any arbitrary TOP limits
+    sql = sql.replace(/\bSELECT\s+(DISTINCT\s+)?TOP\s+\d+\b/gi, (match, dist) => dist ? "SELECT DISTINCT" : "SELECT");
   } else if (!/\bTOP\s+\d+\b/i.test(sql) && !/\bCOUNT\s*\(/i.test(sql) && !/\bSUM\s*\(/i.test(sql) && !/\bAVG\s*\(/i.test(sql)) {
     // For non-aggregated queries without explicit unlimited request, apply default limit
-    sql = sql.replace(/^\s*SELECT\b/i, "SELECT TOP 500");
+    sql = sql.replace(/^\s*SELECT\b/i, `SELECT TOP ${options?.limit || 500}`);
   }
 
   // 3. Fix potential duplicated WITH (NOLOCK)
@@ -5478,6 +5799,13 @@ const validateAndRepairSQL = (rawSql, userContext, options = {}) => {
     }
     return match;
   });
+
+  // 5.1 Auto-repair numeric address/location columns in EMPLOYEEMASTER to prevent MSSQL varchar to smallint/int conversion failure
+  // (e.g. "Conversion failed when converting the varchar value ', ' to data type smallint.")
+  sql = sql.replace(
+    /ISNULL\(\s*(\[?[a-zA-Z0-9_]+\]?\.\s*\[?(?:PCITY|PSTATE|PPINCODE|CURCITY|CURSTATE|CURPINCODE|PINCODE|CITY|STATE|EMPLOYEEDESIGNATION)\]?)\s*,\s*(?:''|'[^']*')\s*\)/gi,
+    "ISNULL(CONVERT(varchar(100), $1), '')"
+  );
 
   // 6. Auto-repair attendancetable column hallucinations
   if (/\battendancetable\b/i.test(sql)) {
@@ -5563,6 +5891,22 @@ const executeSQLWithSelfCorrection = async ({ sequelize, initialSQL, userContext
 
       if (attempts > maxAttempts) break;
 
+      // Deterministic auto-repair for varchar-to-numeric/smallint conversion errors in string concatenation
+      if (/Conversion failed when converting the varchar value.*data type (smallint|int|tinyint|numeric|decimal|bigint)/i.test(lastError)) {
+        const repairedConcat = currentSQL.replace(
+          /ISNULL\(\s*(\[?[a-zA-Z0-9_]+\]?\.\s*\[?[a-zA-Z0-9_]+\]?)\s*,\s*(?:''|'[^']*')\s*\)/gi,
+          (match, colExpr) => {
+            if (/CONVERT|CAST/i.test(colExpr)) return match;
+            return `ISNULL(CONVERT(varchar(100), ${colExpr}), '')`;
+          }
+        );
+        if (repairedConcat !== currentSQL) {
+          currentSQL = repairedConcat;
+          console.log(`🔧 [V6-AutoRepair] Deterministically repaired varchar-to-numeric concatenation in SQL...`);
+          continue;
+        }
+      }
+
       // Check if openAI client is available for instant repair
       try {
         const client = getOpenAIClient();
@@ -5581,6 +5925,7 @@ MSSQL ERROR:
 
 CRITICAL SCHEMA RULES:
 - In dbo.EMPLOYEEMASTER: Primary key is EMPCODE. Name is CONCAT(EMPFIRSTNAME, ' ', ISNULL(EMPLASTNAME, '')).
+- In dbo.EMPLOYEEMASTER: PCITY, PSTATE, PPINCODE, CURCITY, CURSTATE, CURPINCODE, EMPLOYEEDESIGNATION are numeric/smallint codes! NEVER concatenate them with string '+' without CONVERT(varchar(100), ISNULL(col, '')).
 - In dbo.SALARYFILE: Employee code is Emp_Code, Month is SalMnth (1-12), Year is salyear.
 - In dbo.attendancetable: Employee code is Emp_Code, Date is dateoffice, Status is flag (P, A, WO, HD).
 - In dbo.Misc_Mst: Location/Branch is Misc_Type = 85, Department is Misc_Type = 11, Designation is Misc_Type = 95, Leave is Misc_Type = 92.
@@ -6005,57 +6350,116 @@ WHERE [Misc_Name] LIKE '%${cleanToken}%'
     } catch (_) { }
   }
 
-  return { found: false };
+  return { found: false, rows: [] };
 };
-
-// ============================================================================
-// ENGINE 10: HUMAN RESPONSE FORMATTER (AI SYNTHESIZER & DETERMINISTIC ENGINE)
-// ============================================================================
 
 /**
  * AI-Powered Response Formatter (LLM Synthesizer)
- * Formats database rows into accurate, professional, conversational business answers.
+ * Formats database rows into accurate, professional, conversational business answers
+ * strictly mirroring the user's language (English, Hinglish, Devanagari Hindi, or other).
  */
-const formatResponseViaAI = async ({ message, englishQuery, intent, sql, rows = [], userContext = {}, entities = {}, previousContext = null }) => {
-  if (!rows || rows.length === 0) {
-    return null;
-  }
+const formatResponseViaAI = async ({
+  message,
+  englishQuery,
+  intent,
+  sql,
+  rows = [],
+  userContext = {},
+  entities = {},
+  previousContext = null,
+  userLanguage = null
+}) => {
+  const lang = userLanguage || detectUserLanguage(message);
 
   try {
     const client = getOpenAIClient();
     const config = getModelConfig();
 
-    const sampleRows = rows.slice(0, 30);
-    const rowCount = rows.length;
+    const maxSample = entities.limit ? Math.min(Number(entities.limit), 100) : (entities.isAllRequested ? Math.min(rows.length, 100) : (rows.length <= 100 ? rows.length : 50));
+    const sampleRows = Array.isArray(rows) ? rows.slice(0, maxSample) : [];
+    const rowCount = Array.isArray(rows) ? rows.length : 0;
 
     let contextNote = "";
     if (previousContext?.lastUserMessage) {
       contextNote = `\nPrevious Conversation Context: The user previously asked: "${previousContext.lastUserMessage}" (Active Subject: ${previousContext.lastEmployeeName || ''} ${previousContext.lastEmployeeCode ? `[${previousContext.lastEmployeeCode}]` : ''}). This current question is a follow-up continuing that discussion. Formulate a smooth, natural follow-up response acknowledging the context.`;
     }
 
-    const prompt = `User Question: "${message}"${englishQuery && englishQuery !== message ? ` (Standard English: "${englishQuery}")` : ""}${contextNote}
+    const prompt = `User Question: "${message}"${englishQuery && englishQuery !== message ? ` (Standard English Translation: "${englishQuery}")` : ""}${contextNote}
 Detected Intent: ${intent}
-Executed SQL: ${sql}
+Executed SQL: ${sql || "N/A"}
 Total Rows Returned: ${rowCount}
 Data (first ${sampleRows.length} of ${rowCount} records):
 ${JSON.stringify(sampleRows, null, 2)}
 
 Instructions:
-1. Provide a clear, polite, and direct business answer in clean Hinglish / Hindi (matching the user's conversational tone).
-2. If this is a follow-up question (e.g., 'aur basic salary?', 'aur November ki?', 'aur designation kya hai?'), directly answer the specific question in relation to the active employee and timeframe, maintaining conversational continuity like ChatGPT or Gemini.
-3. CRITICAL COUNT RULE: NEVER confuse an Employee Code (e.g. 1600159, 1924108) with a count of employees.
-   - If the user asked "kitne employee" (how many employees), state the exact count from the aggregate count or the total number of records (${rowCount}).
-4. If multiple records are returned, format a clean Markdown table with relevant columns from the data (e.g. Employee Code, Name, Designation, Dates, Amounts, Status).
-5. State currency amounts clearly with Indian Rupee formatting (e.g. ₹1,800).
-6. Be concise, professional, and 100% faithful to the data.
-7. ATTRIBUTE & ADDRESS RULE: If the user asks for a specific attribute (e.g. permanent address, current address, mobile, email, designation), directly answer that specific attribute first. If PermanentAddress or CurrentAddress is null, blank, or empty string in the database row, explicitly and politely clarify that this field is currently not updated / blank in the ERP database (EMPLOYEEMASTER) for this employee.`;
+1. ═══ CRITICAL LANGUAGE & SCRIPT MIRRORING RULE (HIGHEST PRIORITY) ═══
+   Detected User Language: ${lang.label}
+   ${lang.instructions}
+   - If the user wrote in PURE ENGLISH:
+     -> YOU MUST REPLY ONLY IN PURE, PROFESSIONAL ENGLISH. (Do NOT mix Hindi or Hinglish words).
+   - If the user wrote in HINGLISH (Hindi written in Roman/English alphabet, e.g. "Deepak Sharma ka salary batao", "aaj kitne log present the", "sabka attendance dikhao"):
+     -> YOU MUST REPLY IN NATURAL, POLITE HINGLISH in Roman script (e.g. "AutoVyn ERP ke record ke anusar..."). Do NOT switch to pure English.
+   - If the user wrote in HINDI DEVANAGARI (e.g. "दीपक शर्मा का वेतन बताओ", "आज कितने लोग उपस्थित हैं?"):
+     -> YOU MUST REPLY IN PURE, RESPECTFUL HINDI in Devanagari script (e.g. "ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार..."). Do NOT use Roman English text except for IDs/Codes.
+   - If the user wrote in another regional language (e.g. Gujarati, Bengali):
+     -> YOU MUST REPLY IN THAT EXACT REGIONAL LANGUAGE.
+   - NEVER reply in English if user asked in Hindi/Hinglish.
+   - NEVER reply in Hinglish if user asked in English.
+
+2. Zero Records Result (rowCount === 0):
+   - Provide a polite, direct explanation in the user's exact language (${lang.label}) explaining that no matching records were found in AutoVyn ERP matching their query or filter criteria.
+   - Mention the specific date, employee, or timeframe if requested.
+
+3. Complete / "All" Dataset Request:
+   - If the user asked for all / everyone / complete list (${Boolean(entities.isAllRequested)}), present the complete data in a clean, comprehensive Markdown table with all relevant columns.
+
+4. Follow-up Continuity:
+   - If this is a follow-up question (e.g., 'aur basic salary?', 'aur November ki?', 'aur designation kya hai?'), directly answer the specific question in relation to the active employee and timeframe, maintaining conversational continuity.
+
+5. ═══ STRICT DIRECTNESS & COUNT MANDATE ("Jitna puchha jaye utna hi jawab de") ═══
+   - If the user asked for a COUNT, QUANTITY, or SUMMARY (e.g. 'how many', 'how much', 'kitne', 'sankhya', 'ginti', 'total employees present/absent on a date'):
+     -> State ONLY the direct count and the requested date/timeframe/branch.
+     -> DO NOT output an employee list, markdown table, or individual employee records unless the user explicitly requested a list ('list do', 'names', 'who all', 'kon kon').
+     -> Give a clean, concise, direct response (1-2 sentences maximum) directly answering the count.
+   - NEVER confuse an Employee Code (e.g. 1600159, 1924108) with a count of employees.
+
+6. Currency & Numbers:
+   - State currency amounts clearly with Indian Rupee formatting (e.g. ₹1,800).
+
+7. ═══ SINGLE ATTRIBUTE & PRECISION RULE ═══
+   - If user asks for a specific single attribute (e.g. mobile number, designation, address, salary of a month, DOJ):
+     -> Directly answer that specific attribute first and foremost. Do NOT dump unrelated columns or full profile tables.
+     -> If PermanentAddress or CurrentAddress or any requested attribute is null or blank in the database row, explicitly clarify that this field is currently not updated / blank in the ERP database (EMPLOYEEMASTER) for this employee.
+
+8. ═══ CONCISENESS & RELEVANCE MANDATE ═══
+   - "Jitna puchha jaye utna hi jawab de" - Do NOT provide unsolicited commentary, redundant tips, or unrequested tables. Keep answers sharp, factual, and 100% faithful to the data.`;
 
     const response = await client.chat.completions.create({
       model: config.fastModel || "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are AutoVyn ERP's official AI assistant. Format database query results into clear, accurate, professional business responses. Always state exact counts and never confuse an ID or code with a count."
+          content: `You are AutoVyn ERP's official enterprise AI assistant.
+CRITICAL MANDATORY INSTRUCTIONS:
+1. LANGUAGE & SCRIPT MIRRORING: You MUST ALWAYS converse and reply in the EXACT language and script in which the user asked their question:
+- If user asked in English -> Reply ONLY in professional English.
+- If user asked in Hinglish (Hindi in Roman script) -> Reply ONLY in natural, professional Hinglish.
+- If user asked in Hindi (Devanagari script) -> Reply ONLY in pure, respectful Hindi (Devanagari).
+- If user asked in another language -> Reply in that same language.
+Never violate this language matching rule.
+
+2. PRECISION & STRICT DIRECTNESS ("Jitna puchha jaye utna hi jawab de"):
+- Answer strictly what was asked without dumping extra unrequested data or large tables.
+- If the user asked for a COUNT (e.g. "how much employee present in 21/10/2025" or "kitne log present the"):
+  -> Give ONLY the direct count (e.g. "According to AutoVyn ERP records, a total of 142 employees were present on 21/10/2025.").
+  -> NEVER dump a table of individual employee records when only a count or summary was requested.
+- If the user asked for a list or subset (e.g. "inme se 1000 employee ke name aur designation aur address do", "all employees list", "who all"):
+  -> You MUST format and present the requested employee records in a clean Markdown table.
+
+3. AUTHORIZED ENTERPRISE ACCESS (NO FALSE REFUSALS):
+- You are operating inside the enterprise ERP for an authorized user.
+- If data records are provided, NEVER refuse to display employee names, designations, addresses, mobile numbers, or attendance records.
+- NEVER output apologies like "main list nahi de sakta" or claim privacy restrictions when records are returned from the database.`
         },
         {
           role: "user",
@@ -6063,14 +6467,14 @@ Instructions:
         }
       ],
       temperature: 0.1,
-      max_tokens: 1000
+      max_tokens: 2500
     });
 
     const aiAnswer = response?.choices?.[0]?.message?.content?.trim();
     if (aiAnswer) {
       return {
         answer: aiAnswer,
-        summary: `${rowCount} records formatted via AI`,
+        summary: `${rowCount} records formatted via AI in ${lang.label}`,
         usage: response.usage
       };
     }
@@ -6081,27 +6485,34 @@ Instructions:
   return null;
 };
 
-const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], userContext, entities = {}, sequelize = null }) => {
+const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], userContext = {}, entities = {}, sequelize = null, userLanguage = null }) => {
+  const lang = userLanguage || detectUserLanguage(message);
+  const isEn = lang.code === "en";
+  const isDeva = lang.code === "hi_deva";
+
   if (!rows || rows.length === 0) {
     const isToday = entities.isToday || /\b(aaj|today)\b/i.test(message || "");
-    const dateStr = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : "aaj"));
+    const dateStrHinglish = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : "aaj"));
+    const dateStrEnglish = isToday ? "today" : (entities.specificDate ? `on **${entities.specificDate}**` : (entities.month ? `in this month (${entities.month}/${entities.year || new Date().getFullYear()})` : "today"));
+    const dateStrDevanagari = isToday ? "आज" : (entities.specificDate ? `**${entities.specificDate}** को` : (entities.month ? `इस महीने (${entities.month}/${entities.year || new Date().getFullYear()}) में` : "आज"));
+
     if (intent === "MARRIAGE_ANNIVERSARY" || /\b(marrige|marriage|shadi|shaadi|wedding)\b/i.test(message || "")) {
-      return {
-        answer: `AutoVyn ERP ke record ke anusar, ${dateStr} kisi bhi employee ki **Marriage Anniversary** nahi hai.`,
-        summary: `No marriage anniversary ${dateStr}`
-      };
+      let ans = `AutoVyn ERP ke record ke anusar, ${dateStrHinglish} kisi bhi employee ki **Marriage Anniversary** nahi hai.`;
+      if (isEn) ans = `According to AutoVyn ERP records, there are no marriage anniversaries for ${dateStrEnglish}.`;
+      if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${dateStrDevanagari} किसी भी कर्मचारी की **विवाह वर्षगांठ** नहीं है।`;
+      return { answer: ans, summary: `No marriage anniversary` };
     }
     if (intent === "WORK_ANNIVERSARY") {
-      return {
-        answer: `AutoVyn ERP ke record ke anusar, ${dateStr} kisi bhi employee ki **Work Anniversary** nahi hai.`,
-        summary: `No work anniversary ${dateStr}`
-      };
+      let ans = `AutoVyn ERP ke record ke anusar, ${dateStrHinglish} kisi bhi employee ki **Work Anniversary** nahi hai.`;
+      if (isEn) ans = `According to AutoVyn ERP records, there are no work anniversaries for ${dateStrEnglish}.`;
+      if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${dateStrDevanagari} किसी भी कर्मचारी की **कार्य वर्षगांठ** नहीं है।`;
+      return { answer: ans, summary: `No work anniversary` };
     }
     if (intent === "BIRTHDAY_TODAY" || intent === "BIRTHDAY_BY_DATE" || intent === "BIRTHDAYS_MONTH" || /\b(birthday|bday|b'day|janamdin)\b/i.test(message || "")) {
-      return {
-        answer: `AutoVyn ERP ke record ke anusar, ${dateStr} kisi bhi employee ka **Birthday** nahi hai.`,
-        summary: `No birthday ${dateStr}`
-      };
+      let ans = `AutoVyn ERP ke record ke anusar, ${dateStrHinglish} kisi bhi employee ka **Birthday** nahi hai.`;
+      if (isEn) ans = `According to AutoVyn ERP records, there are no birthdays scheduled for ${dateStrEnglish}.`;
+      if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${dateStrDevanagari} किसी भी कर्मचारी का **जन्मदिन** नहीं है।`;
+      return { answer: ans, summary: `No birthday` };
     }
 
     // Check if user is asking for an employee's salary / basic salary
@@ -6135,13 +6546,34 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const empLabel = empName ? `**${empName} (${targetEmpCode})**${designation ? ` - *${designation}*` : ''}` : `Employee Code **${targetEmpCode}**`;
       const isDirector = designation && /director|managing director|md|ceo|promoter|partner|owner/i.test(designation);
 
-      let ans = `AutoVyn ERP ke record ke anusar, ${empLabel} ke liye **\`SALARYFILE\`** table me koi monthly salary / Basic_Earn record available nahi hai (0 records found).\n\n`;
-      if (isDirector) {
-        ans += `📌 **Karan:** Ye employee **${designation}** hain. Top Management / Directors ki monthly salary slips aksar regular payroll (\`SALARYFILE\`) me generate nahi hoti hain, aur Master (\`EMPLOYEEMASTER\`) me bhi inka Monthly CTC / Basic null set hai.`;
-      } else if (monthlyCtc && Number(monthlyCtc) > 0) {
-        ans += `📌 Master (\`EMPLOYEEMASTER\`) ke anusar inka **Monthly CTC ₹${Number(monthlyCtc).toLocaleString('en-IN')}** aur **Annual CTC ₹${Number(annualCtc || 0).toLocaleString('en-IN')}** hai, lekin \`SALARYFILE\` me inka monthly breakdown / Basic_Earn generate nahi hua hai.`;
+      let ans = "";
+      if (isEn) {
+        ans = `According to AutoVyn ERP records, no monthly salary / Basic_Earn record is available for ${empLabel} in the \`SALARYFILE\` table (0 records found).\n\n`;
+        if (isDirector) {
+          ans += `📌 **Note:** This employee is designated as **${designation}**. Top Management / Directors often do not have regular monthly payroll slips generated in \`SALARYFILE\`.`;
+        } else if (monthlyCtc && Number(monthlyCtc) > 0) {
+          ans += `📌 As per Master records (\`EMPLOYEEMASTER\`), their **Monthly CTC is ₹${Number(monthlyCtc).toLocaleString('en-IN')}** and **Annual CTC is ₹${Number(annualCtc || 0).toLocaleString('en-IN')}**, but a monthly salary slip has not been processed in \`SALARYFILE\`.`;
+        } else {
+          ans += `📌 No monthly salary payout has been processed in the database for this employee code.`;
+        }
+      } else if (isDeva) {
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${empLabel} के लिए **\`SALARYFILE\`** तालिका में कोई मासिक वेतन / Basic_Earn रिकॉर्ड उपलब्ध नहीं है (0 रिकॉर्ड मिले)।\n\n`;
+        if (isDirector) {
+          ans += `📌 **कारण:** यह कर्मचारी **${designation}** हैं। शीर्ष प्रबंधन / निदेशकों की मासिक वेतन पर्ची आमतौर पर नियमित पेरोल (\`SALARYFILE\`) में उत्पन्न नहीं होती है।`;
+        } else if (monthlyCtc && Number(monthlyCtc) > 0) {
+          ans += `📌 मास्टर (\`EMPLOYEEMASTER\`) के अनुसार इनका **मासिक सीटीसी ₹${Number(monthlyCtc).toLocaleString('en-IN')}** और **वार्षिक सीटीसी ₹${Number(annualCtc || 0).toLocaleString('en-IN')}** है, लेकिन \`SALARYFILE\` में मासिक विवरण उत्पन्न नहीं हुआ है।`;
+        } else {
+          ans += `📌 इस कर्मचारी कोड के लिए डेटाबेस में किसी भी महीने का वेतन भुगतान संसाधित नहीं हुआ है।`;
+        }
       } else {
-        ans += `📌 Is employee code ke liye database me kisi bhi mahine ka salary payout / Basic_Earn process nahi hua hai.`;
+        ans = `AutoVyn ERP ke record ke anusar, ${empLabel} ke liye **\`SALARYFILE\`** table me koi monthly salary / Basic_Earn record available nahi hai (0 records found).\n\n`;
+        if (isDirector) {
+          ans += `📌 **Karan:** Ye employee **${designation}** hain. Top Management / Directors ki monthly salary slips aksar regular payroll (\`SALARYFILE\`) me generate nahi hoti hain, aur Master (\`EMPLOYEEMASTER\`) me bhi inka Monthly CTC / Basic null set hai.`;
+        } else if (monthlyCtc && Number(monthlyCtc) > 0) {
+          ans += `📌 Master (\`EMPLOYEEMASTER\`) ke anusar inka **Monthly CTC ₹${Number(monthlyCtc).toLocaleString('en-IN')}** aur **Annual CTC ₹${Number(annualCtc || 0).toLocaleString('en-IN')}** hai, lekin \`SALARYFILE\` me inka monthly breakdown / Basic_Earn generate nahi hua hai.`;
+        } else {
+          ans += `📌 Is employee code ke liye database me kisi bhi mahine ka salary payout / Basic_Earn process nahi hua hai.`;
+        }
       }
 
       return {
@@ -6150,10 +6582,13 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       };
     }
 
-    return {
-      answer: `No records found matching criteria`,
-      summary: "No records found"
-    };
+    if (isEn) {
+      return { answer: `According to AutoVyn ERP records, no matching data was found for your query.`, summary: "No records found" };
+    } else if (isDeva) {
+      return { answer: `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, आपके अनुरोध के लिए कोई डेटा नहीं मिला।`, summary: "कोई रिकॉर्ड नहीं मिला" };
+    } else {
+      return { answer: `AutoVyn ERP ke record ke anusar, aapke anurodh ke liye koi data uplabdh nahi hai.`, summary: "No records found" };
+    }
   }
 
   const monthsNameArr = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -6237,21 +6672,49 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
   // Fast direct formatter for simple counts and standard queries
   if (rows.length === 1 && rows[0].TotalPresentCount !== undefined) {
-    const count = rows[0].TotalPresentCount;
-    const dateStr = entities.specificDate ? `on **${entities.specificDate}**` : (entities.month ? `in month ${entities.month}/${entities.year || new Date().getFullYear()}` : "");
-    return {
-      answer: `AutoVyn ERP ke record ke anusar, ${dateStr} total **${count} employee(s)** present hain.`,
-      summary: `${count} employees present ${dateStr}`.trim()
-    };
+    const count = Number(rows[0].TotalPresentCount || 0);
+    const dateFormatted = entities.specificDate ? entities.specificDate : (entities.month ? `${entities.month}/${entities.year || new Date().getFullYear()}` : "today");
+    if (isEn) {
+      return {
+        answer: `According to AutoVyn ERP records, a total of **${count.toLocaleString('en-IN')} employee(s)** were present on **${dateFormatted}**.`,
+        summary: `${count} employees present on ${dateFormatted}`.trim()
+      };
+    } else if (isDeva) {
+      const dateDeva = entities.specificDate ? `**${entities.specificDate}** को` : (entities.month ? `महीने (${entities.month}/${entities.year || new Date().getFullYear()}) में` : "आज");
+      return {
+        answer: `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${dateDeva} कुल **${count.toLocaleString('en-IN')} कर्मचारी** उपस्थित थे।`,
+        summary: `${count} कर्मचारी उपस्थित`
+      };
+    } else {
+      const dateHing = entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : "aaj");
+      return {
+        answer: `AutoVyn ERP ke record ke anusar, ${dateHing} total **${count.toLocaleString('en-IN')} employee(s)** present the.`,
+        summary: `${count} employees present`
+      };
+    }
   }
 
   if (rows.length === 1 && rows[0].TotalAbsentCount !== undefined) {
-    const count = rows[0].TotalAbsentCount;
-    const dateStr = entities.specificDate ? `on **${entities.specificDate}**` : (entities.month ? `in month ${entities.month}/${entities.year || new Date().getFullYear()}` : "");
-    return {
-      answer: `AutoVyn ERP ke record ke anusar, ${dateStr} total **${count} employee(s)** absent hain.`,
-      summary: `${count} employees absent ${dateStr}`.trim()
-    };
+    const count = Number(rows[0].TotalAbsentCount || 0);
+    const dateFormatted = entities.specificDate ? entities.specificDate : (entities.month ? `${entities.month}/${entities.year || new Date().getFullYear()}` : "today");
+    if (isEn) {
+      return {
+        answer: `According to AutoVyn ERP records, a total of **${count.toLocaleString('en-IN')} employee(s)** were absent on **${dateFormatted}**.`,
+        summary: `${count} employees absent on ${dateFormatted}`.trim()
+      };
+    } else if (isDeva) {
+      const dateDeva = entities.specificDate ? `**${entities.specificDate}** को` : (entities.month ? `महीने (${entities.month}/${entities.year || new Date().getFullYear()}) में` : "आज");
+      return {
+        answer: `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${dateDeva} कुल **${count.toLocaleString('en-IN')} कर्मचारी** अनुपस्थित थे।`,
+        summary: `${count} कर्मचारी अनुपस्थित`
+      };
+    } else {
+      const dateHing = entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : "aaj");
+      return {
+        answer: `AutoVyn ERP ke record ke anusar, ${dateHing} total **${count.toLocaleString('en-IN')} employee(s)** absent the.`,
+        summary: `${count} employees absent`
+      };
+    }
   }
 
   if (rows.length === 1 && (
@@ -6508,14 +6971,16 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     }
 
     const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
+    const displayLimitPF = entities.limit ? Math.min(Number(entities.limit), 5000) : (rows.length <= 5000 ? rows.length : 50);
     let ans = `AutoVyn ERP ke record ke anusar,${branchStr} **${rows.length} employee(s)** ke pass PF Number registered mila hai:\n\n`;
-    ans += `| Emp Code | Employee Name | PF Number | UAN No | ESI No | Location | Designation |\n`;
-    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
-    for (const r of rows.slice(0, 50)) {
-      ans += `| **${r.EmployeeCode || "-"}** | ${r.EmployeeName || "-"} | \`${r.PFNumber || "-"}\` | ${r.UANNumber || "-"} | ${r.ESINumber || "-"} | ${r.Location || "-"} | ${r.Designation || "-"} |\n`;
+    ans += `| Emp Code | Employee Name | Mobile No | PF Number | UAN No | ESI No | Location | Designation |\n`;
+    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (const r of rows.slice(0, displayLimitPF)) {
+      const mob = r.MobileNo && String(r.MobileNo).trim() !== "" ? r.MobileNo : (r.MOBILENO && String(r.MOBILENO).trim() !== "" ? r.MOBILENO : "Not Available");
+      ans += `| **${r.EmployeeCode || "-"}** | ${r.EmployeeName || "-"} | ${mob} | \`${r.PFNumber || "-"}\` | ${r.UANNumber || "-"} | ${r.ESINumber || "-"} | ${r.Location || "-"} | ${r.Designation || "-"} |\n`;
     }
-    if (rows.length > 50) {
-      ans += `\n*(Showing top 50 of ${rows.length} employees with PF registered)*`;
+    if (rows.length > displayLimitPF) {
+      ans += `\n*(Showing top ${displayLimitPF} of ${rows.length} employees with PF registered)*`;
     }
     return {
       answer: ans.trim(),
@@ -6539,15 +7004,36 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "PRESENT_EMPLOYEE_LIST" && rows.length > 0) {
+    const isEn = lang.code === "en";
+    const isDeva = lang.code === "hi_deva";
     const dateStr = entities.specificDate ? `on **${entities.specificDate}**` : "";
-    let ans = `AutoVyn ERP ke record ke anusar, ${dateStr} **${rows.length} employee(s)** present mile hain:\n\n`;
-    ans += `| Emp Code | Employee Name | Attendance Date | Flag | In Time | Out Time | Hours | Location |\n`;
-    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
-    for (const r of rows.slice(0, 50)) {
-      ans += `| **${r.EmployeeCode || "-"}** | ${r.EmployeeName || "-"} | ${r.AttendanceDate || "-"} | **${r.Flag || "P"}** | ${r.InTime || "-"} | ${r.OutTime || "-"} | ${r.HoursWorked || "-"} | ${r.Location || "-"} |\n`;
+    const dateStrHing = entities.specificDate ? `**${entities.specificDate}** ko` : "";
+    const dateStrDeva = entities.specificDate ? `**${entities.specificDate}** को` : "";
+    const locStrHing = entities.branch ? ` Location **${entities.branch}** me` : "";
+    const locStrEn = entities.branch ? ` in Location **${entities.branch}**` : "";
+    const locStrDeva = entities.branch ? ` लोकेशन **${entities.branch}** में` : "";
+    const priorCountStr = entities.priorCount ? `${entities.priorCount}` : "";
+
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, ${priorCountStr ? `out of **${priorCountStr}** employees present${locStrEn} ${dateStr}, ` : (dateStr ? `${dateStr}${locStrEn} ` : '')}here are **${rows.length} employee(s)** with their details:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${priorCountStr ? `${dateStrDeva}${locStrDeva} उपस्थित **${priorCountStr}** कर्मचारियों में से ` : (dateStrDeva ? `${dateStrDeva}${locStrDeva} ` : '')}**${rows.length} कर्मचारियों** का विवरण:\n\n`;
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar, ${priorCountStr ? `${dateStrHing}${locStrHing} present **${priorCountStr}** employees me se ` : (dateStrHing ? `${dateStrHing}${locStrHing} ` : '')}**${rows.length} employee(s)** ki suchi:\n\n`;
     }
-    if (rows.length > 50) {
-      ans += `\n*(Showing top 50 of ${rows.length} present records)*`;
+
+    const displayLimit = entities.limit ? Math.min(Number(entities.limit), 5000) : (rows.length <= 5000 ? rows.length : 50);
+
+    ans += `| Emp Code | Employee Name | Designation | Mobile No | PF Number | Location | Attendance Date |\n`;
+    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (const r of rows.slice(0, displayLimit)) {
+      const mob = r.MobileNo && String(r.MobileNo).trim() !== "" ? r.MobileNo : "Not Available";
+      const pf = r.PFNumber && String(r.PFNumber).trim() !== "" && !/^(-|0|NA|N\/A|null)$/i.test(String(r.PFNumber).trim()) ? `\`${r.PFNumber}\`` : "Not Available";
+      ans += `| **${r.EmployeeCode || "-"}** | ${r.EmployeeName || "-"} | ${r.Designation || "-"} | ${mob} | ${pf} | ${r.Location || "-"} | ${r.AttendanceDate || "-"} |\n`;
+    }
+    if (rows.length > displayLimit) {
+      ans += `\n*(Showing top ${displayLimit} of ${rows.length} records in text preview; full ${rows.length} records are available in data)*`;
     }
     return {
       answer: ans.trim(),
@@ -6556,15 +7042,36 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "ABSENT_EMPLOYEE_LIST" && rows.length > 0) {
+    const isEn = lang.code === "en";
+    const isDeva = lang.code === "hi_deva";
     const dateStr = entities.specificDate ? `on **${entities.specificDate}**` : "";
-    let ans = `AutoVyn ERP ke record ke anusar, ${dateStr} **${rows.length} employee(s)** absent mile hain:\n\n`;
-    ans += `| Emp Code | Employee Name | Attendance Date | Flag | Location | Designation | Mobile |\n`;
-    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
-    for (const r of rows.slice(0, 50)) {
-      ans += `| **${r.EmployeeCode || "-"}** | ${r.EmployeeName || "-"} | ${r.AttendanceDate || "-"} | **${r.Flag || "A"}** | ${r.Location || "-"} | ${r.Designation || "-"} | ${r.MobileNo || "-"} |\n`;
+    const dateStrHing = entities.specificDate ? `**${entities.specificDate}** ko` : "";
+    const dateStrDeva = entities.specificDate ? `**${entities.specificDate}** को` : "";
+    const locStrHing = entities.branch ? ` Location **${entities.branch}** me` : "";
+    const locStrEn = entities.branch ? ` in Location **${entities.branch}**` : "";
+    const locStrDeva = entities.branch ? ` लोकेशन **${entities.branch}** में` : "";
+    const priorCountStr = entities.priorCount ? `${entities.priorCount}` : "";
+
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, ${priorCountStr ? `out of **${priorCountStr}** employees absent${locStrEn} ${dateStr}, ` : (dateStr ? `${dateStr}${locStrEn} ` : '')}here are **${rows.length} employee(s)** with their details:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${priorCountStr ? `${dateStrDeva}${locStrDeva} अनुपस्थित **${priorCountStr}** कर्मचारियों में से ` : (dateStrDeva ? `${dateStrDeva}${locStrDeva} ` : '')}**${rows.length} कर्मचारियों** का विवरण:\n\n`;
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar, ${priorCountStr ? `${dateStrHing}${locStrHing} absent **${priorCountStr}** employees me se ` : (dateStrHing ? `${dateStrHing}${locStrHing} ` : '')}**${rows.length} employee(s)** ki suchi:\n\n`;
     }
-    if (rows.length > 50) {
-      ans += `\n*(Showing top 50 of ${rows.length} absent records)*`;
+
+    const displayLimitAbsent = entities.limit ? Math.min(Number(entities.limit), 5000) : (rows.length <= 5000 ? rows.length : 50);
+
+    ans += `| Emp Code | Employee Name | Designation | Mobile No | PF Number | Location | Attendance Date |\n`;
+    ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+    for (const r of rows.slice(0, displayLimitAbsent)) {
+      const mob = r.MobileNo && String(r.MobileNo).trim() !== "" ? r.MobileNo : "Not Available";
+      const pf = r.PFNumber && String(r.PFNumber).trim() !== "" && !/^(-|0|NA|N\/A|null)$/i.test(String(r.PFNumber).trim()) ? `\`${r.PFNumber}\`` : "Not Available";
+      ans += `| **${r.EmployeeCode || "-"}** | ${r.EmployeeName || "-"} | ${r.Designation || "-"} | ${mob} | ${pf} | ${r.Location || "-"} | ${r.AttendanceDate || "-"} |\n`;
+    }
+    if (rows.length > displayLimitAbsent) {
+      ans += `\n*(Showing top ${displayLimitAbsent} of ${rows.length} records in text preview; full ${rows.length} records are available in data)*`;
     }
     return {
       answer: ans.trim(),
@@ -8405,6 +8912,10 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
   let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
+  // Detect user's conversational language & script with 100% precision
+  const userLanguage = detectUserLanguage(rawMessage);
+  const isAllRequested = /\b(all|every|everyone|sabhi|sabka|sabki|sabke|saare|sare|pura|puri|complete|entire|full list|poora|poori|total list)\b/i.test(rawMessage);
+
   // Universal Multilingual Translation & Canonicalization Engine:
   // Automatically translates any language (Hindi, Hinglish, Marathi, Gujarati, Tamil, etc.) into clean standard English
   const { englishQuery, isTranslated, translationUsage } = await translateToEnglishIfVernacular(rawMessage);
@@ -8416,6 +8927,10 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
   console.log("\n=======================================================");
   console.log("🚀 [AUTOVYN-AI-V6-COPILOT] Original Question:", rawMessage);
+  console.log(`🗣️ [AUTOVYN-AI-V6-COPILOT] Detected User Language: ${userLanguage.label} (${userLanguage.code})`);
+  if (isAllRequested) {
+    console.log("🌐 [AUTOVYN-AI-V6-COPILOT] Complete dataset requested without limit (isAllRequested=true)");
+  }
   if (isTranslated) {
     console.log("🌐 [AUTOVYN-AI-V6-COPILOT] Translated English Query:", englishQuery);
   }
@@ -8482,9 +8997,10 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     resolvedEntities = { ...initialClassification.entities };
 
     // 3.1 Check Conversation Memory (Anaphora & Multi-Turn Context Resolution)
-    await MemoryEngineInstance.ensureContextFromDB(conversationId, sequelize);
+    await MemoryEngineInstance.ensureContextFromDB(conversationId, sequelize, rawMessage);
     let contextRes = { entities: resolvedEntities, intent: initialClassification.intent, isFollowup: false, previousTurn: null };
-    if (!resolvedEntities.employeeCode && !resolvedEntities.employeeName && !resolvedEntities.isSelf) {
+    const isSubsetQuery = /\b(inme\s*se|unme\s*se|isme\s*se|usme\s*se|in\s*sab(?:hi)?\s*(?:me\s*se|ka|ki|ke|ko|se)?|un\s*sab(?:hi)?\s*(?:me\s*se|ka|ki|ke|ko|se)?|in\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|un\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|in\s*karmchari(?:yo)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*employees\s*(?:ka|ki|ke|ko|se|me\s*se)?|among\s*them|out\s*of\s*(?:these|them|those)?|from\s*(?:these|them|those)?|all\s*of\s*(?:these|them|those)?|these\s*employees|their\s*(?:name|details|mobile|pf|salary)?)\b/i.test(normalizeLower(rawMessage)) || Boolean(resolvedEntities.limit);
+    if ((!resolvedEntities.employeeCode && !resolvedEntities.employeeName && !resolvedEntities.isSelf) || isSubsetQuery) {
       contextRes = MemoryEngineInstance.resolveContextualEntities(
         conversationId,
         resolvedEntities,
@@ -8496,12 +9012,16 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         console.log(`🧠 [V6-MemoryEngine] Contextually resolved intent from '${initialClassification.intent}' to '${contextRes.intent}' (isFollowup: ${contextRes.isFollowup})`);
         initialClassification.intent = contextRes.intent;
       }
+      if (contextRes.rewrittenQuestion) {
+        console.log(`🔄 [AUTOVYN-AI-V6-COPILOT] Contextual Question Rewritten: "${contextRes.rewrittenQuestion}"`);
+        resolvedEntities.rewrittenQuestion = contextRes.rewrittenQuestion;
+      }
     }
 
     const isEmployeeCountIntent = initialClassification.intent === "EMPLOYEE_COUNT" || Boolean(resolvedEntities.designation);
     const isPronounFollowup = /\b(iska|iski|iske|inhe|inhein|unka|unki|unke|same|vahi|uska|uski|uske|previous|above|wahi|this person|that person|isi|isi\s*employee|is\s*employee|is\s*bande|isi\s*bande|current\s*employee)\b/i.test(normalizeLower(rawMessage));
 
-    if (isPronounFollowup && !resolvedEntities.employeeCode && !resolvedEntities.employeeName && !resolvedEntities.nameFilter) {
+    if (!contextRes.isFollowup && !resolvedEntities.limit && isPronounFollowup && !resolvedEntities.employeeCode && !resolvedEntities.employeeName && !resolvedEntities.nameFilter) {
       const clarifMsg = `Aap kis employee ki details/address dekhna chahte hain? Kripya unka **Employee Code** ya **Naam** batayein.`;
       MemoryEngineInstance.updateContext(
         conversationId,
@@ -8601,13 +9121,32 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         }
       } else if (dbEntityResult.isAmbiguous && Array.isArray(dbEntityResult.candidates) && dbEntityResult.candidates.length > 1) {
         console.log(`⚠️ [V6-DBEntityLinker] Ambiguous entity detected with ${dbEntityResult.candidates.length} candidates. Presenting disambiguation options.`);
-        let ambAns = `Aapke dwara puche gaye sawal ke liye **${dbEntityResult.candidates.length} matching employees** mile hain:\n\n`;
-        ambAns += `| # | Emp Code | Name | Branch / Location | Department | Designation | Status |\n`;
-        ambAns += `| :- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
-        dbEntityResult.candidates.forEach((c, idx) => {
-          ambAns += `| ${idx + 1} | **${c.empCode}** | **${c.name}** | ${c.branch} | ${c.department} | ${c.designation} | ${c.status} |\n`;
-        });
-        ambAns += `\n👉 Kripya bataiye aap inme se kis **Employee Code** ya branch ka data dekhna chahte hain?`;
+        let ambAns = "";
+        if (userLanguage.code === "en") {
+          ambAns = `I found **${dbEntityResult.candidates.length} matching employees** for your query:\n\n`;
+          ambAns += `| # | Emp Code | Name | Branch / Location | Department | Designation | Status |\n`;
+          ambAns += `| :- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+          dbEntityResult.candidates.forEach((c, idx) => {
+            ambAns += `| ${idx + 1} | **${c.empCode}** | **${c.name}** | ${c.branch} | ${c.department} | ${c.designation} | ${c.status} |\n`;
+          });
+          ambAns += `\n👉 Please specify which **Employee Code** or branch you would like to view.`;
+        } else if (userLanguage.code === "hi_deva") {
+          ambAns = `आपके द्वारा पूछे गए प्रश्न के लिए **${dbEntityResult.candidates.length} कर्मचारी** मिले हैं:\n\n`;
+          ambAns += `| # | कर्मचारी कोड | नाम | शाखा / स्थान | विभाग | पद (Designation) | स्थिति |\n`;
+          ambAns += `| :- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+          dbEntityResult.candidates.forEach((c, idx) => {
+            ambAns += `| ${idx + 1} | **${c.empCode}** | **${c.name}** | ${c.branch} | ${c.department} | ${c.designation} | ${c.status} |\n`;
+          });
+          ambAns += `\n👉 कृपया बताएं कि आप इनमें से किस **कर्मचारी कोड** या शाखा का डेटा देखना चाहते हैं?`;
+        } else {
+          ambAns = `Aapke dwara puche gaye sawal ke liye **${dbEntityResult.candidates.length} matching employees** mile hain:\n\n`;
+          ambAns += `| # | Emp Code | Name | Branch / Location | Department | Designation | Status |\n`;
+          ambAns += `| :- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+          dbEntityResult.candidates.forEach((c, idx) => {
+            ambAns += `| ${idx + 1} | **${c.empCode}** | **${c.name}** | ${c.branch} | ${c.department} | ${c.designation} | ${c.status} |\n`;
+          });
+          ambAns += `\n👉 Kripya bataiye aap inme se kis **Employee Code** ya branch ka data dekhna chahte hain?`;
+        }
 
         // Update MemoryEngine so follow-up corrections know what question caused this disambiguation
         MemoryEngineInstance.updateContext(
@@ -8703,38 +9242,43 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       if (cachedResult && cachedResult.sql) {
         console.log(`⚡ [V6-Cache-Hit] Served via ${cachedResult.cacheTier} in ${Date.now() - startedAt}ms`);
 
+        let execCachedSql = cachedResult.sql;
+        if (isAllRequested) {
+          execCachedSql = execCachedSql.replace(/\bSELECT\s+(DISTINCT\s+)?TOP\s+\d+\b/gi, (match, dist) => dist ? "SELECT DISTINCT" : "SELECT");
+        }
+
         // Execute cached SQL directly on live DB to ensure data freshness
-        const rows = await sequelize.query(cachedResult.sql, { type: QueryTypes.SELECT });
+        const rows = await sequelize.query(execCachedSql, { type: QueryTypes.SELECT });
         const responseTimeMs = Date.now() - startedAt;
 
-        // Freshly format response to prevent stale answers or count misalignments
+        // Freshly format response to prevent stale answers or count misalignments in the user's exact language
         let formattedAnswer = cachedResult.answer;
-        if (rows && rows.length > 0) {
-          const aiFmt = await formatResponseViaAI({
+        const aiFmt = await formatResponseViaAI({
+          message: rawMessage,
+          englishQuery: englishQuery || rawMessage,
+          intent: initialClassification?.intent,
+          sql: execCachedSql,
+          rows: rows || [],
+          userContext,
+          entities: resolvedEntities,
+          userLanguage
+        });
+        if (aiFmt?.answer) {
+          formattedAnswer = aiFmt.answer;
+        } else {
+          const detFmt = await formatHumanBusinessAnswer({
             message: rawMessage,
             englishQuery: englishQuery || rawMessage,
             intent: initialClassification?.intent,
-            sql: cachedResult.sql,
-            rows,
+            entities: resolvedEntities,
+            sql: execCachedSql,
+            rows: rows || [],
             userContext,
-            entities: resolvedEntities
+            sequelize,
+            userLanguage
           });
-          if (aiFmt?.answer) {
-            formattedAnswer = aiFmt.answer;
-          } else {
-            const detFmt = await formatHumanBusinessAnswer({
-              message: rawMessage,
-              englishQuery: englishQuery || rawMessage,
-              intent: initialClassification?.intent,
-              entities: resolvedEntities,
-              sql: cachedResult.sql,
-              rows,
-              userContext,
-              sequelize
-            });
-            if (detFmt?.answer) {
-              formattedAnswer = detFmt.answer;
-            }
+          if (detFmt?.answer) {
+            formattedAnswer = detFmt.answer;
           }
         }
 
@@ -8771,8 +9315,8 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       // 7.1 Deterministic Template Matcher
       sqlPlan = getDeterministicSQLTemplate({
         intent: initialClassification.intent,
-        entities: resolvedEntities,
-        userContext
+        entities: { ...resolvedEntities, isAllRequested, rawMessage },
+        userContext: { ...userContext, isAllRequested, rawMessage }
       });
 
       if (sqlPlan && sqlPlan.sql) {
@@ -8793,7 +9337,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
             intent: initialClassification.intent,
             entities: resolvedEntities,
             relevantTables,
-            userContext
+            userContext: { ...userContext, isAllRequested, rawMessage }
           });
           if (sqlPlan.usage) {
             totalUsage.prompt_tokens += sqlPlan.usage.prompt_tokens || 0;
@@ -8809,7 +9353,10 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
     let validatedSQL = validateAndRepairSQL(sqlPlan.sql, userContext, {
       isKonKonQuery,
-      noTopLimit: isKonKonQuery || Boolean(userContext?.noTopLimit)
+      noTopLimit: isKonKonQuery || isAllRequested || Boolean(userContext?.noTopLimit),
+      isAllRequested,
+      rawMessage,
+      englishQuery
     });
 
     // 8. Execute Primary SQL on MSSQL Server with Auto-Repair Reflection Loop
@@ -8867,24 +9414,61 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       }
     }
 
-    // 10. Engine 10: Human Response Formatter (AI Formatter with Deterministic Fallback)
+    // 10. Engine 10: Human Response Formatter (Deterministic Priority for Lists with AI Enhancement)
     let formatted = null;
 
-    // First, try AI Response Formatter for rich, natural, 100% accurate conversational formatting
-    if (dbRows.length > 0) {
-      formatted = await formatResponseViaAI({
+    // Intents with dedicated deterministic business formatters (100% reliable, instant, no false refusals)
+    const deterministicPriorityIntents = new Set([
+      "PRESENT_EMPLOYEE_LIST", "ABSENT_EMPLOYEE_LIST",
+      "PRESENT_COUNT", "ABSENT_COUNT",
+      "BIRTHDAY_TODAY", "BIRTHDAY_BY_DATE", "BIRTHDAYS_MONTH",
+      "WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY",
+      "PF_EMPLOYEE_LIST", "PF_LOOKUP_BY_EMP", "PF_COUNT"
+    ]);
+
+    if (deterministicPriorityIntents.has(effectiveIntent)) {
+      formatted = await formatHumanBusinessAnswer({
         message: rawMessage,
         englishQuery: englishQuery || rawMessage,
         intent: effectiveIntent,
+        entities: resolvedEntities,
         sql: validatedSQL,
         rows: dbRows,
         userContext,
-        entities: resolvedEntities,
-        previousContext: contextRes?.isFollowup ? contextRes.previousTurn : null
+        sequelize,
+        userLanguage: userLanguage
       });
     }
 
-    // If AI formatter didn't run or returned null, use deterministic formatter
+    // If not handled by priority deterministic formatter, try AI Response Formatter
+    if (!formatted || !formatted.answer) {
+      try {
+        formatted = await formatResponseViaAI({
+          message: rawMessage,
+          englishQuery: englishQuery || rawMessage,
+          intent: effectiveIntent,
+          sql: validatedSQL,
+          rows: dbRows,
+          userContext,
+          entities: resolvedEntities,
+          previousContext: contextRes?.isFollowup ? contextRes.previousTurn : null,
+          userLanguage: userLanguage
+        });
+
+        // Guard against false AI refusals when authorized DB rows exist
+        if (dbRows.length > 0 && formatted?.answer) {
+          const isRefusal = /\b(maaf\s*kijiye|sorry|cannot\s*provide|can't\s*provide|nahi\s*de\s*sakta|nahi\s*de\s*sakti|unable\s*to\s*provide|i\s*am\s*unable|cannot\s*share|not\s*allowed\s*to\s*share)\b/i.test(formatted.answer);
+          if (isRefusal) {
+            console.warn("⚠️ [V6-AIFormatter] AI produced a refusal for an authorized query with records. Falling back to deterministic business formatter.");
+            formatted = null;
+          }
+        }
+      } catch (fmtErr) {
+        console.warn("⚠️ [V6-AIFormatter] AI formatting call failed, falling back to deterministic:", fmtErr?.message);
+      }
+    }
+
+    // Final fallback to deterministic formatter if AI formatter returned null or refused
     if (!formatted || !formatted.answer) {
       formatted = await formatHumanBusinessAnswer({
         message: rawMessage,
@@ -8894,7 +9478,8 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         sql: validatedSQL,
         rows: dbRows,
         userContext,
-        sequelize
+        sequelize,
+        userLanguage: userLanguage
       });
     }
     if (formatted.usage) {
@@ -8983,6 +9568,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     }
 
     // Update Conversation Memory Turn Context for multi-turn learning & follow-ups
+    const primaryCount = dbRows?.[0]?.TotalPresentCount || dbRows?.[0]?.TotalAbsentCount || dbRows?.[0]?.TotalCount || dbRows?.[0]?.TotalEmployees || (dbRows?.length === 1 && typeof Object.values(dbRows[0])[0] === 'number' ? Object.values(dbRows[0])[0] : null);
     MemoryEngineInstance.updateContext(
       conversationId,
       resolvedEntities,
@@ -8991,6 +9577,10 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
         userMessage: rawMessage,
         sql: validatedSQL,
         rowCount: dbRows.length,
+        rows: dbRows,
+        count: primaryCount,
+        answer: formatted.answer,
+        assistantAnswer: formatted.answer,
         failed: false,
         tablesUsed
       }
@@ -9026,6 +9616,12 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       critic: criticResult,
       isAmbiguous: false,
       resolvedEntities,
+      count: primaryCount,
+      branch: resolvedEntities?.branch || null,
+      branches: resolvedEntities?.branches || null,
+      flag: resolvedEntities?.flag || null,
+      specificDate: resolvedEntities?.specificDate || null,
+      rewrittenQuestion: resolvedEntities?.rewrittenQuestion || null,
       cached: false,
       cacheTier: "NONE",
       model: getModelConfig().primaryModel,
@@ -9216,10 +9812,47 @@ const saveAILearnedRule = async (reqOrPayload) => {
     `;
     try {
       await targetSeq.query(mergeSql, { type: QueryTypes.RAW });
+      if (sequelize && targetSeq !== sequelize) {
+        await sequelize.query(mergeSql, { type: QueryTypes.RAW }).catch(() => {});
+      }
     } catch (sqlErr) {
       console.error(`[saveAILearnedRule] MERGE error for question "${q}":`, sqlErr?.message || sqlErr?.original?.message);
       throw sqlErr;
     }
+  }
+
+  // If this was trained from a specific audit log record, mark it as RESOLVED
+  if (payload.auditUtd && sequelize?.query) {
+    try {
+      await sequelize.query(`
+        UPDATE [dbo].[AI_Query_Audit_Tbl]
+        SET [Status_Code] = 'RESOLVED',
+            [Error_Message] = 'Trained and verified by administrator as Golden Rule'
+        WHERE [UTD] = :auditUtd
+      `, { replacements: { auditUtd: payload.auditUtd }, type: QueryTypes.RAW }).catch(() => {});
+    } catch (_) {}
+  }
+
+  // If trained as Bug Correction or Business Rule, also persist into AI_SQL_Corrections
+  if (payload.feedbackType && ["CORRECTION", "RULE"].includes(payload.feedbackType)) {
+    try {
+      const corrSql = `
+        INSERT INTO [dbo].[AI_SQL_Corrections] 
+          ([Correction_Type], [User_Message], [Target_Table], [Correct_SQL_Pattern], [Rule_Description], [Is_Active], [Created_At])
+        VALUES 
+          (:correctionType, :userMessage, :targetTable, :sqlPattern, :ruleDesc, 1, SYSDATETIME());
+      `;
+      await targetSeq.query(corrSql, {
+        replacements: {
+          correctionType: payload.feedbackType,
+          userMessage: question,
+          targetTable: table,
+          sqlPattern: sql,
+          ruleDesc: payload.userComment || "Trained via AI History Audit Page"
+        },
+        type: QueryTypes.RAW
+      }).catch(() => {});
+    } catch (_) {}
   }
 
   // Clear in-memory caches
@@ -9765,6 +10398,8 @@ module.exports = {
   resolveEmployeeEntityViaDB,
   getDeterministicSQLTemplate,
   validateAndRepairSQL,
+  detectUserLanguage,
+  formatResponseViaAI,
   formatHumanBusinessAnswer,
   executeAdaptiveCrossTableSearch,
   SchemaEngineInstance,
@@ -9772,6 +10407,7 @@ module.exports = {
   CacheEngineInstance,
   matchLearnedSimilarQuery,
   canonicalizeQueryPattern,
+  getPatternTokens,
   getCacheAnalytics: () => CacheEngineInstance.getStats(),
   clearCache: () => CacheEngineInstance.clear()
 };
