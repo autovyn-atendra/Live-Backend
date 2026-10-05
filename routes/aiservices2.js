@@ -92,7 +92,10 @@ const SEARCH_STOP_WORDS = new Set([
   "retrieve", "retrieval", "fetch", "fetching", "provide", "providing", "give", "giving", "display", "displaying", "get", "getting", "bring",
   "their", "there", "them", "these", "those", "this", "that", "they", "with", "whose", "whom", "where", "when", "which",
   "number", "numbers", "person", "persons", "people", "both", "each", "every", "kindly",
-  "inki", "inka", "inke", "inhe", "inhein", "unka", "unki", "unke", "unhe", "unhein", "iska", "iski", "iske"
+  "inki", "inka", "inke", "inhe", "inhein", "unka", "unki", "unke", "unhe", "unhein", "iska", "iski", "iske",
+  "yes", "yep", "yeah", "yup", "ha", "haan", "haa", "han", "sure", "ok", "okay", "theek", "thik", "sahi", "accha", "achha", "done", "bilkul", "zaroor",
+  "thanks", "thank", "thx", "dhanyawad", "shukriya", "welcome", "bye", "tata", "alvida",
+  "no", "nope", "nahi", "nahin", "na", "never", "cancel", "hi", "hello", "hey"
 ]);
 
 // ============================================================================
@@ -659,6 +662,423 @@ class SchemaKnowledgeGraph {
 const SchemaEngineInstance = new SchemaKnowledgeGraph();
 
 // ============================================================================
+// CONVERSATIONAL GREETING & INTRODUCTION ENGINE
+// ============================================================================
+
+const detectGreetingOrIntroduction = (rawMessage = "", englishQuery = "") => {
+  const text = String(rawMessage || "").trim();
+  const eng = String(englishQuery || "").trim();
+  const lower = text.toLowerCase();
+  const engLower = eng.toLowerCase();
+
+  // 1. Identify specific operational database data extractions:
+  // These indicate the user wants raw data, counts, or table records extracted from the MSSQL database:
+  const isExplicitCountOrAggregate = /\b(kitne|kitna|kitni|kitno|count|total count|how many|sankhya|ginti|headcount)\b/i.test(lower) ||
+    (/\b(total)\b/i.test(lower) && /\b(present|absent|employee|employees|staff|karmchari|leave|mispunch|salary)\b/i.test(lower));
+
+  const isNumericLimitQuery = /\b(?:top|first|pehle|give me|show me|list)\s*\d{1,5}\b/i.test(lower) ||
+    /\b\d{1,5}\s*(?:employee|employees|karmchari|records?|rows?|log|data|details?)\b/i.test(lower);
+
+  const hasSpecificIdentifier = /\b\d{10}\b/.test(lower) || // 10-digit mobile
+    /\b[A-Z]{5}[0-9]{4}[A-Z]\b/i.test(text) || // PAN
+    /\b\d{12}\b/.test(lower) || // Aadhaar
+    /\b(?:empcode|emp_code|code)\s*[:=]?\s*\d+\b/i.test(lower);
+
+  const isExplicitRecordExtraction = /\b(give me|show me|list|nikalo|dikhao|download|fetch|export)\b/i.test(lower) &&
+    /\b(employee|employees|karmchari|salary|attendance|mispunch|leave|punch|slip|ledger|voucher|invoice|chassis|vin)\b/i.test(lower);
+
+  const isDateOperationalQuery = /\b(aaj|kal|today|yesterday|tomorrow|this month|last month|pichle mahine|is mahine)\b/i.test(lower) &&
+    /\b(present|absent|duty|leave|mispunch|punch|salary|payout|attendancetable|attendance)\b/i.test(lower);
+
+  const isComparativeSalaryOrFilter = /\b(salary|pagar|tankha)\b/i.test(lower) &&
+    /\b(between|se|jyada|kam|greater|less|>|<|highest|lowest|sabse|maximum|minimum)\b/i.test(lower);
+
+  // If ANY of these operational flags are true, it is an actual database query
+  const hasBusinessQuery = Boolean(
+    isExplicitCountOrAggregate ||
+    isNumericLimitQuery ||
+    hasSpecificIdentifier ||
+    isExplicitRecordExtraction ||
+    isDateOperationalQuery ||
+    isComparativeSalaryOrFilter
+  );
+
+  // Extract self-introduction name
+  let introName = null;
+  const introPatterns = [
+    /\bmera\s*(?:naam|name)\s*(?:hai\s*)?([a-zA-Z\u0900-\u097F]+(?:\s+[a-zA-Z\u0900-\u097F]+)?)/i,
+    /\bmy\s*name\s*(?:is\s*)?([a-zA-Z\u0900-\u097F]+(?:\s+[a-zA-Z\u0900-\u097F]+)?)/i,
+    /\b(?:i\s*am|i'm|im)\s+([a-zA-Z\u0900-\u097F]+(?:\s+[a-zA-Z\u0900-\u097F]+)?)/i,
+    /\b(?:main|mai)\s+([a-zA-Z\u0900-\u097F]+(?:\s+[a-zA-Z\u0900-\u097F]+)?)\s+(?:hoon|hu|bol\s*raha)\b/i,
+    /\b([a-zA-Z\u0900-\u097F]+(?:\s+[a-zA-Z\u0900-\u097F]+)?)\s+here\b/i
+  ];
+
+  for (const pat of introPatterns) {
+    const m = lower.match(pat) || engLower.match(pat);
+    if (m && m[1]) {
+      let cand = m[1].trim();
+      cand = cand.replace(/\s+(?:hai|hoon|hu|is|here|sir|ji|the|a|an)$/i, "").trim();
+      if (cand && !/^(hai|hoon|hu|is|here|sir|ji|good|morning|evening|afternoon|hello|hi|hey)$/i.test(cand) && cand.length >= 2) {
+        introName = cand.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+        break;
+      }
+    }
+  }
+
+  // Conversational Intent Patterns
+  const GREETING_ONLY_REGEX = /^\s*(?:hi+|hello+|helo+|hey+|good\s*(?:morning|afternoon|evening|day|night)|namaste+|namaskar+|pranam+|pranaam+|ram\s*ram+|radhe\s*radhe+|jai\s*(?:shri|shree)?\s*(?:ram|krishna)+|salaam+|adaab+)\b(?:\s*(?:sir|ji|bhai|team|all|there|copilot|autovyn|ai))*\s*[!.]*\s*$/i;
+  const HOW_ARE_YOU_REGEX = /\b(?:kaise\s*ho|kaise\s*hain|aap\s*kaise\s*ho|aap\s*kaise\s*hain|tum\s*kaise\s*ho|kya\s*haal\s*hai|how\s*are\s*you|how\s*r\s*u|how\s*do\s*you\s*do|kya\s*chal\s*raha\s*hai|aur\s*batao|kya\s*kar\s*rahe\s*ho|mood\s*kaisa\s*hai)\b/i;
+  const WHO_ARE_YOU_REGEX = /\b(?:who\s*are\s*you|who\s*r\s*u|who\s*you\s*are|tum\s*kaun\s*ho|aap\s*kaun\s*ho|kya\s*ho\s*tum|what\s*are\s*you|what\s*can\s*you\s*do|tum\s*kya\s*kar\s*sakte\s*ho|aap\s*kya\s*kar\s*sakte\s*ho|apne\s*(?:bare|baare)\s*me\s*batao|tell\s*me\s*about\s*yourself|autovyn\s*kya\s*hai|what\s*is\s*autovyn)\b/i;
+  const AFFIRMATION_REGEX = /^\s*(?:yes+|yep+|yeah+|yup+|ha+|haan+|haa+|han+|sure+|ok+|okay+|okk+|theek\s*(?:hai)?|thik\s*(?:hai)?|sahi\s*(?:hai)?|accha+|achha+|achha\s*ji|done|bilkul|zaroor|plz|please|chalo\s*shuru\s*karte\s*hain|start\s*karo|let's\s*start|start)\b(?:\s*(?:sir|ji|bhai|copilot|autovyn|ai|tell|batao|help|aage))*\s*[!.]*\s*$/i;
+  const GRATITUDE_REGEX = /\b(?:thank\s*you|thanks+|thx+|dhanyawad+|shukriya+|many\s*thanks|thank\s*u)\b/i;
+  const NEGATION_REGEX = /^\s*(?:no+|nope+|nah+|nahi+|nahin+|na+|not\s*now|kuch\s*nahi|nothing)\b(?:\s*(?:sir|ji|thanks|thank\s*you|bhai|copilot))*\s*[!.]*\s*$/i;
+  const FAREWELL_REGEX = /\b(?:bye+|goodbye+|bye\s*bye+|tata+|alvida+|see\s*you|take\s*care)\b/i;
+
+  // Feedback, Human Feel, or General Chit-Chat Patterns:
+  const HUMAN_FEEL_OR_FEEDBACK_REGEX = /\b(natural\s*human|human\s*feel|feel\s*nahi\s*de\s*raha|proper\s*human|kuchh\s*bhi\s*ba?t\s*karu|perfect\s*ai|insaan|robot\s*mat|friendly|baatcheet|chat\s*karna|talk\s*to\s*me|kaise\s*baat\s*kare|sahi\s*se\s*work\s*kare)\b/i;
+
+  // ERP How-to, Guidance, or Conceptual Explanation Patterns (not asking for live rows):
+  const ERP_GUIDANCE_HOWTO_REGEX = /\b(?:kaise\s*(?:karein|kare|karte|hoga|hota|dekhein|check\s*karein|nikalein|apply\s*karein)|how\s*(?:to|can\s*i|do\s*i)\s*(?:check|apply|mark|view|use|get)|kya\s*(?:hota|matlab)\s*hai|what\s*is\s*(?:mispunch|attendance|leave|salary|gatepass)|process\s*(?:kya|batao)|steps\s*(?:kya|batao)|kahan\s*milega|guide\s*(?:karo|me)|samjhao)\b/i;
+
+  const isGreetingOnly = GREETING_ONLY_REGEX.test(lower) || GREETING_ONLY_REGEX.test(engLower);
+  const isHowAreYou = HOW_ARE_YOU_REGEX.test(lower) || HOW_ARE_YOU_REGEX.test(engLower);
+  const isWhoAreYou = WHO_ARE_YOU_REGEX.test(lower) || WHO_ARE_YOU_REGEX.test(engLower);
+  const isAffirmation = AFFIRMATION_REGEX.test(lower) || AFFIRMATION_REGEX.test(engLower);
+  const isGratitude = GRATITUDE_REGEX.test(lower) || GRATITUDE_REGEX.test(engLower);
+  const isNegation = NEGATION_REGEX.test(lower) || NEGATION_REGEX.test(engLower);
+  const isFarewell = FAREWELL_REGEX.test(lower) || FAREWELL_REGEX.test(engLower);
+  const isHumanFeelOrFeedback = HUMAN_FEEL_OR_FEEDBACK_REGEX.test(lower) || HUMAN_FEEL_OR_FEEDBACK_REGEX.test(engLower);
+  const isERPGuidance = ERP_GUIDANCE_HOWTO_REGEX.test(lower) || ERP_GUIDANCE_HOWTO_REGEX.test(engLower);
+  const isIntroOnly = Boolean(introName) && !hasBusinessQuery;
+
+  // Pure conversational inquiry if NO operational business query is requested, and any conversational trigger fires:
+  const isPureConversational = !hasBusinessQuery && (
+    isGreetingOnly ||
+    isHowAreYou ||
+    isWhoAreYou ||
+    isIntroOnly ||
+    isAffirmation ||
+    isGratitude ||
+    isNegation ||
+    isFarewell ||
+    isHumanFeelOrFeedback ||
+    isERPGuidance
+  );
+
+  let convIntent = "CONVERSATIONAL_COPILOT";
+  let greetingType = "GENERAL";
+  if (isHumanFeelOrFeedback) {
+    convIntent = "HUMAN_FEEL_ADAPTATION";
+    greetingType = "HUMAN_FEEL";
+  } else if (isERPGuidance) {
+    convIntent = "ERP_PROCESS_GUIDANCE";
+    greetingType = "ERP_GUIDANCE";
+  } else if (isAffirmation) {
+    convIntent = "AFFIRMATION_FOLLOWUP";
+    greetingType = "AFFIRMATION";
+  } else if (isGratitude) {
+    convIntent = "GRATITUDE_RESPONSE";
+    greetingType = "GRATITUDE";
+  } else if (isNegation) {
+    convIntent = "NEGATION_RESPONSE";
+    greetingType = "NEGATION";
+  } else if (isFarewell) {
+    convIntent = "FAREWELL_RESPONSE";
+    greetingType = "FAREWELL";
+  } else if (isHowAreYou) {
+    convIntent = "CHIT_CHAT";
+    greetingType = "HOW_ARE_YOU";
+  } else if (isWhoAreYou) {
+    convIntent = "COPILOT_CAPABILITIES";
+    greetingType = "WHO_ARE_YOU";
+  } else if (isIntroOnly) {
+    convIntent = "GREETING_OR_INTRODUCTION";
+    greetingType = "INTRODUCTION";
+  } else if (/\b(?:good\s*morning|shubh\s*prabhat|suprabhat)\b/i.test(lower) || /\b(?:good\s*morning)\b/i.test(engLower)) {
+    greetingType = "MORNING";
+  } else if (/\b(?:good\s*afternoon|shubh\s*dopahar)\b/i.test(lower) || /\b(?:good\s*afternoon)\b/i.test(engLower)) {
+    greetingType = "AFTERNOON";
+  } else if (/\b(?:good\s*evening|shubh\s*sandhya)\b/i.test(lower) || /\b(?:good\s*evening)\b/i.test(engLower)) {
+    greetingType = "EVENING";
+  } else if (/\b(?:ram\s*ram)\b/i.test(lower)) {
+    greetingType = "RAM_RAM";
+  } else if (/\b(?:radhe\s*radhe)\b/i.test(lower)) {
+    greetingType = "RADHE_RADHE";
+  } else if (/\b(?:namaste|namaskar|pranam|pranaam)\b/i.test(lower)) {
+    greetingType = "NAMASTE";
+  }
+
+  return {
+    isPureConversational,
+    convIntent,
+    introName,
+    greetingType,
+    isGreetingOnly,
+    isHowAreYou,
+    isWhoAreYou,
+    isIntroOnly,
+    isAffirmation,
+    isGratitude,
+    isNegation,
+    isFarewell,
+    isHumanFeelOrFeedback,
+    isERPGuidance,
+    hasBusinessQuery
+  };
+};
+
+const generateGreetingResponse = ({ introName, convDetails, rawMessage = "", userLanguage = {} }) => {
+  const isEnglish = userLanguage.code === "en" && !/[a-zA-Z\u0900-\u097F]+(?:hai|hain|ho|hoon|hu|karo|batao|kya|aap|mera|meri)/i.test(rawMessage);
+  const isDevanagari = userLanguage.code === "hi_deva";
+  const greetingType = convDetails?.greetingType || "GENERAL";
+  const name = introName ? `**${introName}**` : "";
+
+  // 0. Human Feel Adaptation / Feedback
+  if (greetingType === "HUMAN_FEEL") {
+    if (name) {
+      if (isEnglish) return `I completely understand ${name}! I'm right here with you. You can talk to me naturally about anything — whether casual conversation or exploring AutoVyn ERP records. How can I help you right now?`;
+      if (isDevanagari) return `मैं बिल्कुल समझ गया ${name} जी! अब मैं आपसे एक स्वाभाविक और मित्रवत सहयोगी की तरह बात करूँगा। आप मुझसे AutoVyn ERP के बारे में कुछ भी पूछ सकते हैं या सामान्य बातचीत भी कर सकते हैं। बताइए, क्या जानना चाहते हैं?`;
+      return `Main bilkul samajh gaya ${name} ji! Ab main aapse ekdam natural aur friendly tarike se baat karunga — jaise aapka ek real senior ERP colleague karta hai. Aap mujhse AutoVyn ERP ke baare me normal bolchal me kuch bhi pooch sakte hain. Batayein, kya janna chahte hain?`;
+    }
+    if (isEnglish) return `I completely understand! I'm here to converse with you naturally and intelligently. Feel free to ask me anything about AutoVyn ERP or have a natural conversation. How can I assist you today?`;
+    if (isDevanagari) return `मैं बिल्कुल समझ गया! अब मैं आपसे एक स्वाभाविक और मित्रवत सहयोगी की तरह बात करूँगा। आप मुझसे AutoVyn ERP के बारे में कुछ भी पूछ सकते हैं। बताइए, मैं आपकी क्या सहायता करूँ?`;
+    return `Main bilkul samajh gaya! Ab main aapse ekdam natural aur friendly tarike se baat karunga. Aap mujhse AutoVyn ERP ke baare me normal bolchal me kuch bhi pooch sakte hain. Batayein, aaj kis baare me baat karein?`;
+  }
+
+  // 0.1 ERP Guidance
+  if (greetingType === "ERP_GUIDANCE") {
+    if (name) {
+      return `Ji ${name} ji! AutoVyn ERP me is process ko check karne ke liye aap mujhse specific records bhi nikalwa sakte hain (jaise attendance, mispunch ya salary), ya main aapko step-by-step process samjha sakta hoon. Batayein, aap kis baare me vistar se janna chahte hain?`;
+    }
+    return `Ji! AutoVyn ERP me aap attendance, mispunch, salary calculation, leave approval ya dealership reports aasaani se access kar sakte hain. Aap jo janna chahte hain, bas aam bolchal me bataiye!`;
+  }
+
+  // 0.2 Conversational Affirmations / Acknowledgements ("yes", "ok", "sure", "haan", etc.)
+  if (greetingType === "AFFIRMATION") {
+    if (name) {
+      if (isEnglish) return `Yes ${name}! How can I assist you? Please let me know what you would like to search or check in AutoVyn ERP.`;
+      if (isDevanagari) return `जी ${name} जी, बताएं! आप AutoVyn ERP में क्या जानकारी देखना चाहते हैं?`;
+      return `Ji ${name} ji, batayein! Aap kis baare me jankari chahte hain? (Jaise Employee records, Salary, Attendance, Mispunch ya koi report).`;
+    }
+    if (isEnglish) return `Yes, please! Let me know what information or report you would like to look up in AutoVyn ERP.`;
+    if (isDevanagari) return `जी बताएं! आप AutoVyn ERP में क्या जानकारी देखना चाहते हैं?`;
+    return `Ji batayein! Main aapki kya madad kar sakta hoon? Aap employee details, attendance, salary, mispunch ya koi bhi report pooch sakte hain.`;
+  }
+
+  // 0.3 Gratitude ("thanks", "thank you", "dhanyawad")
+  if (greetingType === "GRATITUDE") {
+    if (isEnglish) return `You're welcome! 😊 Feel free to ask whenever you need anything from your ERP.`;
+    if (isDevanagari) return `आपका स्वागत है! 😊 अगर ERP से जुड़ी कोई और जानकारी चाहिए तो बताएं।`;
+    return `Aapka swagat hai! 😊 Agar ERP se judi koi aur jankari chahiye to batayein.`;
+  }
+
+  // 0.4 Negation ("no", "nahi")
+  if (greetingType === "NEGATION") {
+    if (isEnglish) return `Understood! Whenever you need any ERP information, feel free to ask. Have a great day!`;
+    if (isDevanagari) return `ठीक है! जब भी आपको ERP से जुड़ी कोई जानकारी चाहिए हो, आप यहाँ पूछ सकते हैं।`;
+    return `Theek hai! Jab bhi aapko ERP se judi koi jankari chahiye ho, aap yahan pooch sakte hain. Have a great day!`;
+  }
+
+  // 0.5 Farewell ("bye", "tata", "goodbye")
+  if (greetingType === "FAREWELL") {
+    if (isEnglish) return `Goodbye! Have a great day ahead! 👋`;
+    if (isDevanagari) return `अलविदा! आपका दिन शुभ हो! 👋`;
+    return `Alvida! Have a great day ahead! 👋`;
+  }
+
+  // 1. If user introduced name (with or without greeting)
+  if (introName) {
+    if (greetingType === "MORNING") {
+      if (isEnglish) return `Good morning ${name}! Welcome to AutoVyn AI Copilot. 👋\n\nHow can I help you today? Feel free to ask about employee details, attendance, salary, mispunches, or any ERP reports.`;
+      if (isDevanagari) return `सुप्रभात ${name} जी! AutoVyn AI Copilot में आपका स्वागत है। 🙏\n\nमैं आज आपकी क्या सहायता कर सकता हूँ? आप मुझसे कर्मचारी विवरण, उपस्थिति, वेतन या कोई भी ERP रिपोर्ट पूछ सकते हैं।`;
+      return `Good morning ${name} ji! AutoVyn AI Copilot me aapka swagat hai. 🌅\n\nMain aapki kya madad kar sakta hoon? Aap mujhse Employee Details, Attendance, Salary, Mispunch ya kisi bhi ERP report ke baare me pooch sakte hain.`;
+    }
+    if (greetingType === "AFTERNOON") {
+      if (isEnglish) return `Good afternoon ${name}! Welcome to AutoVyn AI Copilot. 👋\n\nHow can I help you today?`;
+      if (isDevanagari) return `शुभ दोपहर ${name} जी! AutoVyn AI Copilot में आपका स्वागत है। 🙏\n\nमैं आपकी क्या सहायता कर सकता हूँ?`;
+      return `Good afternoon ${name} ji! AutoVyn AI Copilot me aapka swagat hai. ☀️\n\nMain aapki kya madad kar sakta hoon?`;
+    }
+    if (greetingType === "EVENING") {
+      if (isEnglish) return `Good evening ${name}! Welcome to AutoVyn AI Copilot. 👋\n\nHow can I assist you today?`;
+      if (isDevanagari) return `शुभ संध्या ${name} जी! AutoVyn AI Copilot में आपका स्वागत है। 🙏\n\nमैं आपकी क्या सहायता कर सकता हूँ?`;
+      return `Good evening ${name} ji! AutoVyn AI Copilot me aapka swagat hai. 🌆\n\nMain aapki kya madad kar sakta hoon?`;
+    }
+    if (isEnglish) {
+      return `Hello ${name}! Welcome to AutoVyn AI Copilot. 👋\n\nHow can I assist you today?`;
+    }
+    if (isDevanagari) {
+      return `नमस्ते ${name} जी! AutoVyn AI Copilot में आपका स्वागत है। 🙏\n\nमैं आज आपकी क्या सहायता कर सकता हूँ?`;
+    }
+    return `Hello ${name} ji! AutoVyn AI Copilot me aapka swagat hai. 🙏\n\nMain aapki kya sahayata kar sakta hoon? Aap mujhse kisi bhi employee ka record, attendance, salary, mispunch ya ERP report pooch sakte hain.`;
+  }
+
+  // 2. Time-of-day greetings without name
+  if (greetingType === "MORNING") {
+    if (isEnglish) return `Good morning! Welcome to AutoVyn AI Copilot. 🌅\n\nHow can I help you today?`;
+    if (isDevanagari) return `सुप्रभात! AutoVyn AI Copilot में आपका स्वागत है। 🌅\n\nमैं आज आपकी क्या सहायता कर सकता हूँ?`;
+    return `Good morning! AutoVyn AI Copilot me aapka swagat hai. 🌅\n\nMain aapki kya sahayata kar sakta hoon?`;
+  }
+  if (greetingType === "AFTERNOON") {
+    if (isEnglish) return `Good afternoon! Welcome to AutoVyn AI Copilot. ☀️\n\nHow can I assist you with your ERP data today?`;
+    if (isDevanagari) return `शुभ दोपहर! AutoVyn AI Copilot में आपका स्वागत है। ☀️\n\nमैं आपकी क्या सहायता कर सकता हूँ?`;
+    return `Good afternoon! AutoVyn AI Copilot me aapka swagat hai. ☀️\n\nMain aapki kya sahayata kar sakta hoon?`;
+  }
+  if (greetingType === "EVENING") {
+    if (isEnglish) return `Good evening! Welcome to AutoVyn AI Copilot. 🌆\n\nHow can I assist you today?`;
+    if (isDevanagari) return `शुभ संध्या! AutoVyn AI Copilot में आपका स्वागत है। 🌆\n\nमैं आपकी क्या सहायता कर सकता हूँ?`;
+    return `Good evening! AutoVyn AI Copilot me aapka swagat hai. 🌆\n\nMain aapki kya sahayata kar sakta hoon?`;
+  }
+
+  // 3. Cultural greetings
+  if (greetingType === "RAM_RAM") {
+    return `राम राम जी! AutoVyn AI Copilot me aapka swagat hai. 🙏\n\nKahiye, main aapki kya sahayata kar sakta hoon?`;
+  }
+  if (greetingType === "RADHE_RADHE") {
+    return `राधे राधे! AutoVyn AI Copilot me aapka swagat hai. 🙏\n\nKahiye, main aapki kya sahayata kar sakta hoon?`;
+  }
+  if (greetingType === "NAMASTE") {
+    if (isDevanagari) return `नमस्ते! AutoVyn AI Copilot में आपका स्वागत है। 🙏\n\nमैं आपकी क्या सहायता कर सकता हूँ?`;
+    return `नमस्ते! AutoVyn AI Copilot me aapka swagat hai. 🙏\n\nMain aapki kya madad kar sakta hoon?`;
+  }
+
+  // 4. How are you
+  if (greetingType === "HOW_ARE_YOU") {
+    if (isEnglish) return `I'm doing great, thank you for asking! 😊 How are you?\n\nHow can I assist you with your AutoVyn ERP today?`;
+    return `Main badhiya hoon, dhanyawaad! 😊 Aap kaise hain?\n\nAutoVyn ERP se judi koi bhi jankari (attendance, salary, employee profile ya reports) chahiye to batayein, main madad ke liye taiyar hoon.`;
+  }
+
+  // 5. Who are you / What can you do
+  if (greetingType === "WHO_ARE_YOU") {
+    if (isEnglish) {
+      return `I am **AutoVyn AI Copilot** — your intelligent automotive ERP assistant! 🚀\n\nI can help you query live ERP data instantly, including:\n- 👥 **Employee Records**: Profile, mobile, designation, branch, status\n- 📅 **Attendance & Mispunch**: Present/absent counts, punch logs, mispunch reports\n- 💰 **Salary & Payouts**: Monthly salary, CTC breakdown, salary history\n- 🚗 **Vehicle & Service**: Job cards, sales, inventory reports\n\nHow can I help you right now?`;
+    }
+    return `Main **AutoVyn AI Copilot** hoon — aapka automotive ERP intelligent assistant! 🚀\n\nMain aapke ERP system se live data access karke instant answers de sakta hoon, jaise:\n- 👥 **Employee Records**: Profile, mobile, designation, branch, status\n- 📅 **Attendance & Mispunch**: Present/absent counts, punch logs, mispunch reports\n- 💰 **Salary & Payouts**: Monthly salary, CTC breakdown, salary history\n- 🚗 **Vehicle & Service**: Job cards, sales, stock reports\n\nBatayein, main aapki kya madad kar sakta hoon?`;
+  }
+
+  // 6. Default general greeting (hi / hello / hey)
+  if (isEnglish) {
+    return `Hello! Welcome to AutoVyn AI Copilot. 👋\n\nHow can I help you today? Feel free to ask about employee records, attendance, salary, mispunches, or any ERP reports.`;
+  }
+  return `Hello! AutoVyn AI Copilot me aapka swagat hai. 👋\n\nMain aapki kya madad kar sakta hoon? Aap mujhse employee records, attendance, salary, mispunch ya koi bhi ERP jankari pooch sakte hain.`;
+};
+
+// ============================================================================
+// AI CONVERSATIONAL & DOMAIN GUIDANCE ENGINE (GPT-4o-mini Powered)
+// ============================================================================
+
+const handleConversationalAndGuidanceViaAI = async ({
+  rawMessage,
+  englishQuery,
+  introName,
+  convDetails,
+  userLanguage = {},
+  userContext = {},
+  conversationId,
+  history = []
+}) => {
+  const started = Date.now();
+  const config = getModelConfig();
+
+  // Resolve user's preferred name from introduction or memory context
+  let candidateName = introName;
+  if (!candidateName) {
+    const mem = MemoryEngineInstance.getContext(conversationId);
+    candidateName = mem?.userName || mem?.lastUserName || userContext?.userName || userContext?.userCode || null;
+  }
+  const cleanName = candidateName ? String(candidateName).replace(/[^\w\s\u0900-\u097F]/g, "").trim() : null;
+
+  try {
+    const client = getOpenAIClient();
+
+    const systemPrompt = `You are "AutoVyn AI Copilot" — the official, world-class enterprise AI assistant and expert consultant for AutoVyn Automotive ERP.
+
+### 🌟 PERSONALITY & HUMAN FEEL:
+- Talk like a genuine, smart, empathetic, and seasoned senior colleague / ERP advisor — NOT a cold, rigid chatbot or canned script.
+- Respond with warmth, respect, intelligence, and natural conversational flow.
+${cleanName ? `- The user's name is "${cleanName}". Address them respectfully as "${cleanName} ji" in Hindi/Hinglish, or "${cleanName}" in English.` : `- Address the user politely (e.g. "ji", "Sir/Ma'am").`}
+- Match the user's language and style:
+  * If they write in Hinglish (Hindi in English letters), reply in natural, fluent Hinglish.
+  * If they write in Devanagari Hindi, reply in respectful Hindi.
+  * If they write in English, reply in professional, warm English.
+
+### 💼 AUTOVYN ERP DOMAIN KNOWLEDGE:
+- You know every core area of AutoVyn Automotive ERP:
+  1. HRMS & Workforce: Employee profiles, KYC (PAN, Aadhaar, Bank details), branches, departments, designations, joining & relieving processes.
+  2. Attendance & Mispunch: Daily biometric punches, half-day, weekly off, mispunch detection (missing In/Out punch), regularization workflow, leave management (Casual, Sick, Privilege Leave).
+  3. Payroll: Salary structure (Basic, HRA, Gross, Net, Deductions, PF/ESI), monthly payroll processing, payslips.
+  4. Automobile Dealership & Service: Vehicles inventory, chassis numbers, sales orders, service job cards, service due reminders.
+
+### 🎯 CONVERSATIONAL OBJECTIVES:
+- If the user introduces their name (e.g., "My name is Atendra"), welcome them enthusiastically, acknowledge their name, confirm you remember them, and invite them to explore.
+- If the user asks for a natural human feel or expresses dissatisfaction with robotic behavior, warmly empathize, assure them that you are ready to converse naturally on anything, and invite them to ask whatever is on their mind.
+- If the user engages in chit-chat ("kaise ho", "kya chal raha hai", "aur batao"), reply with genuine personality, humor, or warmth, then seamlessly connect to how you can support their ERP work today.
+- If the user affirms ("yes", "ok", "haan", "theek hai", "chalo shuru karte hain"), reply enthusiastically and guide them to their next query.
+- If the user asks how something works in AutoVyn ERP or asks for advice/steps, give a clear, structured, step-by-step practical guide.
+- Suggest 2-3 realistic sample queries they can ask next (e.g., "Jaipur branch ke active employees", "Aaj kitne absent hain?", "Ajay Sharma ki salary").
+- Output clean Markdown with polite formatting. Never output JSON or raw database queries to the user.`;
+
+    const messages = [{ role: "system", content: systemPrompt }];
+
+    // Incorporate recent conversation turns (up to 4 turns) for multi-turn context
+    if (Array.isArray(history) && history.length > 0) {
+      const recentHistory = history.slice(-4);
+      for (const h of recentHistory) {
+        if (h && (h.role === "user" || h.role === "assistant") && h.content) {
+          messages.push({
+            role: h.role,
+            content: String(h.content).slice(0, 500)
+          });
+        }
+      }
+    } else {
+      const mem = MemoryEngineInstance.getContext(conversationId);
+      if (mem?.lastUserMessage && mem?.lastAssistantAnswer) {
+        messages.push({ role: "user", content: String(mem.lastUserMessage).slice(0, 300) });
+        messages.push({ role: "assistant", content: String(mem.lastAssistantAnswer).slice(0, 400) });
+      }
+    }
+
+    messages.push({
+      role: "user",
+      content: rawMessage
+    });
+
+    const completion = await client.chat.completions.create({
+      model: config.fastModel || "gpt-4o-mini",
+      messages,
+      temperature: 0.65,
+      max_tokens: 500
+    });
+
+    const answer = completion.choices?.[0]?.message?.content?.trim();
+    if (answer) {
+      console.log(`💬 [V6-ConversationalEngine] Generated human AI response in ${Date.now() - started}ms`);
+      return {
+        answer,
+        usage: completion.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        model: completion.model || config.fastModel || "gpt-4o-mini"
+      };
+    }
+  } catch (err) {
+    console.warn("⚠️ [V6-ConversationalEngine] OpenAI conversational call failed, using deterministic fallback:", err?.message);
+  }
+
+  // Graceful deterministic fallback
+  const fallbackAnswer = generateGreetingResponse({
+    introName: cleanName,
+    convDetails,
+    rawMessage,
+    userLanguage
+  });
+
+  return {
+    answer: fallbackAnswer,
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    model: "AutoVyn-Deterministic-Conversational"
+  };
+};
+
+// ============================================================================
 // ENGINE 1: INTENT ENGINE & ENGINE 2: ENTITY EXTRACTION ENGINE
 // ============================================================================
 
@@ -674,6 +1094,51 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1; // 1-12
+
+  // Early Intercept for Pure Conversational Greetings and Self-Introductions
+  const convCheck = detectGreetingOrIntroduction(originalMessage || message, message);
+  if (convCheck.isPureConversational) {
+    return {
+      intent: "GREETING_OR_INTRODUCTION",
+      mode: "CONVERSATIONAL",
+      entities: {
+        employeeCode: null,
+        employeeName: null,
+        accountNumber: null,
+        panNumber: null,
+        mobileNumber: null,
+        aadharNumber: null,
+        branch: null,
+        branches: null,
+        excludeBranch: null,
+        designation: null,
+        employeeStatus: null,
+        isSeparationEvent: false,
+        department: null,
+        month: null,
+        year: null,
+        flag: null,
+        isSelf: false,
+        vehicle: null,
+        leaveType: null,
+        aggregation: null,
+        searchToken: null,
+        salaryThreshold: null,
+        salaryComparison: null,
+        salaryField: null,
+        salaryMin: null,
+        salaryMax: null,
+        isSalaryRange: false,
+        rawMessage: originalMessage || message || "",
+        isAllRequested: false,
+        userName: convCheck.introName || null,
+        isGreeting: true
+      },
+      isSelfQuery: false,
+      confidence: 1.0,
+      convDetails: convCheck
+    };
+  }
 
   const entities = {
     employeeCode: null,
@@ -810,8 +1275,9 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     }
   }
 
-  // Self queries
-  if (/\b(meri|mera|my|self|mujhe|apni|apna)\b/i.test(normalized)) {
+  // Self queries (exclude if the message was only an introduction without ERP query)
+  const isIntroPattern = /\b(?:mera\s*(?:naam|name)|my\s*name|main\s*\w+\s*hoon|i\s*am\b)/i.test(normalized);
+  if (!isIntroPattern && /\b(meri|mera|my|self|mujhe|apni|apna)\b/i.test(normalized)) {
     entities.isSelf = true;
     entities.employeeCode = userContext.employeeCode || null;
   }
@@ -1489,6 +1955,12 @@ const resolveEmployeeEntityViaDB = async ({ sequelize, message, normalized, enti
     return { resolved: false };
   }
 
+  // Do not perform employee lookup if the message is a conversational affirmation, greeting, gratitude, negation, or particle
+  const isConversationalParticle = /^\s*(?:yes+|yep+|yeah+|yup+|ha+|haan+|haa+|han+|sure+|ok+|okay+|okk+|theek|thik|sahi|accha|achha|done|bilkul|zaroor|no+|nope+|nah+|nahi+|nahin+|na+|thanks+|thank|thx|dhanyawad|shukriya|bye+|goodbye+|tata+|alvida+|good|nice|fine|well|hello+|hi+|hey+)\b/i.test(normalized.trim());
+  if (isConversationalParticle) {
+    return { resolved: false };
+  }
+
   // Do not perform employee lookup if the message is a pronoun reference (iska, uska, inka, unka, etc.)
   const isPronounFollowup = /\b(iska|iski|iske|inhe|inhein|unka|unki|unke|same|vahi|uska|uski|uske|previous|above|wahi|this person|that person|isi|isi\s*employee|is\s*employee|is\s*bande|isi\s*bande|current\s*employee)\b/i.test(normalized);
   if (isPronounFollowup) {
@@ -1541,9 +2013,10 @@ const resolveEmployeeEntityViaDB = async ({ sequelize, message, normalized, enti
   const cleanTokens = message
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
-    .filter(t => t.length >= 3 && !SEARCH_STOP_WORDS.has(t.toLowerCase()) && !/^\d+$/.test(t));
+    .filter(t => t.length >= 3 && !SEARCH_STOP_WORDS.has(t.toLowerCase()) && !/^\d+$/.test(t) && !/^(yes|yep|yeah|yup|haan|sure|okay|theek|thik|accha|achha|done|thanks|thank|dhanyawad|shukriya|good|well|fine|nice|hello|bye)$/i.test(t));
 
   if (cleanTokens.length === 0) return { resolved: false };
+  if (cleanTokens.length === 1 && cleanTokens[0].length <= 3) return { resolved: false };
 
   const tokenCount = cleanTokens.length;
   const firstToken = cleanTokens[0];
@@ -1815,11 +2288,44 @@ class MemoryEngine {
             const locMatch = String(row.Message_Content).match(/\b(?:location|branch|loc)\s*[:=]?\s*(\d+|[A-Z0-9_-]+)\b/i);
             if (locMatch && !branch) branch = locMatch[1];
           }
+          let isRowCollective = false;
           if (row.Metadata) {
             try {
               const meta = typeof row.Metadata === 'string' ? JSON.parse(row.Metadata) : row.Metadata;
-              if (!empCode) empCode = meta.lastEmployeeCode || meta.resolvedEntities?.employeeCode || meta.employeeCode;
-              if (!empName) empName = meta.lastEmployeeName || meta.resolvedEntities?.employeeName || meta.employeeName || meta.nameFilter;
+              isRowCollective = Boolean(
+                meta.isAllRequested ||
+                meta.resolvedEntities?.isAllRequested ||
+                [
+                  "EMPLOYEE_COUNT", "PRESENT_COUNT", "ABSENT_COUNT",
+                  "PRESENT_EMPLOYEE_LIST", "ABSENT_EMPLOYEE_LIST",
+                  "SALARY_TOTAL_AGGREGATE", "SALARY_COUNT_AGGREGATE",
+                  "PF_COUNT", "PF_DEDUCTION_COUNT", "COMPANY_SUMMARY",
+                  "DEPARTMENT_COUNT", "SERVICE_REMINDERS_DUE", "HOLIDAY_LIST",
+                  "BIRTHDAYS_MONTH", "BIRTHDAY_TODAY", "WORK_ANNIVERSARY",
+                  "MARRIAGE_ANNIVERSARY", "HIGHEST_SALARY_RANKING"
+                ].includes(meta.intent || meta.effectiveIntent)
+              );
+
+              if (isRowCollective) {
+                // For collective intents, always null the employee code.
+                // HOWEVER: for name-filtered counts (e.g. EMPLOYEE_COUNT + nameFilter),
+                // we must preserve the name so follow-ups like "detail do" work correctly.
+                empCode = null;
+                const collectiveHasNameFilter = (
+                  meta.resolvedEntities?.employeeName ||
+                  meta.resolvedEntities?.nameFilter ||
+                  meta.nameFilter ||
+                  meta.employeeName
+                );
+                if (!collectiveHasNameFilter) {
+                  empName = null;
+                } else if (!empName) {
+                  empName = meta.resolvedEntities?.employeeName || meta.resolvedEntities?.nameFilter || meta.nameFilter || meta.employeeName;
+                }
+              } else {
+                if (!empCode) empCode = meta.lastEmployeeCode || meta.resolvedEntities?.employeeCode || meta.employeeCode;
+                if (!empName) empName = meta.lastEmployeeName || meta.resolvedEntities?.employeeName || meta.employeeName || meta.nameFilter || meta.userName || meta.lastUserName || meta.resolvedEntities?.userName;
+              }
               if (!intent) intent = meta.intent || meta.effectiveIntent;
               if (!specificDate) specificDate = meta.specificDate || meta.resolvedEntities?.specificDate;
               if (!lastCount && meta.count !== undefined && meta.count !== null) lastCount = meta.count;
@@ -1829,7 +2335,7 @@ class MemoryEngine {
               if (meta.resolvedEntities) lastEntities = { ...meta.resolvedEntities, ...lastEntities };
             } catch (_) {}
           }
-          if (!empCode && row.Message_Content) {
+          if (!isRowCollective && !empCode && row.Message_Content) {
             const codeMatch = String(row.Message_Content).match(/\b(?:Employee Code|Emp Code|Code|EMPCODE)[*\s:]+(\d{4,10})\b/i);
             if (codeMatch) empCode = codeMatch[1];
             const nameMatch = String(row.Message_Content).match(/(?:salary|karmchari|employee|hai)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+(?:ko|ki|ke|ka)\b/i);
@@ -1876,19 +2382,12 @@ class MemoryEngine {
     const norm = normalizeLower(currentMessage);
     const isContinuationParticle = /^(aur|and|then|also|ab|fir|uske\s*baad|what\s*about|aur\s*bhi)\b/i.test(norm.trim());
 
-    // 1. Is this an independent/new question that should NOT inherit previous context?
-    const currentSubject = (resolved.employeeName || resolved.nameFilter || resolved.searchToken || "").trim().toLowerCase();
-    const historySubject = (history.lastEmployeeName || "").trim().toLowerCase();
-    const hasExplicitNewEmployee = Boolean(
-      (resolved.employeeCode && history.lastEmployeeCode && String(resolved.employeeCode) !== String(history.lastEmployeeCode)) ||
-      (resolved.employeeCode && !history.lastEmployeeCode) ||
-      (currentSubject && historySubject && currentSubject !== historySubject) ||
-      (currentSubject && !historySubject && !isPronounFollowup && !isListOrIdentityFollowup)
-    );
-    const isPronounFollowup = /\b(iska|iski|iske|inhe|inhein|unka|unki|unke|same|vahi|uska|uski|uske|previous|above|wahi|this person|that person|isi|isi\s*employee|is\s*employee|is\s*bande|isi\s*bande|current\s*employee)\b/i.test(norm);
-    const isListOrIdentityFollowup = /\b(kon\s*kon|kaun\s*kaun|kon\s*hai|kaun\s*hai|who\s*all|who\s*are\s*they|list|names|naam\s*kya|details?\s*nikalo|detail\s*do|details?\s*do|data\s*do|dikhao|batao)\b/i.test(norm);
-    const isGlobalAggregateOrRanking = /\b(top\s*\d+|bottom\s*\d+|sabse\s*jyada|sabse\s*kam|highest|lowest|all\s*employees|sabhi\s*karmchari|total\s*employees|kitne\s*log|kitne\s*employee|total\s*count)\b/i.test(norm);
-    const isGlobalEventQuery = /\b(aaj\s*kiska|aaj\s*kiski|kiska\s*birthday|kiski\s*anniversary|kiska\s*janamdin|kiski\s*saalgirah)\b/i.test(norm);
+    // 1. Plural / Collective vs Singular Pronouns & Identity Helpers
+    const isPluralOrCollectiveFollowup = /\b(in\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|un\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|sabka|sabki|sabke|sabhi\s*ka|sabhi\s*ki|sabhi\s*ke|in\s*sab\s*ka|all\s*of\s*them|all\s*of\s*these)\b/i.test(norm);
+    const isPronounFollowup = !isPluralOrCollectiveFollowup && /\b(iska|iski|iske|inhe|inhein|unka|unki|unke|same|vahi|uska|uski|uske|wahi|this person|that person|isi|isi\s*employee|is\s*employee|is\s*bande|isi\s*bande|current\s*employee)\b/i.test(norm);
+    const isPriorReferenceFollowup = /\b(pehle\s*wala|pehle\s*wale|pehle\s*wali|pahle\s*wala|pahle\s*wale|purane\s*wale|previous\s*employee|earlier\s*employee|jo\s*pehle\s*(?:employee\s*)?(?:diya|bataya|pucha)\s*tha)\b/i.test(norm);
+    const isDualEntityFollowup = /\b(dono\s*(?:ka|ki|ke|ko|bhi)?|both|both\s*of\s*them|dono\s*employee)\b/i.test(norm);
+    const isIdentityQuestion = /\b(kon\s*hai|kaun\s*hai|who\s*is\s*(?:he|she|this|that|it)|unka\s*naam\s*kya\s*hai|iska\s*naam\s*kya\s*hai|kiska\s*naam\s*hai)\b/i.test(norm);
 
     // 1.5 Subset / Referential Dataset Follow-Up (e.g. "inme se 1000 employee...", "in sabhi ka...", "in sabka...", "inka...", "unka...")
     const isSubsetFollowup = /\b(inme\s*se|unme\s*se|isme\s*se|usme\s*se|in\s*(?:\d+\s*)?(?:logo|karmchari|employee|employees)\s*me\s*se|in\s*sab\s*me\s*se|inhi\s*me\s*se|among\s*them|out\s*of\s*(?:these|them|those|\d+)?|from\s*(?:these|them|those|this\s*list)?|in\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|un\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|in\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|un\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*karmchari(?:yo)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*employees\s*(?:ka|ki|ke|ko|se|me\s*se)?|these\s*employees|inka|unka|in\s*me\s*se|is\s*list\s*(?:se|me\s*se)|all\s*of\s*(?:these|them|those)?|their\s*(?:name|details|mobile|pf|salary)?|sabhi\s*ka|sabka)\b/i.test(norm) ||
@@ -1900,7 +2399,7 @@ class MemoryEngine {
         history.lastIntent === "ABSENT_EMPLOYEE_LIST"
       ));
 
-    if (isSubsetFollowup && (history.lastIntent || history.lastCount || history.lastSpecificDate)) {
+    if (isSubsetFollowup && (history.lastIntent || history.lastCount || history.lastSpecificDate || history.lastEmployeeName)) {
       if (resolved.limit && resolved.employeeCode && (String(resolved.employeeCode) === String(resolved.limit) || parseInt(resolved.employeeCode, 10) === resolved.limit)) {
         resolved.employeeCode = null;
       }
@@ -1909,9 +2408,6 @@ class MemoryEngine {
       const prevDate = history.lastSpecificDate || history.lastEntities?.specificDate || null;
       const prevCount = history.lastCount || history.lastEntities?.count || null;
 
-      // CRITICAL RULE FROM USER:
-      // "jab tak mai ye na bolu ki itne employee ya itna ka hi data tab tak query me top nahi lagana ok ye yad hi rakhana hai ok"
-      // Only set numeric limit if the user explicitly specified a count in their current message
       const explicitLimitMatch = norm.match(/\b(?:top\s*(\d+)|(\d+)\s*(?:employee|employees|karmchari|log|records?|data|ka\s*data|ki\s*list|ki\s*suchi))\b/i);
       let limitVal = null;
       if (explicitLimitMatch) {
@@ -1920,7 +2416,6 @@ class MemoryEngine {
       } else if (resolved.limit && resolved.limit > 0) {
         limitVal = resolved.limit;
       } else {
-        // No explicit limit requested -> User wants ALL records ("in sabhi ka")!
         resolved.limit = null;
         resolved.isAllRequested = true;
       }
@@ -1960,11 +2455,18 @@ class MemoryEngine {
         if (history.lastExcludeBranch) resolved.excludeBranch = history.lastExcludeBranch;
         if (history.lastEmployeeStatus) resolved.employeeStatus = history.lastEmployeeStatus;
         if (history.lastDesignation) resolved.designation = history.lastDesignation;
+        // ✅ Preserve name filter from the previous count (e.g. "Atendra naam ke" → detail do)
+        const prevEmpName = history.lastEmployeeName || null;
+        if (prevEmpName && !resolved.employeeName) {
+          resolved.employeeName = prevEmpName;
+          resolved.nameFilter = prevEmpName;
+        }
         resolved.priorCount = prevCount;
 
         const countLabel = prevCount ? `${prevCount} ` : "";
         const limitStr = limitVal ? `${limitVal} ` : "sabhi ";
-        rewrittenQuestion = `Out of ${countLabel}employees, provide the details of ${limitStr}employees.`;
+        const nameLabel = prevEmpName ? ` named "${prevEmpName}"` : "";
+        rewrittenQuestion = `Out of ${countLabel}employees${nameLabel}, provide the details of ${limitStr}employees.`;
       } else if (prevDate) {
         resolvedIntent = "PRESENT_EMPLOYEE_LIST";
         if (prevDate) resolved.specificDate = prevDate;
@@ -1987,7 +2489,90 @@ class MemoryEngine {
       };
     }
 
-    if (!isContinuationParticle && !isPronounFollowup && !isListOrIdentityFollowup && !isSubsetFollowup && (hasExplicitNewEmployee || isGlobalAggregateOrRanking || isGlobalEventQuery)) {
+    // 1.6 Dual Entity / Multi-Entity Reference ("dono ka batao", "both of them")
+    if (isDualEntityFollowup && Array.isArray(history.knownEmployees) && history.knownEmployees.length >= 2) {
+      const emp1 = history.knownEmployees[0];
+      const emp2 = history.knownEmployees[1];
+      resolved.dualEmployees = [emp1, emp2];
+      resolved.employeeCodes = [emp1.code, emp2.code];
+      resolved.employeeCode = emp1.code;
+      console.log(`👥 [V6-MemoryEngine] Resolved dual entity follow-up: ${emp1.name || emp1.code} & ${emp2.name || emp2.code}`);
+      return { entities: resolved, intent: resolvedIntent, isFollowup: true, previousTurn: history };
+    }
+
+    // 1.7 Prior Reference Follow-Up ("pehle wala", "previous employee")
+    if (isPriorReferenceFollowup && Array.isArray(history.knownEmployees) && history.knownEmployees.length >= 2) {
+      const priorEmp = history.knownEmployees[1];
+      resolved.employeeCode = priorEmp.code;
+      resolved.employeeName = priorEmp.name || null;
+      console.log(`⏮️ [V6-MemoryEngine] Resolved prior reference employee: ${priorEmp.name || priorEmp.code}`);
+      return { entities: resolved, intent: resolvedIntent, isFollowup: true, previousTurn: history };
+    }
+
+    // 1.8 Scope Shift Detection: Shifting to General / All / Count / Collective List Queries
+    const hasUniversalQuantifier = Boolean(
+      resolved.isAllRequested ||
+      /\b(all\s*employees?|all\s*staff|sabhi\s*karmchari|sabhi\s*employees?|saare\s*employees?|saare\s*karmchari|total\s*employees?|sab\s*employee|sab\s*karmchari|har\s*ek\s*employee|every\s*employee|everyone|all\s*records|pure\s*staff|poore\s*staff|complete\s*list|full\s*list|sabhi\s*ki|sabhi\s*ka|sabhi\s*ke|sabka|sabki|sabke|all\s*data|all\s*members)\b/i.test(norm) ||
+      (/\ball\b/i.test(norm) && /\b(employee|employees|karmchari|attendance|salary|list|present|absent|leave|staff)\b/i.test(norm))
+    );
+
+    const hasAggregateOrCountPattern = Boolean(
+      /\b(kitne\s*(?:employee|employees|karmchari|log|staff|people|member|hain|the)|total\s*count|overall\s*count|how\s*many|total\s*karmchari|total\s*log|ginti|sankhya)\b/i.test(norm) ||
+      (/\b(kitne|how\s*many)\b/i.test(norm) && /\b(present|absent|active|inactive|leave|mispunch)\b/i.test(norm))
+    );
+
+    const hasCollectiveListPattern = Boolean(
+      /\b(kaun\s*kaun|kon\s*kon|who\s*all|who\s*are\s*they|kiske\s*kiske)\b/i.test(norm) && /\b(present|absent|aaye|duty|leave|chhutti|pf|mispunch)\b/i.test(norm)
+    );
+
+    const isCollectiveIntent = [
+      "EMPLOYEE_COUNT", "PRESENT_COUNT", "ABSENT_COUNT",
+      "PRESENT_EMPLOYEE_LIST", "ABSENT_EMPLOYEE_LIST",
+      "SALARY_TOTAL_AGGREGATE", "SALARY_COUNT_AGGREGATE",
+      "PF_COUNT", "PF_DEDUCTION_COUNT",
+      "COMPANY_SUMMARY", "DEPARTMENT_COUNT",
+      "SERVICE_REMINDERS_DUE", "HOLIDAY_LIST",
+      "BIRTHDAYS_MONTH", "BIRTHDAY_TODAY",
+      "WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY",
+      "HIGHEST_SALARY_RANKING"
+    ].includes(intent);
+
+    const isScopeShiftToGeneralOrAll = !isPronounFollowup && !isSubsetFollowup && !isPriorReferenceFollowup && !isDualEntityFollowup && (
+      hasUniversalQuantifier ||
+      hasAggregateOrCountPattern ||
+      hasCollectiveListPattern ||
+      isCollectiveIntent
+    );
+
+    if (isScopeShiftToGeneralOrAll) {
+      console.log(`🌐 [V6-MemoryEngine] Detected scope shift to universal/collective query (${intent || 'GENERAL'}). Detaching individual employee context.`);
+      resolved.employeeCode = null;
+      resolved.employeeName = null;
+      resolved.nameFilter = null;
+      resolved.searchToken = null;
+      resolved.isAllRequested = true;
+
+      return {
+        entities: resolved,
+        intent: resolvedIntent,
+        isFollowup: false,
+        previousTurn: history
+      };
+    }
+
+    // 1.9 Is this an independent/new question that should NOT inherit previous context?
+    const currentSubject = (resolved.employeeName || resolved.nameFilter || resolved.searchToken || "").trim().toLowerCase();
+    const historySubject = (history.lastEmployeeName || "").trim().toLowerCase();
+    const hasExplicitNewEmployee = Boolean(
+      (resolved.employeeCode && history.lastEmployeeCode && String(resolved.employeeCode) !== String(history.lastEmployeeCode)) ||
+      (resolved.employeeCode && !history.lastEmployeeCode) ||
+      (currentSubject && historySubject && currentSubject !== historySubject) ||
+      (currentSubject && !historySubject && !isPronounFollowup && !isIdentityQuestion)
+    );
+    const isGlobalAggregateOrRanking = /\b(top\s*\d+|bottom\s*\d+|sabse\s*jyada|sabse\s*kam|highest|lowest|all\s*employees|sabhi\s*karmchari|total\s*employees|kitne\s*log|kitne\s*employee|total\s*count)\b/i.test(norm);
+    const isGlobalEventQuery = /\b(aaj\s*kiska|aaj\s*kiski|kiska\s*birthday|kiski\s*anniversary|kiska\s*janamdin|kiski\s*saalgirah)\b/i.test(norm);
+
+    if (!isContinuationParticle && !isPronounFollowup && !isIdentityQuestion && !isSubsetFollowup && (hasExplicitNewEmployee || isGlobalAggregateOrRanking || isGlobalEventQuery)) {
       // Independent query - start fresh context for this domain
       return { entities: resolved, intent: resolvedIntent, isFollowup: false, previousTurn: history };
     }
@@ -2006,12 +2591,9 @@ class MemoryEngine {
     if (isAggregateFollowup) {
       resolvedIntent = history.lastIntent;
 
-      // Status inheritance (e.g. if user asks "aur branch 2 par?", inherit ACTIVE or INACTIVE)
       if (!resolved.employeeStatus && history.lastEmployeeStatus) {
         resolved.employeeStatus = history.lastEmployeeStatus;
       }
-
-      // Branch inheritance (e.g. if user asks "aur inactive?", inherit branch 2)
       if (!resolved.branch && !resolved.branches && !resolved.excludeBranch && history.lastBranch) {
         resolved.branch = history.lastBranch;
         resolved.locCode = history.lastBranch;
@@ -2019,13 +2601,9 @@ class MemoryEngine {
       if (!resolved.branches && history.lastBranches && !resolved.branch && !resolved.excludeBranch) {
         resolved.branches = history.lastBranches;
       }
-
-      // Designation inheritance
       if (!resolved.designation && history.lastDesignation) {
         resolved.designation = history.lastDesignation;
       }
-
-      // Month/Year inheritance
       if (!resolved.month && history.lastMonth) {
         resolved.month = history.lastMonth;
       }
@@ -2037,19 +2615,17 @@ class MemoryEngine {
     }
 
     // 3. Detect Elliptical / Follow-up Patterns for Individual Employees
-    // Attribute queries (asking for an attribute of a person without specifying a person)
     const isAttributeQuery = /\b(basic|basic_earn|gross|net|salary|pagar|tankha|vetan|ctc|designation|post|pad|mobile|phone|contact|address|pata|joining|doj|birthday|dob|janamdin|anniversary|saalgirah|bank|account|khata|ifsc|pan|panno|aadhaar|aadhar|pf|pfnumber|uan|esi|leave|leaves|chhutti|asset|laptop|mispunch|punch|attendance|haziri|detail|details|info|information|data|biodata|profile)\b/i.test(norm);
-
-    // Temporal queries without subject (e.g. "aur November ki?", "October 2025 ki?", "pichle mahine ki?")
     const isTemporalQuery = Boolean(resolved.month || resolved.year || resolved.specificDate || /\b(pichle\s*mahine|last\s*month|agle\s*mahine|next\s*month)\b/i.test(norm));
-
     const hasSubjectInHistory = Boolean(history.lastEmployeeCode || history.lastEmployeeName);
 
     const isContextualFollowup = Boolean(
-      hasSubjectInHistory && (
+      hasSubjectInHistory &&
+      !resolved.isAllRequested &&
+      (
         isPronounFollowup ||
         isContinuationParticle ||
-        isListOrIdentityFollowup ||
+        isIdentityQuestion ||
         (isAttributeQuery && !resolved.employeeCode && !resolved.employeeName && !resolved.searchToken) ||
         (isTemporalQuery && !resolved.employeeCode && !resolved.employeeName && !resolved.searchToken) ||
         history.isPendingClarification
@@ -2057,40 +2633,33 @@ class MemoryEngine {
     );
 
     if (isContextualFollowup) {
-      // Inherit employee from previous turn
       if (!resolved.employeeCode && history.lastEmployeeCode) {
         resolved.employeeCode = history.lastEmployeeCode;
         if (history.lastEmployeeName) {
           resolved.employeeName = history.lastEmployeeName;
         }
       } else if (!resolved.employeeCode && !resolved.employeeName && history.lastEmployeeName) {
-        // Inherit employeeName when no code is in history (e.g. previous turn was "Atendra name ke kitne employee hai")
         resolved.employeeName = history.lastEmployeeName;
         resolved.nameFilter = history.lastEmployeeName;
       }
 
-      // If this is a temporal follow-up without an explicit attribute in current message, inherit the previous intent!
-      // (e.g. Turn 1 was ATTENDANCE_REPORT, Turn 2 is "aur November ki?")
       if (isTemporalQuery && !isAttributeQuery && (intent === "GENERAL_DATABASE_QUERY" || !intent)) {
         if (history.lastIntent && history.lastIntent !== "GENERAL_DATABASE_QUERY") {
           resolvedIntent = history.lastIntent;
         }
       }
 
-      // If this is a detail/list or profile query
-      if (isListOrIdentityFollowup || isAttributeQuery || isPronounFollowup) {
+      if (isIdentityQuestion || isAttributeQuery || isPronounFollowup) {
         if (!resolvedIntent || resolvedIntent === "GENERAL_DATABASE_QUERY" || resolvedIntent === "EMPLOYEE_COUNT") {
           resolvedIntent = "EMPLOYEE_LOOKUP";
         }
       }
 
-      // If this is an attribute query for profile (designation, mobile, address, etc.)
       const isProfileAttribute = /\b(designation|post|pad|mobile|phone|contact|address|pata|dob|birthday|joining|doj|bank|account|pan|aadhaar|pf)\b/i.test(norm);
       if (isProfileAttribute && (!resolvedIntent || resolvedIntent === "GENERAL_DATABASE_QUERY")) {
         resolvedIntent = "EMPLOYEE_LOOKUP";
       }
 
-      // Inherit month/year if not specified in the current follow-up and not asking for basic profile attributes
       if (!resolved.month && history.lastMonth && !isProfileAttribute) {
         resolved.month = history.lastMonth;
       }
@@ -2128,28 +2697,52 @@ class MemoryEngine {
 
     const isNewSubject = isNewEmployeeCode || isNewEmployeeName || isNameWithoutOldCode;
 
+    // Multi-entity memory stack: keep track of recent employees in conversation
+    let knownEmployees = Array.isArray(existing.knownEmployees) ? [...existing.knownEmployees] : [];
+    if (hasCurrentEmpCode) {
+      const empCodeStr = String(entities.employeeCode);
+      const empNameStr = currentName || (existing.lastEmployeeCode === empCodeStr ? existing.lastEmployeeName : null);
+      knownEmployees = knownEmployees.filter(e => String(e.code) !== empCodeStr);
+      knownEmployees.unshift({
+        code: empCodeStr,
+        name: empNameStr,
+        branch: entities.branch || null,
+        designation: entities.designation || null,
+        timestamp: Date.now()
+      });
+      if (knownEmployees.length > 10) knownEmployees = knownEmployees.slice(0, 10);
+    }
+
+    // Collective or Universal scope check
+    const isCollectiveOrAllQuery = Boolean(
+      entities.isAllRequested ||
+      [
+        "EMPLOYEE_COUNT", "SALARY_TOTAL_AGGREGATE", "SALARY_COUNT_AGGREGATE",
+        "PF_COUNT", "PF_DEDUCTION_COUNT", "COMPANY_SUMMARY", "DEPARTMENT_COUNT",
+        "PRESENT_COUNT", "ABSENT_COUNT", "PRESENT_EMPLOYEE_LIST", "ABSENT_EMPLOYEE_LIST",
+        "MISPUNCH_REPORT", "MISPUNCH_COUNT", "EMPLOYEE_LEAVE_LIST", "EMPLOYEE_LEAVE_COUNT",
+        "SERVICE_REMINDERS_DUE", "HOLIDAY_LIST", "BIRTHDAYS_MONTH", "BIRTHDAY_TODAY",
+        "WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY", "HIGHEST_SALARY_RANKING"
+      ].includes(intent) ||
+      (!hasCurrentEmpCode && !hasCurrentEmpName && (intent === "ATTENDANCE_REPORT" || intent === "SALARY_REPORT"))
+    );
+
     let newEmpCode = null;
     let newEmpName = null;
 
-    if (hasCurrentEmpCode) {
+    if (isCollectiveOrAllQuery) {
+      // Universal / collective queries clear active individual employee context
+      newEmpCode = null;
+      newEmpName = null;
+    } else if (hasCurrentEmpCode) {
       newEmpCode = String(entities.employeeCode);
       newEmpName = currentName || (isNewSubject ? null : existing.lastEmployeeName) || null;
     } else if (hasCurrentEmpName) {
-      // Current turn specifically has an employee name (e.g. "Atendra")
       newEmpCode = null; // Stale code must NEVER bleed into a name query!
       newEmpName = currentName;
     } else {
-      // Neither code nor name was explicitly requested:
-      // If current query was a general company-wide aggregate or summary, do NOT retain prior employee context
-      const isGeneralCompanyQuery = [
-        "EMPLOYEE_COUNT", "SALARY_TOTAL_AGGREGATE", "SALARY_COUNT_AGGREGATE",
-        "PF_COUNT", "COMPANY_SUMMARY", "DEPARTMENT_COUNT"
-      ].includes(intent) && !entities.branch && !entities.designation;
-
-      if (!isGeneralCompanyQuery) {
-        newEmpCode = existing.lastEmployeeCode || null;
-        newEmpName = existing.lastEmployeeName || null;
-      }
+      newEmpCode = existing.lastEmployeeCode || null;
+      newEmpName = existing.lastEmployeeName || null;
     }
 
     const newBranch = entities.branch || (isNewSubject ? null : existing.lastBranch) || null;
@@ -2168,8 +2761,11 @@ class MemoryEngine {
 
     this.sessions.set(conversationId, {
       ...existing,
+      userName: entities.userName || existing.userName || null,
+      lastUserName: entities.userName || existing.lastUserName || null,
       lastEmployeeCode: newEmpCode,
-      lastEmployeeName: newEmpName,
+      lastEmployeeName: newEmpName || entities.userName || existing.lastEmployeeName || null,
+      knownEmployees,
       lastBranch: newBranch,
       lastBranches: newBranches,
       lastExcludeBranch: newExcludeBranch,
@@ -2657,8 +3253,9 @@ WHERE (LTRIM(RTRIM(CONVERT(varchar(50), [S].[Emp_Code]))) = '${cleanEmp}' OR LTR
           sql += ` ORDER BY [S].[salyear] ASC, [S].[SalMnth] ASC;`;
         }
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
-      } else if (month || year) {
-        let sql = `SELECT TOP 200
+      } else if (month || year || entities.isAllRequested || !emp) {
+        const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+        let sql = `SELECT ${topClause}
   LTRIM(RTRIM(CONVERT(varchar(50), ISNULL([E].[EMPCODE], [S].[Emp_Code])))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
   [S].[SalMnth] AS [SalaryMonth],
@@ -2679,6 +3276,10 @@ WHERE (ISNULL([S].[Final_Payment], 0) > 0 OR ISNULL([S].[Gross_Earn], 0) > 0)`;
         if (month) sql += ` AND [S].[SalMnth] = ${month}`;
         if (year) sql += ` AND [S].[salyear] = ${year}`;
         if (branch) sql += ` AND [E].[LOCATION] = '${branch.replace(/'/g, "''")}'`;
+        if (!month && !year) {
+          sql += ` AND [S].[salyear] = (SELECT MAX(salyear) FROM [dbo].[SALARYFILE] WITH (NOLOCK))
+  AND [S].[SalMnth] = (SELECT MAX(SalMnth) FROM [dbo].[SALARYFILE] WITH (NOLOCK) WHERE salyear = (SELECT MAX(salyear) FROM [dbo].[SALARYFILE] WITH (NOLOCK)))`;
+        }
         sql += ` ORDER BY ISNULL([S].[Final_Payment], 0) DESC, [E].[EMPCODE];`;
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "SALARYFILE" };
       }
@@ -2845,7 +3446,8 @@ ORDER BY DAY([E].[DOM]) ASC, [E].[EMPFIRSTNAME] ASC, [E].[EMPCODE] ASC;`;
     case "BIRTHDAYS_MONTH":
       {
         const mVal = month || "MONTH(GETDATE())";
-        let sql = `SELECT TOP 200
+        const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+        let sql = `SELECT ${topClause}
   LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
   CONVERT(varchar(10), E.[DOB], 120) AS [DateOfBirth],
@@ -3068,8 +3670,42 @@ WHERE (LTRIM(RTRIM(CONVERT(varchar(50), [A].[Emp_Code]))) = '${cleanEmp}' OR LTR
         }
         sql += ` ORDER BY [A].[dateoffice] ASC;`;
         return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99 };
+      } else {
+        const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+        let sql = `SELECT ${topClause}
+  [A].[Emp_Code] AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL([E].[EMPFIRSTNAME], '') + ' ' + ISNULL([E].[EMPLASTNAME], ''))) AS [EmployeeName],
+  CONVERT(varchar(10), [A].[dateoffice], 120) AS [AttendanceDate],
+  DATENAME(weekday, [A].[dateoffice]) AS [DayName],
+  [A].[flag] AS [Flag],
+  [A].[status] AS [Status],
+  [A].[presentvalue] AS [PresentValue],
+  [A].[absentvalue] AS [AbsentValue],
+  CONVERT(varchar(8), [A].[in1], 108) AS [InTime],
+  CONVERT(varchar(8), [A].[out1], 108) AS [OutTime],
+  [A].[hoursworked] AS [HoursWorked],
+  [E].[LOCATION] AS [Location]
+FROM [dbo].[attendancetable] AS [A] WITH (NOLOCK)
+LEFT JOIN [dbo].[EMPLOYEEMASTER] AS [E] WITH (NOLOCK) 
+  ON LTRIM(RTRIM(CONVERT(varchar(50), [A].[Emp_Code]))) = LTRIM(RTRIM(CONVERT(varchar(50), [E].[EMPCODE])))
+WHERE 1=1`;
+        if (entities.specificDate) {
+          sql += ` AND [A].[dateoffice] = '${entities.specificDate}'`;
+        } else if (entities.isToday || /\b(aaj|today)\b/i.test(entities.rawMessage || "")) {
+          sql += ` AND [A].[dateoffice] = CAST(GETDATE() AS DATE)`;
+        } else {
+          if (month) sql += ` AND MONTH([A].[dateoffice]) = ${month}`;
+          if (year) sql += ` AND YEAR([A].[dateoffice]) = ${year}`;
+          if (!month && !year) {
+            sql += ` AND [A].[dateoffice] = (SELECT MAX([dateoffice]) FROM [dbo].[attendancetable] WITH (NOLOCK))`;
+          }
+        }
+        if (branch) {
+          sql += ` AND ([E].[LOCATION] = '${branch.replace(/'/g, "''")}' OR CONVERT(varchar(50), [E].[LOCATION]) = '${branch.replace(/'/g, "''")}')`;
+        }
+        sql += ` ORDER BY [A].[dateoffice] DESC, [E].[EMPFIRSTNAME] ASC;`;
+        return { sql, requiresJoin: true, isTemplate: true, confidence: 0.99, targetTable: "attendancetable" };
       }
-      break;
 
     case "EMPLOYEE_LEAVE_COUNT":
     case "EMPLOYEE_LEAVE_LIST":
@@ -3568,6 +4204,43 @@ FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
 WHERE (E.[EMPFIRSTNAME] LIKE '%${targetName}%' OR CONCAT(E.[EMPFIRSTNAME], ' ', ISNULL(E.[EMPLASTNAME], '')) LIKE '%${targetName}%')
 ORDER BY E.[EMPCODE];`;
           return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+        } else if (entities.isAllRequested || entities.limit || !emp) {
+          const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+          let sql = `SELECT ${topClause}
+  LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+  E.[LOCATION] AS [Location],
+  E.[EMPLOYEEDESIGNATION] AS [Designation],
+  E.[MOBILENO] AS [MobileNo],
+  E.[CORPORATEMAILID] AS [Email],
+  CONVERT(varchar(10), E.[CURRENTJOINDATE], 120) AS [JoiningDate],
+  CONVERT(varchar(10), E.[DOB], 120) AS [DateOfBirth],
+  E.[PANNO] AS [PAN],
+  ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[ADHARNO]))), ''), ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[UID_NO]))), ''), E.[uidno])) AS [AadharNo],
+  E.[PFNUMBER] AS [PFNumber],
+  E.[BANKACCOUNTNO] AS [BankAccountNo],
+  E.[BANKNAME] AS [BankName],
+  ISNULL(E.[MONTHLY_CTC], 0) AS [MonthlyCTC],
+  ISNULL(E.[ANNUAL_CTC], 0) AS [AnnualCTC],
+  CASE WHEN E.[EMP_STATUS] = 'A' OR E.[EMP_STATUS] = '1' THEN 'Active' ELSE 'Inactive' END AS [EmploymentStatus]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+WHERE LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], ''))) NOT IN ('', '-', '--', '---')`;
+          // Apply name filter when coming from a name-based subset followup (e.g., "Atendra detail do")
+          const fallbackNameFilter = (entities.employeeName || entities.nameFilter || "").replace(/'/g, "''");
+          if (fallbackNameFilter) {
+            sql += ` AND (E.[EMPFIRSTNAME] LIKE '%${fallbackNameFilter}%' OR CONCAT(LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], ''))), ' ', LTRIM(RTRIM(ISNULL(E.[EMPLASTNAME], '')))) LIKE '%${fallbackNameFilter}%')`;
+          }
+          if (branch || entities.locCode) {
+            const loc = branch || entities.locCode;
+            sql += ` AND (E.[LOCATION] = '${String(loc).replace(/'/g, "''")}' OR CONVERT(varchar(50), E.[LOCATION]) = '${String(loc).replace(/'/g, "''")}')`;
+          }
+          if (entities.employeeStatus === "ACTIVE") {
+            sql += ` AND (E.[EMP_STATUS] = 'A' OR E.[EMP_STATUS] = '1' OR E.[LASTWOR_DATE] IS NULL)`;
+          } else if (entities.employeeStatus === "INACTIVE") {
+            sql += ` AND (E.[EMP_STATUS] = 'I' OR E.[EMP_STATUS] = '0' OR E.[LASTWOR_DATE] IS NOT NULL)`;
+          }
+          sql += ` ORDER BY E.[EMPFIRSTNAME] ASC, E.[EMPCODE] ASC;`;
+          return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
         }
       }
       break;
@@ -3748,7 +4421,8 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(100), A.[account_number]))) = '${cleanAcc}'
 
     case "AADHAAR_VERIFY_LIST":
       {
-        let sql = `SELECT TOP 200
+        const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+        let sql = `SELECT ${topClause}
   LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL(em.[EMPFIRSTNAME], '') + ' ' + ISNULL(em.[EMPLASTNAME], ''))) AS [EmployeeName],
   [em].[LOCATION] AS [Location],
@@ -3807,7 +4481,8 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) = '${cleanEmp}';`;
 
     case "PAN_VERIFY_LIST":
       {
-        let sql = `SELECT TOP 200
+        const topClause = entities.limit ? `TOP ${parseInt(entities.limit, 10)} ` : "";
+        let sql = `SELECT ${topClause}
   LTRIM(RTRIM(CONVERT(varchar(50), v.[EMPCODE]))) AS [EmployeeCode],
   LTRIM(RTRIM(ISNULL(em.[EMPFIRSTNAME], '') + ' ' + ISNULL(em.[EMPLASTNAME], ''))) AS [EmployeeName],
   [em].[LOCATION] AS [Location],
@@ -3963,6 +4638,7 @@ const canonicalizeQueryPattern = (text) => {
   norm = norm.replace(/\b(how\s+many|how\s+much|kitne|kitna|kitni|itne|itna|total\s+count\s+of|count\s+of)\b/g, "kitne");
   norm = norm.replace(/\b(tell\s+me|batao|bataiye|dikhao|show\s+me|give\s+me|display)\b/g, "batao");
   norm = norm.replace(/\b(karmchari|karmachari|staff|employees|workers?)\b/g, "employee");
+  norm = norm.replace(/\b(details|biodata|profile|info|information)\b/g, "detail");
 
   // 1.2. Normalize full calendar dates (e.g. 21/10/2025, 2025-10-21, 21-10-2025, 21.10.2025)
   norm = norm.replace(/\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/g, "<DATE>");
@@ -4202,22 +4878,22 @@ const matchLearnedSimilarQuery = async ({ sequelize, globalSequelize = null, mes
       if (entities.specificDate && !adaptedSQL.includes(entities.specificDate)) {
         adaptedSQL = adaptedSQL.replace(/dateoffice\s*=\s*'\d{4}-\d{2}-\d{2}'/gi, `dateoffice = '${entities.specificDate}'`);
       }
-      // Limit Adapter: If query asks for "kon kon" / "kaun kaun" / "list", strip TOP limit completely
-      const isKonKonLimit = /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(message || "") ||
-        /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(currQ || "");
+      // Limit Adapter: Do NOT include TOP unless user explicitly asked for TOP or ranking
+      const topMatch = (message || "").match(/\b(?:top\s*(\d+)|first\s*(\d+)|pehle\s*(\d+)|pahle\s*(\d+)|(\d+)\s*(?:records?|rows?|employees?|karmchari|log))\b/i) ||
+        (entities.limit ? [null, entities.limit] : null);
+      const isRankingSingular = /\b(sabse\s*jyada\s*kiski|kiski\s*salary\s*sabse\s*jyada|who\s*has\s*the\s*highest|kiski\s*salary\s*pay\s*hui|highest\s*earner)\b/i.test(message || "");
 
-      const topMatch = (message || "").match(/\btop\s*(\d+)\b/i);
-      if (isKonKonLimit) {
-        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+TOP\s+\d+\b/i, "SELECT");
-        adaptedSQL = adaptedSQL.replace(/\{\{limit\}\}/gi, "");
-      } else if (topMatch) {
-        const reqLimit = parseInt(topMatch[1], 10);
-        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+TOP\s+\d+\b/i, `SELECT TOP ${reqLimit}`);
+      if (topMatch) {
+        const reqLimit = parseInt(topMatch[1] || topMatch[2] || topMatch[3] || topMatch[4] || topMatch[5], 10);
+        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+(DISTINCT\s+)?TOP\s+\d+\b/i, (m, dist) => dist ? `SELECT DISTINCT TOP ${reqLimit}` : `SELECT TOP ${reqLimit}`);
         adaptedSQL = adaptedSQL.replace(/\{\{limit\}\}/gi, String(reqLimit));
-      } else if (/\b(sabse\s*jyada\s*kiski|kiski\s*salary\s*sabse\s*jyada|who\s*has\s*the\s*highest|kiski\s*salary\s*pay\s*hui|highest\s*earner)\b/i.test(message || "")) {
-        // Singular highest query
-        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+TOP\s+\d+\b/i, `SELECT TOP 1`);
+      } else if (isRankingSingular) {
+        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+(DISTINCT\s+)?TOP\s+\d+\b/i, (m, dist) => dist ? `SELECT DISTINCT TOP 1` : `SELECT TOP 1`);
         adaptedSQL = adaptedSQL.replace(/\{\{limit\}\}/gi, "1");
+      } else {
+        // User did not ask for TOP: strictly strip TOP from adapted SQL
+        adaptedSQL = adaptedSQL.replace(/\bSELECT\s+(DISTINCT\s+)?TOP\s+\d+\s+/gi, (m, dist) => dist ? "SELECT DISTINCT " : "SELECT ");
+        adaptedSQL = adaptedSQL.replace(/\{\{limit\}\}/gi, "");
       }
 
       // Salary Range & Threshold Dynamic Parameter Adapters:
@@ -4338,7 +5014,24 @@ const matchLearnedSimilarQuery = async ({ sequelize, globalSequelize = null, mes
         const canonLearned = canonicalizeQueryPattern(r.Normalized_Question);
         const canonLearnedTokens = getPatternTokens(r.Normalized_Question);
 
-        const isExact = (learnedNorm === normQuery || cleanLearned === cleanQuery);
+        const cleanOrig = normOriginal ? normOriginal.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim() : "";
+        const isExact = (
+          learnedNorm === normQuery ||
+          cleanLearned === cleanQuery ||
+          (Boolean(normOriginal) && (learnedNorm === normOriginal || cleanLearned === cleanOrig))
+        );
+
+        // 🌟 GOLDEN RULE TOP PRIORITY: If exact question match was trained by user, return it directly!
+        if (isExact) {
+          console.log(`🏆 [V6-RLHF-LearnedGoldenQuery] EXACT_LEARNED_GOLDEN_MATCH for: "${normOriginal || normQuery}" on learned rule: "${learnedNorm}"`);
+          return {
+            sql: r.SQL_Query,
+            intent: r.Intent || intent,
+            targetTable: r.Tables_Used || "AI_SQL_Learning_Tbl",
+            source: "EXACT_LEARNED_GOLDEN_MATCH",
+            confidence: 1.0
+          };
+        }
         const isExactCanonical = (canonQuery === canonLearned);
         const isCanonicalSubset = !exactOnly && (
           (canonQuery.includes(canonLearned) && canonLearned.length >= 4) ||
@@ -4444,9 +5137,9 @@ const matchLearnedSimilarQuery = async ({ sequelize, globalSequelize = null, mes
           // Guard: If user query asks for employee details/data/records/profile/list, do not match a count/aggregate learned rule
           const isAskingDetails = /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|who\s*are\s*they|which\s*employees|kiske\s*kiske|kisko\s*kisko)\b/i.test(normQuery) ||
             /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko)\b/i.test(normOriginal);
-          const hasEmployeeColumns = /\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME|EMPLASTNAME)\b/i.test(r.SQL_Query);
+          const hasEmployeeColumns = /\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME|EMPLASTNAME|\*)\b/i.test(r.SQL_Query) || /(?:FROM|JOIN)\s+(?:\[dbo\]\.)?\[?EMPLOYEEMASTER\]?/i.test(r.SQL_Query);
           const isLearnedCount = /\bCOUNT\s*\(/i.test(r.SQL_Query);
-          const isLearnedAggregateOnly = !hasEmployeeColumns || (isLearnedCount && !/\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME)\b/i.test(r.SQL_Query));
+          const isLearnedAggregateOnly = (isLearnedCount && !/\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME|\*)\b/i.test(r.SQL_Query)) || (!hasEmployeeColumns && /\b(COUNT|SUM|AVG)\s*\(/i.test(r.SQL_Query));
           if (isAskingDetails && isLearnedAggregateOnly) continue;
           if (isAskingDetails && (r.Intent === "PF_DEDUCTION_COUNT" || r.Intent === "PF_COUNT" || r.Intent === "EMPLOYEE_COUNT")) continue;
 
@@ -4572,9 +5265,9 @@ const matchLearnedSimilarQuery = async ({ sequelize, globalSequelize = null, mes
           // Guard: If user query asks for employee details/data/records/profile/list, do not match a count/aggregate learned rule
           const isAskingDetails = /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|who\s*are\s*they|which\s*employees|kiske\s*kiske|kisko\s*kisko)\b/i.test(normQuery) ||
             /\b(detail|details|info|information|data|biodata|profile|list|records?|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko)\b/i.test(normOriginal);
-          const hasEmployeeColumns = /\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME|EMPLASTNAME)\b/i.test(r.SQL_Query);
+          const hasEmployeeColumns = /\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME|EMPLASTNAME|\*)\b/i.test(r.SQL_Query) || /(?:FROM|JOIN)\s+(?:\[dbo\]\.)?\[?EMPLOYEEMASTER\]?/i.test(r.SQL_Query);
           const isLearnedCount = /\bCOUNT\s*\(/i.test(r.SQL_Query);
-          const isLearnedAggregateOnly = !hasEmployeeColumns || (isLearnedCount && !/\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME)\b/i.test(r.SQL_Query));
+          const isLearnedAggregateOnly = (isLearnedCount && !/\b(EmployeeCode|EmployeeName|EMPCODE|EMPFIRSTNAME|\*)\b/i.test(r.SQL_Query)) || (!hasEmployeeColumns && /\b(COUNT|SUM|AVG)\s*\(/i.test(r.SQL_Query));
           if (isAskingDetails && isLearnedAggregateOnly) continue;
           if (isAskingDetails && (r.Intent === "PF_DEDUCTION_COUNT" || r.Intent === "PF_COUNT" || r.Intent === "EMPLOYEE_COUNT")) continue;
 
@@ -5356,7 +6049,7 @@ const handleUserCorrectionAndDataLocation = async ({
     }
 
     generatedSQL = `
-      SELECT TOP 500
+      SELECT ${resolvedEntities.limit ? `TOP ${parseInt(resolvedEntities.limit, 10)} ` : ""}
         A.[Emp_Code],
         LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
         E.[LOCATION] AS [Branch],
@@ -5398,7 +6091,7 @@ const handleUserCorrectionAndDataLocation = async ({
       }
 
       generatedSQL = `
-        SELECT TOP 100
+        SELECT ${resolvedEntities.limit ? `TOP ${parseInt(resolvedEntities.limit, 10)} ` : ""}
           S.[Emp_Code],
           LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
           E.[LOCATION] AS [Branch],
@@ -5626,7 +6319,7 @@ Generate a high-performance, strictly READ-ONLY Microsoft SQL Server query.
 
 RULES:
 1. Output ONLY valid JSON in format: {"sql": "...", "explanation": "...", "tables": ["..."], "confidence": 0.95}
-2. TOP Limit Rule: If the user asks for 'all', 'sabhi', 'sabka', 'saare', 'everyone', 'complete', 'entire', or 'full list', DO NOT include any TOP clause (e.g. use SELECT directly). For normal sample queries without an 'all' requirement, use TOP 500. Never use SELECT *.
+2. TOP Limit Rule: Do NOT include any TOP clause (e.g. use standard SELECT) UNLESS the user explicitly asks for a specific limit, count, or top ranking (e.g. 'top 5', 'first 10', 'pehle 10', 'highest/lowest ranking'). If the user did not explicitly request TOP or a limit, do NOT add TOP. Never use SELECT *.
 3. COUNT / AGGREGATION MANDATE: If the user query asks for a count, quantity, or number of records (e.g. 'how many', 'how much', 'kitne', 'sankhya', 'ginti', 'number of employees present/absent/on leave'): You MUST generate a query that returns ONLY the aggregate COUNT (e.g. SELECT COUNT(DISTINCT ...) AS TotalCount ...). NEVER return a list or rows of employees when a count was requested!
 4. Always include WITH (NOLOCK) on every table reference.
 5. Use standard MSSQL functions (CONVERT, YEAR, MONTH, DATEDIFF, ISNULL, LTRIM, RTRIM).
@@ -5734,29 +6427,51 @@ const validateAndRepairSQL = (rawSql, userContext, options = {}) => {
     throw new ApiError(400, "Invalid SQL: Statement must be a SELECT query.");
   }
 
-  // 2. Ensure TOP limit OR handle unrestricted employee/record queries (e.g. "sabhi", "sabka", "all", "kon kon")
-  const allKeywordsRegex = /\b(all|every|everyone|everybody|sabhi|sabka|sabki|sabke|saare|sare|pura|puri|poora|poori|complete|entire|full\s*list|total\s*list|kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i;
-  const hasExplicitLimit = Boolean(options?.limit || options?.entities?.limit || userContext?.limit);
-  const isNoTopExplicit = !hasExplicitLimit && Boolean(
-    options?.noTopLimit ||
-    options?.isKonKonQuery ||
-    options?.isAllRequested ||
-    userContext?.noTopLimit ||
-    userContext?.isAllRequested ||
-    options?.intent === "SALARY_PF_DEDUCTION" ||
-    allKeywordsRegex.test(userContext?.rawMessage || "") ||
-    allKeywordsRegex.test(userContext?.message || "") ||
-    allKeywordsRegex.test(options?.rawMessage || "") ||
-    allKeywordsRegex.test(options?.englishQuery || "") ||
-    allKeywordsRegex.test(sql)
+  // If this is a user-trained Golden Rule query, preserve it as trained by administrator!
+  if (options?.isLearnedQuery) {
+    if (!/WITH\s*\(\s*NOLOCK\s*\)/i.test(sql) && /FROM\s+\[?[a-zA-Z0-9_]+\]?/i.test(sql)) {
+      sql = sql.replace(/(FROM\s+(?:\[dbo\]\.)?\[?[a-zA-Z0-9_]+\]?)(?!\s+WITH|\s+AS\s+\w+\s+WITH)/i, "$1 WITH (NOLOCK)");
+    }
+    return sql;
+  }
+
+  // 2. TOP LIMIT RULE: Do NOT add TOP unless user explicitly asked for a limit or ranking!
+  // If the user did NOT ask for TOP, strictly strip any arbitrary TOP clause.
+  const userQueryText = (
+    userContext?.rawMessage ||
+    userContext?.message ||
+    options?.rawMessage ||
+    options?.englishQuery ||
+    ""
   );
 
-  if (isNoTopExplicit) {
-    // If the user specifically asks for all / sabhi or full list, strip any arbitrary TOP limits
-    sql = sql.replace(/\bSELECT\s+(DISTINCT\s+)?TOP\s+\d+\b/gi, (match, dist) => dist ? "SELECT DISTINCT" : "SELECT");
-  } else if (!/\bTOP\s+\d+\b/i.test(sql) && !/\bCOUNT\s*\(/i.test(sql) && !/\bSUM\s*\(/i.test(sql) && !/\bAVG\s*\(/i.test(sql)) {
-    // For non-aggregated queries without explicit unlimited request, apply default limit
-    sql = sql.replace(/^\s*SELECT\b/i, `SELECT TOP ${options?.limit || 500}`);
+  const userExplicitTopMatch = userQueryText.match(/\b(?:top\s*(\d+)|first\s*(\d+)|pehle\s*(\d+)|pahle\s*(\d+)|(\d+)\s*(?:records?|rows?|employees?|karmchari|log))\b/i);
+
+  const hasExplicitLimit = Boolean(
+    options?.limit ||
+    options?.entities?.limit ||
+    userContext?.limit ||
+    userExplicitTopMatch
+  );
+
+  const isRankingOrExtremum = Boolean(
+    options?.intent?.includes("RANKING") ||
+    /\b(highest|lowest|sabse\s*jyada|sabse\s*kam|sabse\s*adhik|sabse\s*bada|sabse\s*chhota|maximum|minimum|peak)\b/i.test(userQueryText)
+  );
+
+  if (hasExplicitLimit) {
+    const rawLimit = options?.limit || options?.entities?.limit || userContext?.limit || (userExplicitTopMatch ? (userExplicitTopMatch[1] || userExplicitTopMatch[2] || userExplicitTopMatch[3] || userExplicitTopMatch[4] || userExplicitTopMatch[5]) : null);
+    const limitNum = rawLimit ? parseInt(rawLimit, 10) : null;
+    if (limitNum && limitNum > 0) {
+      if (/\bTOP\s+\d+\b/i.test(sql)) {
+        sql = sql.replace(/\bSELECT\s+(DISTINCT\s+)?TOP\s+\d+\b/gi, (m, dist) => dist ? `SELECT DISTINCT TOP ${limitNum}` : `SELECT TOP ${limitNum}`);
+      } else {
+        sql = sql.replace(/^\s*SELECT\s+(DISTINCT\s+)?/i, (match, dist) => dist ? `SELECT DISTINCT TOP ${limitNum} ` : `SELECT TOP ${limitNum} `);
+      }
+    }
+  } else if (!isRankingOrExtremum) {
+    // User DID NOT ask for TOP or ranking: STRICTLY STRIP ANY TOP CLAUSE!
+    sql = sql.replace(/\bSELECT\s+(DISTINCT\s+)?TOP\s+\d+\s+/gi, (match, dist) => dist ? "SELECT DISTINCT " : "SELECT ");
   }
 
   // 3. Fix potential duplicated WITH (NOLOCK)
@@ -6375,9 +7090,24 @@ const formatResponseViaAI = async ({
     const client = getOpenAIClient();
     const config = getModelConfig();
 
-    const maxSample = entities.limit ? Math.min(Number(entities.limit), 100) : (entities.isAllRequested ? Math.min(rows.length, 100) : (rows.length <= 100 ? rows.length : 50));
-    const sampleRows = Array.isArray(rows) ? rows.slice(0, maxSample) : [];
+    const maxSample = Math.min(rows.length, 10);
+    let sampleRows = Array.isArray(rows) ? rows.slice(0, maxSample) : [];
     const rowCount = Array.isArray(rows) ? rows.length : 0;
+
+    // Prune null/empty columns from sampleRows to avoid OpenAI token limit overflow (e.g. 257 columns in EMPLOYEEMASTER)
+    if (sampleRows.length > 0) {
+      const keys = Object.keys(sampleRows[0]).filter(k => !/^(raw_response|fcm|android|iemi|serverid|audit)/i.test(k));
+      const usefulKeys = keys.filter(k => sampleRows.some(r => r[k] !== null && r[k] !== undefined && String(r[k]).trim() !== "")).slice(0, 20);
+      sampleRows = sampleRows.map(r => {
+        const slim = {};
+        usefulKeys.forEach(k => {
+          if (r[k] !== null && r[k] !== undefined && String(r[k]).trim() !== "") {
+            slim[k] = r[k];
+          }
+        });
+        return slim;
+      });
+    }
 
     let contextNote = "";
     if (previousContext?.lastUserMessage) {
@@ -7904,7 +8634,32 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const gross = (r.GrossSalary || r.GrossEarnings || 0).toLocaleString("en-IN");
       const basic = (r.BasicPay || r.BasicEarnings || 0).toLocaleString("en-IN");
       const hra = (r.HRA || r.HRAEarnings || 0).toLocaleString("en-IN");
-      const ded = (r.TotalDeductions || r.Deductions || 0).toLocaleString("en-IN");
+      // Check if user specifically asked for net, basic, gross, or deduction ("jitna puchhe utna hi jawab de")
+      const lowerMsg = (message || entities.rawMessage || "").toLowerCase();
+      if (/\b(net\s*salary|net\s*pay|final\s*payment|in\s*hand|haath\s*me)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Net Salary (In-Hand / Final Payment)**: **₹${net}** hai.`,
+          summary: `Net Salary for ${r.EmployeeCode} (${m}/${y}): ₹${net}`
+        };
+      }
+      if (/\b(basic\s*pay|basic\s*salary|mool\s*vetan)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Basic Pay**: **₹${basic}** hai.`,
+          summary: `Basic Pay for ${r.EmployeeCode} (${m}/${y}): ₹${basic}`
+        };
+      }
+      if (/\b(gross\s*salary|gross\s*earn|gross\s*earnings)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Gross Earnings**: **₹${gross}** hai.`,
+          summary: `Gross for ${r.EmployeeCode} (${m}/${y}): ₹${gross}`
+        };
+      }
+      if (/\b(deduction|deductions|katauti|kitna\s*kata)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Total Deductions**: **₹${ded}** hai.`,
+          summary: `Deductions for ${r.EmployeeCode} (${m}/${y}): ₹${ded}`
+        };
+      }
 
       let ans = `Salary Slip Summary for **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** for **${m}/${y}**:\n\n` +
         `• **Gross Earnings:** ₹${gross}\n` +
@@ -7955,6 +8710,10 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const permAddr = r.PermanentAddress || r.PERMANENTADDRESS1 || null;
     const currAddr = r.CurrentAddress || r.CURRENTADDRESS1 || null;
 
+    // Specific single attribute detection: "jitna puchhe utna hi jawab de"
+    const lowerQ = (message || entities.rawMessage || "").toLowerCase();
+    const isFullProfileRequested = /\b(profile|poora|poori|complete|all\s*details|sab\s*kuch|biodata|bio\s*data|karmchari\s*data|full\s*data)\b/i.test(lowerQ);
+
     if (isAddressQuery) {
       let ans = `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke Address details:\n\n`;
       if (permAddr && String(permAddr).trim() !== "") {
@@ -7967,15 +8726,106 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       } else if (permAddr && String(permAddr).trim() !== "") {
         ans += `• 📍 **Current Address:** Same as Permanent Address\n`;
       }
-      ans += `• **Location / Branch:** ${r.Location || r.Branch || "-"}\n`;
-      ans += `• **Designation:** ${r.Designation || "-"}\n`;
-      ans += `• **Mobile No:** ${r.MobileNo || "-"}\n`;
-      if (r.EmploymentStatus || r.Status) ans += `• **Employment Status:** ${r.EmploymentStatus || r.Status}\n`;
+      if (r.Location || r.Branch) ans += `• **Location / Branch:** ${r.Location || r.Branch}\n`;
 
       return {
         answer: ans.trim(),
         summary: `Address for ${empName} (${empCode}): ${permAddr ? String(permAddr).trim() : 'Not available'}`
       };
+    }
+
+    if (!isFullProfileRequested) {
+      if (/\b(pan|pan\s*no|pan\s*number|pan\s*card)\b/i.test(lowerQ)) {
+        const pan = r.PAN || r.PANNO || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **PAN Number**: **${pan ? String(pan).trim() : 'Database me blank / update nahi hai (Not Available)'}** hai.`,
+          summary: `PAN for ${empName} (${empCode}): ${pan || 'Not available'}`
+        };
+      }
+      if (/\b(aadhaar|aadhar|uid|uidai|adhar)\b/i.test(lowerQ)) {
+        const aadhar = r.AadharNo || r.ADHARNO || r.UID_NO || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Aadhaar Number**: **${aadhar ? String(aadhar).trim() : 'Database me blank / update nahi hai (Not Available)'}** hai.`,
+          summary: `Aadhaar for ${empName} (${empCode}): ${aadhar || 'Not available'}`
+        };
+      }
+      if (/\b(mobile|phone|contact\s*no|contact\s*number|mobile\s*no|mob)\b/i.test(lowerQ)) {
+        const mob = r.MobileNo || r.MOBILENO || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Mobile Number**: **${mob ? String(mob).trim() : 'Not Available'}** hai.`,
+          summary: `Mobile for ${empName} (${empCode}): ${mob || 'Not available'}`
+        };
+      }
+      if (/\b(designation|post|role|pad|kya\s*kaam)\b/i.test(lowerQ)) {
+        const desg = r.Designation || r.EMPLOYEEDESIGNATION || null;
+        const loc = r.Location || r.Branch || "-";
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Designation**: **${desg || 'Not Available'}** hai (Location / Branch: **${loc}**).`,
+          summary: `Designation for ${empName} (${empCode}): ${desg || 'Not available'}`
+        };
+      }
+      if (/\b(bank|account\s*no|acc\s*no|ifsc|khata)\b/i.test(lowerQ)) {
+        const acc = r.BankAccountNo || r.BANKACCOUNTNO || "-";
+        const bank = r.BankName || r.BANKNAME || "-";
+        const ifsc = r.IFSC || r.ifsc_code || "-";
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Bank Details**:\n\n• **Bank Account No:** **${acc}**\n• **Bank Name:** ${bank}\n• **IFSC Code:** ${ifsc}`,
+          summary: `Bank details for ${empName} (${empCode}): Acc ${acc}`
+        };
+      }
+      if (/\b(email|mail|corporate\s*mail)\b/i.test(lowerQ)) {
+        const email = r.Email || r.CORPORATEMAILID || r.OfficialEmail || r.PersonalEmail || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Email ID**: **${email || 'Not Available'}** hai.`,
+          summary: `Email for ${empName} (${empCode}): ${email || 'Not available'}`
+        };
+      }
+      if (/\b(joining|doj|kab\s*join|joining\s*date|join\s*kiya)\b/i.test(lowerQ)) {
+        const doj = r.JoiningDate || r.DateOfJoining || r.CURRENTJOINDATE || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ki **Joining Date (DOJ)**: **${doj ? String(doj).slice(0, 10) : 'Not Available'}** hai.`,
+          summary: `Joining date for ${empName} (${empCode}): ${doj || 'Not available'}`
+        };
+      }
+      if (/\b(dob|birth\s*date|birthday|janamdin|date\s*of\s*birth)\b/i.test(lowerQ)) {
+        const dob = r.DateOfBirth || r.DOB || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ki **Date of Birth (DOB)**: **${dob ? String(dob).slice(0, 10) : 'Not Available'}** hai.`,
+          summary: `DOB for ${empName} (${empCode}): ${dob || 'Not available'}`
+        };
+      }
+      if (/\b(father|pitaji|father's\s*name)\b/i.test(lowerQ)) {
+        const fn = r.FatherName || r.FATHERNAME || null;
+        const fm = r.FatherMobile || r.FATHERCONTACTNO || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Father Name**: **${fn || 'Not Available'}**${fm ? ` (Contact: ${fm})` : ''} hai.`,
+          summary: `Father name for ${empName} (${empCode}): ${fn || 'Not available'}`
+        };
+      }
+      if (/\b(mother|mataji|mother's\s*name)\b/i.test(lowerQ)) {
+        const mn = r.MotherName || r.MOTHERNAME || null;
+        const mm = r.MotherMobile || r.MOTHERCONTACTNO || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Mother Name**: **${mn || 'Not Available'}**${mm ? ` (Contact: ${mm})` : ''} hai.`,
+          summary: `Mother name for ${empName} (${empCode}): ${mn || 'Not available'}`
+        };
+      }
+      if (/\b(spouse|patni|wife|husband|pati)\b/i.test(lowerQ)) {
+        const sn = r.SpouseName || r.SPOUSENAME || null;
+        const sm = r.SpouseMobile || r.SPOUSECONTACTNO || null;
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Spouse Name**: **${sn || 'Not Available'}**${sm ? ` (Contact: ${sm})` : ''} hai.`,
+          summary: `Spouse name for ${empName} (${empCode}): ${sn || 'Not available'}`
+        };
+      }
+      if (/\b(pf\s*no|pf\s*number|provident\s*fund|uan)\b/i.test(lowerQ)) {
+        const pf = r.PFNumber || r.PFNO || "-";
+        const uan = r.UAN_No || r.UAN || "-";
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **PF / UAN Details**:\n\n• **PF Number:** \`${pf}\`\n• **UAN:** \`${uan}\``,
+          summary: `PF for ${empName} (${empCode}): ${pf}`
+        };
+      }
     }
 
     let ans = `Employee Profile for **${empName} (${empCode})**:\n\n`;
@@ -8071,6 +8921,33 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         return {
           answer: ans.trim(),
           summary: `Top earner in ${m} ${y}: ${r.EmployeeName || empName} (${r.EmployeeCode || empCode}) with Net ₹${net}`
+        };
+      }
+
+      // Check if user specifically asked for net, basic, gross, or deduction ("jitna puchhe utna hi jawab de")
+      const lowerMsg = (message || entities.rawMessage || "").toLowerCase();
+      if (/\b(net\s*salary|net\s*pay|final\s*payment|in\s*hand|haath\s*me)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Net Salary (In-Hand / Final Payment)**: **₹${net}** hai.`,
+          summary: `Net Salary for ${r.EmployeeCode || empCode} (${m} ${y}): ₹${net}`
+        };
+      }
+      if (/\b(basic\s*pay|basic\s*salary|mool\s*vetan)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Basic Pay**: **₹${basic}** hai.`,
+          summary: `Basic Pay for ${r.EmployeeCode || empCode} (${m} ${y}): ₹${basic}`
+        };
+      }
+      if (/\b(gross\s*salary|gross\s*earn|gross\s*earnings)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Gross Earnings**: **₹${gross}** hai.`,
+          summary: `Gross for ${r.EmployeeCode || empCode} (${m} ${y}): ₹${gross}`
+        };
+      }
+      if (/\b(deduction|deductions|katauti|kitna\s*kata)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        return {
+          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Total Deductions**: **₹${ded}** hai.`,
+          summary: `Deductions for ${r.EmployeeCode || empCode} (${m} ${y}): ₹${ded}`
         };
       }
 
@@ -8345,11 +9222,11 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       if (!isNaN(num)) return `**${num.toLocaleString("en-IN")}**`;
     }
 
-    // Date formatting (ISO -> DD-MMM-YYYY)
-    if (/date|dob|doj|dol|created_at|updated_at/i.test(keyLower) && /^\d{4}-\d{2}-\d{2}/.test(strVal)) {
+    // Date formatting (ISO/Date object -> DD-MMM-YYYY)
+    if (val instanceof Date || (/date|dob|doj|dol|created_at|updated_at/i.test(keyLower) && !/^\d+$/.test(strVal))) {
       try {
-        const d = new Date(strVal);
-        if (!isNaN(d.getTime())) {
+        const d = val instanceof Date ? val : new Date(strVal);
+        if (!isNaN(d.getTime()) && d.getFullYear() > 1900) {
           return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
         }
       } catch (_) { }
@@ -8360,7 +9237,36 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
   const totalCount = rows.length;
   const sample = rows[0];
-  const allKeys = Object.keys(sample).filter(k => !/^(raw_response|audit_utd)$/i.test(k));
+  let allKeys = Object.keys(sample).filter(k => !/^(raw_response|audit_utd|fcm_tockenid|android_id|iemi|serverid)$/i.test(k));
+
+  // If there are many columns (e.g. SELECT * returning 50+ columns), prune 100% empty columns
+  if (allKeys.length > 20) {
+    const sampleSubset = rows.slice(0, Math.min(rows.length, 50));
+    allKeys = allKeys.filter(k => sampleSubset.some(r => r[k] !== null && r[k] !== undefined && String(r[k]).trim() !== ""));
+
+    // If still over 25 columns, prioritize key business fields first
+    if (allKeys.length > 25) {
+      const priorityFields = [
+        "SRNO", "EMPCODE", "EmployeeCode", "EMPFIRSTNAME", "EMPLASTNAME", "EmployeeName",
+        "EMPLOYEEDESIGNATION", "Designation", "LOCATION", "Location", "BRANCH", "Branch",
+        "MOBILENO", "MobileNo", "CORPORATEMAILID", "Email", "CURRENTJOINDATE", "JoiningDate",
+        "DOB", "DateOfBirth", "PANNO", "PAN", "ADHARNO", "AadharNo", "UID_NO",
+        "BANKACCOUNTNO", "BankAccountNo", "BANKNAME", "BankName", "ifsc_code",
+        "MONTHLY_CTC", "MonthlyCTC", "ANNUAL_CTC", "AnnualCTC", "EMP_STATUS", "Status",
+        "PERMANENTADDRESS1", "CURRENTADDRESS1", "FATHERNAME", "GENDER", "MARITALSTATUS"
+      ];
+      const prioritySet = new Set(priorityFields.map(f => f.toLowerCase()));
+      const prioritized = [];
+      for (const pf of priorityFields) {
+        const foundKey = allKeys.find(k => k.toLowerCase() === pf.toLowerCase());
+        if (foundKey && !prioritized.includes(foundKey)) {
+          prioritized.push(foundKey);
+        }
+      }
+      const remaining = allKeys.filter(k => !prioritySet.has(k.toLowerCase()));
+      allKeys = [...prioritized, ...remaining].slice(0, 25);
+    }
+  }
 
   // Single Record: Format as clean Key-Value Summary Card
   if (totalCount === 1 && allKeys.length <= 15) {
@@ -8399,7 +9305,8 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     ans += `| # | Emp Code | Employee Name | Location | Designation | Mobile No | Joining Date | Status |\n`;
     ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
 
-    const displayLimit = Math.min(totalCount, 50);
+    const maxDisplay = entities.limit ? Math.min(Number(entities.limit), 2000) : (entities.isAllRequested || totalCount <= 1000 ? totalCount : Math.min(totalCount, 1000));
+    const displayLimit = Math.min(totalCount, maxDisplay);
     for (let i = 0; i < displayLimit; i++) {
       const r = rows[i];
       const code = r.EmployeeCode || "-";
@@ -8412,8 +9319,8 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       ans += `| **${i + 1}** | **${code}** | **${name}** | ${loc} | ${desg} | ${mob} | ${doj} | ${status} |\n`;
     }
 
-    if (totalCount > 50) {
-      ans += `\n*(Showing top 50 of ${totalCount} records)*`;
+    if (totalCount > displayLimit) {
+      ans += `\n*(Showing top ${displayLimit} of ${totalCount} records)*`;
     }
 
     ans += `\n\n*Agar aapko inme se kisi specific employee ka pura profile, salary slip, ya address chahiye, toh unka **Employee Code** batayein.*`;
@@ -8429,15 +9336,16 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   ans += `| # | ` + allKeys.map(k => formatHeader(k)).join(" | ") + ` |\n`;
   ans += `| :- | ` + allKeys.map(() => ":---").join(" | ") + ` |\n`;
 
-  const displayLimit = Math.min(totalCount, 50);
+  const maxDisplay = entities.limit ? Math.min(Number(entities.limit), 2000) : (entities.isAllRequested || totalCount <= 1000 ? totalCount : Math.min(totalCount, 1000));
+  const displayLimit = Math.min(totalCount, maxDisplay);
   for (let i = 0; i < displayLimit; i++) {
     const r = rows[i];
     const rowValues = allKeys.map(k => formatCellValue(k, r[k]));
     ans += `| **${i + 1}** | ` + rowValues.join(" | ") + ` |\n`;
   }
 
-  if (totalCount > 50) {
-    ans += `\n*(Showing top 50 of ${totalCount} records)*`;
+  if (totalCount > displayLimit) {
+    ans += `\n*(Showing top ${displayLimit} of ${totalCount} records)*`;
   }
 
   return {
@@ -8939,6 +9847,90 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
   const userContext = buildUserContext(effectiveReq);
   const conversationId = effectivePayload.conversationId || `conv_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
 
+  // Early Intercept: Greetings, Introductions, ERP Guidance & Conversational Dialogue (Pure Conversational Mode)
+  const earlyConvCheck = detectGreetingOrIntroduction(rawMessage, englishQuery);
+  if (earlyConvCheck.isPureConversational) {
+    console.log("👋 [AUTOVYN-AI-V6-COPILOT] Conversational / Guidance inquiry detected. Responding with AI Copilot:", rawMessage);
+    const prevMem = MemoryEngineInstance.getContext(conversationId);
+    const resolvedName = earlyConvCheck.introName || prevMem?.userName || prevMem?.lastUserName || prevMem?.lastEmployeeName || userContext.userName || null;
+
+    const convResult = await handleConversationalAndGuidanceViaAI({
+      rawMessage,
+      englishQuery,
+      introName: resolvedName,
+      convDetails: earlyConvCheck,
+      userLanguage,
+      userContext,
+      conversationId,
+      history: effectivePayload.history || []
+    });
+
+    const greetingAnswer = convResult.answer;
+    if (convResult.usage) {
+      totalUsage.prompt_tokens += convResult.usage.prompt_tokens || 0;
+      totalUsage.completion_tokens += convResult.usage.completion_tokens || 0;
+      totalUsage.total_tokens += convResult.usage.total_tokens || 0;
+    }
+
+    const convEntities = {
+      rawMessage,
+      userName: resolvedName || null,
+      isGreeting: Boolean(earlyConvCheck.isGreetingOnly || earlyConvCheck.isIntroOnly),
+      isSelf: false
+    };
+
+    const effectiveConvIntent = earlyConvCheck.convIntent || "CONVERSATIONAL_COPILOT";
+
+    MemoryEngineInstance.updateContext(
+      conversationId,
+      convEntities,
+      effectiveConvIntent,
+      {
+        userMessage: rawMessage,
+        assistantAnswer: greetingAnswer,
+        sql: null,
+        rowCount: 0,
+        failed: false,
+        isPendingClarification: false
+      }
+    );
+
+    const convMem = MemoryEngineInstance.getContext(conversationId);
+    if (convMem && resolvedName) {
+      convMem.userName = resolvedName;
+      convMem.lastUserName = resolvedName;
+      convMem.lastEmployeeName = resolvedName;
+    }
+
+    return {
+      success: true,
+      data: [],
+      conversationId,
+      answer: greetingAnswer,
+      mode: "CONVERSATIONAL",
+      intent: effectiveConvIntent,
+      isSelfQuery: false,
+      sources: ["AutoVyn Executive AI Copilot"],
+      query: {
+        sql: null,
+        tablesUsed: [],
+        rowCount: 0,
+        executionTimeMs: Date.now() - startedAt
+      },
+      confidence: { level: "HIGH", score: 1.0 },
+      evidence: { canAnswer: true, rows: [] },
+      sqlValidation: { valid: true, sanitized: true },
+      critic: { verified: true, score: 1.0 },
+      isAmbiguous: false,
+      resolvedEntities: convEntities,
+      cached: false,
+      cacheTier: "NONE",
+      model: convResult.model || "AutoVyn-Executive-AI-Copilot",
+      usage: totalUsage,
+      responseTimeMs: Date.now() - startedAt
+    };
+  }
+
   let sequelize = null;
   let globalSequelize = null;
   const queryEmbedding = null;
@@ -8995,6 +9987,9 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       /\b(annivers\w*|anivers\w*|anvers\w*|saalgir\w*|salgir\w*|birthday|bday|b'day|janamdin|holiday|holidays)\b/i.test(normalizeLower(rawMessage));
 
     resolvedEntities = { ...initialClassification.entities };
+    if (isAllRequested) {
+      resolvedEntities.isAllRequested = true;
+    }
 
     // 3.1 Check Conversation Memory (Anaphora & Multi-Turn Context Resolution)
     await MemoryEngineInstance.ensureContextFromDB(conversationId, sequelize, rawMessage);
@@ -9059,7 +10054,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       };
     }
 
-    if (!resolvedEntities.employeeCode && !isPronounFollowup && !resolvedEntities.isSelf && !isIdentifierLookup && !isListOrAggregate && !isRankingOrExtremum && !isEventOrWhoQuery && !isEmployeeCountIntent) {
+    if (!resolvedEntities.employeeCode && !isPronounFollowup && !resolvedEntities.isSelf && !isIdentifierLookup && !isListOrAggregate && !isRankingOrExtremum && !isEventOrWhoQuery && !isEmployeeCountIntent && !resolvedEntities.isAllRequested) {
       const dbEntityResult = await resolveEmployeeEntityViaDB({
         sequelize,
         message: rawMessage,
@@ -9343,9 +10338,74 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
             totalUsage.prompt_tokens += sqlPlan.usage.prompt_tokens || 0;
             totalUsage.completion_tokens += sqlPlan.usage.completion_tokens || 0;
             totalUsage.total_tokens += sqlPlan.usage.total_tokens || 0;
-          }
         }
       }
+    }
+
+    if (!sqlPlan || !sqlPlan.sql) {
+      console.log("💬 [V6-Router] No viable SQL plan found for non-database query. Routing to Conversational Engine:", rawMessage);
+      const prevMem = MemoryEngineInstance.getContext(conversationId);
+      const resolvedName = prevMem?.userName || prevMem?.lastUserName || prevMem?.lastEmployeeName || userContext.userName || null;
+
+      const convResult = await handleConversationalAndGuidanceViaAI({
+        rawMessage,
+        englishQuery,
+        introName: resolvedName,
+        convDetails: { isPureConversational: true, convIntent: "CONVERSATIONAL_COPILOT" },
+        userLanguage,
+        userContext,
+        conversationId,
+        history: effectivePayload.history || []
+      });
+
+      if (convResult.usage) {
+        totalUsage.prompt_tokens += convResult.usage.prompt_tokens || 0;
+        totalUsage.completion_tokens += convResult.usage.completion_tokens || 0;
+        totalUsage.total_tokens += convResult.usage.total_tokens || 0;
+      }
+
+      MemoryEngineInstance.updateContext(
+        conversationId,
+        resolvedEntities,
+        "CONVERSATIONAL_COPILOT",
+        {
+          userMessage: rawMessage,
+          assistantAnswer: convResult.answer,
+          sql: null,
+          rowCount: 0,
+          failed: false,
+          isPendingClarification: false
+        }
+      );
+
+      return {
+        success: true,
+        data: [],
+        conversationId,
+        answer: convResult.answer,
+        mode: "CONVERSATIONAL",
+        intent: "CONVERSATIONAL_COPILOT",
+        isSelfQuery: false,
+        sources: ["AutoVyn Executive AI Copilot"],
+        query: {
+          sql: null,
+          tablesUsed: [],
+          rowCount: 0,
+          executionTimeMs: Date.now() - startedAt
+        },
+        confidence: { level: "HIGH", score: 1.0 },
+        evidence: { canAnswer: true, rows: [] },
+        sqlValidation: { valid: true, sanitized: true },
+        critic: { verified: true, score: 1.0 },
+        isAmbiguous: false,
+        resolvedEntities,
+        cached: false,
+        cacheTier: "NONE",
+        model: convResult.model || "AutoVyn-Executive-AI-Copilot",
+        usage: totalUsage,
+        responseTimeMs: Date.now() - startedAt
+      };
+    }
 
     // 7. Engine 6: SQL Validation & Auto-Repair
     const isKonKonQuery = /\b(kon\s*kon|kaun\s*kaun|kin\s*kin|kis\s*kis|who\s*all|which\s*employees|kiske\s*kiske|kisko\s*kisko|sabka|sabhi|all\s*employees?|pura\s*list|poora\s*list|full\s*list|bina\s*limit|no\s*limit|without\s*limit|unlimited|list\s*do|data\s*de|data\s*do|details\s*do|details\s*de)\b/i.test(rawMessage || "") ||
@@ -9355,8 +10415,12 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       isKonKonQuery,
       noTopLimit: isKonKonQuery || isAllRequested || Boolean(userContext?.noTopLimit),
       isAllRequested,
+      entities: resolvedEntities,
+      limit: resolvedEntities.limit,
+      intent: initialClassification.intent,
       rawMessage,
-      englishQuery
+      englishQuery,
+      isLearnedQuery: Boolean(isLearnedQuery)
     });
 
     // 8. Execute Primary SQL on MSSQL Server with Auto-Repair Reflection Loop
@@ -9426,7 +10490,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       "PF_EMPLOYEE_LIST", "PF_LOOKUP_BY_EMP", "PF_COUNT"
     ]);
 
-    if (deterministicPriorityIntents.has(effectiveIntent)) {
+    if (deterministicPriorityIntents.has(effectiveIntent) || dbRows.length > 50 || resolvedEntities?.isAllRequested || isKonKonQuery) {
       formatted = await formatHumanBusinessAnswer({
         message: rawMessage,
         englishQuery: englishQuery || rawMessage,
@@ -9550,8 +10614,9 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
     }
 
     // Auto-capture primary employee entity from query results (e.g. single employee result or top-1 ranking like highest salary)
-    if (Array.isArray(dbRows) && dbRows.length >= 1) {
-      const isTopRankingOrSingle = dbRows.length === 1 ||
+    // ONLY if not a universal/all-requested, count, or collective list query!
+    if (Array.isArray(dbRows) && dbRows.length >= 1 && !resolvedEntities.isAllRequested && !isListOrAggregate) {
+      const isTopRankingOrSingle = (dbRows.length === 1 && !isEmployeeCountIntent) ||
         initialClassification?.intent?.includes("RANKING") ||
         /\b(sabse\s*jyada|sabse\s*kam|sabse\s*adhik|highest|lowest|top\s*1\b|maximum|minimum|kiske|kisko|kiska)\b/i.test(rawMessage);
       if (isTopRankingOrSingle) {
@@ -10408,6 +11473,9 @@ module.exports = {
   matchLearnedSimilarQuery,
   canonicalizeQueryPattern,
   getPatternTokens,
+  detectGreetingOrIntroduction,
+  generateGreetingResponse,
+  handleConversationalAndGuidanceViaAI,
   getCacheAnalytics: () => CacheEngineInstance.getStats(),
   clearCache: () => CacheEngineInstance.clear()
 };

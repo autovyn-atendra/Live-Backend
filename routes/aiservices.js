@@ -198,6 +198,8 @@ class ApiError extends Error {
 }
 exports.ApiError = ApiError;
 
+const normalizeValue = (value) => String(value ?? "").trim();
+const VALID_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const toPositiveInt = exports.toPositiveInt = (value, fallback, max = Number.MAX_SAFE_INTEGER) => {
   const parsed = Number(value);
@@ -735,8 +737,8 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
               intent: v6Result.intent,
               sql: v6Result.query?.sql,
               confidence: v6Result.confidence,
-              lastEmployeeCode: v6Result.resolvedEntities?.employeeCode || v6Result.data?.[0]?.EmployeeCode || v6Result.data?.[0]?.EMPCODE || v6Result.data?.[0]?.Emp_Code || null,
-              lastEmployeeName: v6Result.resolvedEntities?.employeeName || v6Result.data?.[0]?.EmployeeName || v6Result.data?.[0]?.EMPFIRSTNAME || null,
+              lastEmployeeCode: (v6Result.resolvedEntities?.isAllRequested || !v6Result.resolvedEntities?.employeeCode) ? null : (v6Result.resolvedEntities?.employeeCode || null),
+              lastEmployeeName: (v6Result.resolvedEntities?.isAllRequested || !v6Result.resolvedEntities?.employeeCode) ? null : (v6Result.resolvedEntities?.employeeName || null),
               resolvedEntities: v6Result.resolvedEntities || null,
               count: v6Result.count || v6Result.data?.[0]?.TotalPresentCount || v6Result.data?.[0]?.TotalAbsentCount || v6Result.data?.[0]?.TotalCount || v6Result.data?.[0]?.TotalEmployees || null,
               specificDate: v6Result.specificDate || v6Result.resolvedEntities?.specificDate || null,
@@ -1343,7 +1345,6 @@ const getConversationMessages = exports.getConversationMessages = async ({ req, 
 
 
 const isUUID = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
-// const normalizeValue = (value) => String(value ?? "").trim();
 const validateSequelize = (sequelize) => {
   if (!sequelize || typeof sequelize.query !== "function") throw new ApiError(500, "Database connection is missing in conversation service");
 };
@@ -2429,8 +2430,6 @@ const parseDocumentFile = exports.parseDocumentFile = async (filePath) => {
 
 const NAMESPACE = "93f4188e-4fb3-47ec-9f5e-c0efc17768aa";
 
-// const normalizeValue = (v) => String(v ?? "").trim();
-
 const parseRoleFlags = (value) => {
   if (Array.isArray(value)) {
     return [...new Set(value.map((x) => Number(x)).filter(Number.isFinite))].sort((a, b) => a - b);
@@ -2842,7 +2841,6 @@ const ALLOWED_DOCUMENT_TYPES = new Set([
   "DOCUMENT",
 ]);
 
-// const normalizeValue = (value) => String(value ?? "").trim();
 const normalizeNullableValue = (value) => normalizeValue(value) || null;
 
 const normalizeBoolean = (value, defaultValue = false) => {
@@ -3323,13 +3321,6 @@ const qdrantHealth = exports.qdrantHealth = async () => {
 
 
 
-
-const normalizeValue = (
-  value
-) =>
-  String(
-    value ?? ""
-  ).trim();
 
 const positiveInt = (
   value,
@@ -3917,57 +3908,6 @@ const balanceAndSelectTop3 = (docs, limit) => {
 
 
 
-
-// const normalizeValue = (value) => {
-//   return String(value ?? "").trim();
-// };
-
-// const VALID_IDENTIFIER =
-//   /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-// const buildColumnType = (
-//   column
-// ) => {
-//   let dataType =
-//     normalizeValue(
-//       column.DATA_TYPE
-//     );
-
-//   if (
-//     column.CHARACTER_MAXIMUM_LENGTH !==
-//       null &&
-//     column.CHARACTER_MAXIMUM_LENGTH !==
-//       undefined
-//   ) {
-//     const length =
-//       Number(
-//         column
-//           .CHARACTER_MAXIMUM_LENGTH
-//       ) === -1
-//         ? "MAX"
-//         : column
-//             .CHARACTER_MAXIMUM_LENGTH;
-
-//     dataType +=
-//       `(${length})`;
-//   } else if (
-//     [
-//       "decimal",
-//       "numeric",
-//     ].includes(
-//       dataType.toLowerCase()
-//     ) &&
-//     column.NUMERIC_PRECISION !==
-//       null &&
-//     column.NUMERIC_SCALE !==
-//       null
-//   ) {
-//     dataType +=
-//       `(${column.NUMERIC_PRECISION}, ${column.NUMERIC_SCALE})`;
-//   }
-
-//   return dataType;
-// };
 
 const getDatabaseTables = exports.getDatabaseTables =
   async ({
@@ -4608,8 +4548,6 @@ const getTermSynonyms = exports.getTermSynonyms = (term = "") => {
 
 
 
-// const normalize = (v) => String(v ?? "").toLowerCase().trim();
-
 // ─── Month Names ──────────────────────────────────────────────────────────────
 
 const MONTH_NAMES = new Set([
@@ -5175,21 +5113,23 @@ const makeResult = (rows, plan) => ({
 
 // ─── Column finders ───────────────────────────────────────────────────────────
 
-// const findCol = (columns, hints) => {
-//   const getName = (c) => (typeof c === "object" ? c.name : c);
-//   const cols    = columns.map(getName);
-//   const lower   = cols.map((c) => c.toLowerCase());
-
-//   for (const hint of hints) {
-//     const idx = lower.findIndex((c) => c === hint.toLowerCase());
-//     if (idx !== -1) return cols[idx];
-//   }
-//   for (const hint of hints) {
-//     const idx = lower.findIndex((c) => c.includes(hint.toLowerCase()));
-//     if (idx !== -1) return cols[idx];
-//   }
-//   return null;
-// };
+const findCol = (columns = [], patterns = []) => {
+  if (!patterns) return null;
+  const patList = Array.isArray(patterns) ? patterns : [patterns];
+  for (const c of columns) {
+    const n = String(c?.name || c?.Column_Name || c?.column_name || c?.COLUMN_NAME || (typeof c === "string" ? c : "") || "").trim();
+    if (!n) continue;
+    for (const re of patList) {
+      if (!re) continue;
+      if (typeof re === "string") {
+        if (n.toLowerCase() === re.toLowerCase() || n.toLowerCase().includes(re.toLowerCase())) return n;
+      } else if (typeof re.test === "function") {
+        if (re.test(n)) return n;
+      }
+    }
+  }
+  return null;
+};
 
 const findColWithType = (columnsWithTypes, hints) => {
   const hintList = Array.isArray(hints) ? hints : [];
@@ -6045,25 +5985,6 @@ const strategySingle = async ({
 
 
 
-// import {
-//   QueryTypes,
-// } from "sequelize";
-
-// import {
-//   ApiError,
-// } from "../../utils/ApiError.js";
-
-// const VALID_IDENTIFIER =
-//   /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-// const normalizeValue = (
-//   value
-// ) => {
-//   return String(
-//     value ?? ""
-//   ).trim();
-// };
-
 const quoteIdentifier = (
   value
 ) => {
@@ -6909,9 +6830,6 @@ const inspectAuthorizedTable = exports.inspectAuthorizedTable =
 
 
 
-// const DEV = process.env.NODE_ENV === "development";
-// const normalizeValue = (v) => String(v ?? "").trim();
-
 const SCHEMA_DOC_TYPES = ["TABLE_SCHEMA", "VIEW", "DATABASE_RELATION", "STATUS_MAPPING", "BUSINESS_RULE"];
 
 const INTENT_PATTERNS = {
@@ -6976,15 +6894,6 @@ const dedupeBySource = (docs = []) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Strict verifiers (reject wrong tables like Salary_Approver)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// const findCol = (columns = [], patterns = []) => {
-//   for (const c of columns) {
-//     const n = String(c?.name || c?.Column_Name || c || "").trim();
-//     if (!n) continue;
-//     for (const re of patterns) if (re.test(n)) return n;
-//   }
-//   return null;
-// };
 
 const EMP_VERIFY = {
   empCode: [/^empcode$/i, /^emp_code$/i, /^empid$/i, /^emp_id$/i, /^employee_code$/i, /^code$/i],
@@ -7640,8 +7549,6 @@ const discoverAttendanceCandidates = async ({ sequelize, max = 100 }) => {
 
 
 
-// const normalize = (v) => String(v ?? "").trim();
-
 const EMPLOYEE_PARAMS = new Set([
   "userCode", "employeeCode", "empCode", "empcode", "employee_code",
 ]);
@@ -7833,10 +7740,8 @@ const SQLPlanSchema = z.object({
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const DEV = process.env.NODE_ENV === "development";
-// const normalize = (v) => String(v ?? "").trim();
 const normalizeQ = (v) => normalize(v).replace(/\s+/g, " ");
 
-const VALID_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const safeIdent = (name) => {
   const n = normalize(name).replace(/\[|\]/g, "");
   if (!VALID_IDENTIFIER.test(n)) return null;
@@ -7985,22 +7890,6 @@ const resolveEmployeeNameFromHistory = (history = []) => {
   return null;
 };
 
-// const detectWantedFields = (question) => {
-//   const t = String(question || "").toLowerCase();
-//   const set = new Set();
-
-//   if (/\b(empcode|employee\s*code|code)\b/.test(t)) set.add("CODE");
-//   if (/\b(pan|pan\s*no|pan\s*number)\b/.test(t)) set.add("PAN");
-//   if (/\b(pf|pf\s*no|pf\s*number|pf\s*deduction)\b/.test(t)) set.add("PF");
-//   if (/\b(mobile|moble|mob|mbl|phone|phon|phn|contact|cont|contactno)\b/.test(t)) set.add("MOBILE");
-//   if (/\b(salary|payroll|payslip|gross|net|basic|hra|ctc|earn|income|structure|salarystructure)\b/.test(t)) set.add("SALARY");
-//   if (/\b(attendance|attendancetable|monthdays|month_days|punch|present|absent|leave|ot)\b/.test(t)) set.add("ATTENDANCE");
-//   if (/\b(all|complete|poori|sab|sabhi)\b/.test(t)) set.add("ALL");
-
-//   if (set.size === 0) set.add("DETAILS");
-//   return [...set];
-// };
-
 const detectEmployeeSearchIntent = (question, history = []) => {
   const q = normalizeQ(question);
 
@@ -8110,24 +7999,6 @@ const detectEmployeeSearchIntent = (question, history = []) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // schemaContext: find employee master + salary file strictly
 // ─────────────────────────────────────────────────────────────────────────────
-
-const findCol = (columns = [], patterns = []) => {
-  if (!patterns) return null;
-  const patList = Array.isArray(patterns) ? patterns : [patterns];
-  for (const c of columns) {
-    const n = String(c?.name || c?.Column_Name || c?.column_name || c?.COLUMN_NAME || (typeof c === "string" ? c : "") || "").trim();
-    if (!n) continue;
-    for (const re of patList) {
-      if (!re) continue;
-      if (typeof re === "string") {
-        if (n.toLowerCase() === re.toLowerCase() || n.toLowerCase().includes(re.toLowerCase())) return n;
-      } else if (typeof re.test === "function") {
-        if (re.test(n)) return n;
-      }
-    }
-  }
-  return null;
-};
 
 const findAllCols = (columns = [], patterns = []) => {
   if (!patterns) return [];
@@ -11317,8 +11188,6 @@ const ALLOWED_PARAMETER_TYPES = new Set([
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────
 
-// const normalizeValue = (value) => String(value ?? "").trim();
-
 /**
  * SQL comments remove karta hai.
  * Supported: -- single-line | slash-star block star-slash
@@ -12575,179 +12444,40 @@ const auditAIQueryLog = exports.auditAIQueryLog = async function ({
     console.error("[AI-AUDIT] Non-fatal audit log error:", err?.message);
   }
 };
-// (Note: exports.submitFeedback is consolidated below delegating cleanly to AI_V6.submitFeedback)
+// ── Error Extraction Helper ──────────────────────────────────────────────────
+const extractAIErrMsg = (err) => {
+  if (!err) return "Internal server error";
+  if (err.message && err.message.trim()) return err.message;
+  if (err.original?.message && err.original.message.trim()) return err.original.message;
+  if (err.parent?.message && err.parent.message.trim()) return err.parent.message;
+  if (Array.isArray(err.errors) && err.errors.length > 0) {
+    const msg = err.errors.map((e) => e.message).filter(Boolean).join("; ");
+    if (msg) return msg;
+  }
+  if (Array.isArray(err.original?.errors) && err.original.errors.length > 0) {
+    const msg = err.original.errors.map((e) => e.message).filter(Boolean).join("; ");
+    if (msg) return msg;
+  }
+  return "Database query execution error";
+};
 
-
+// ── V6 Delegated Enterprise AI Management Endpoints ─────────────────────────
 exports.getAuditLogs = async function (req, res) {
   try {
-    const compCode = String(process.env.DEFAULT_COMPCODE || req.headers?.compcode || req.user?.compcode || "AUTOVYN").trim();
-    const sequelize = await dbname(req, compCode);
-
-    const page = Math.max(1, parseInt(req.query?.page || req.body?.page, 10) || 1);
-    const limit = Math.min(Math.max(1, parseInt(req.query?.limit || req.body?.limit, 10) || 20), 200);
-    const offset = (page - 1) * limit;
-    const search = String(req.query?.search || req.body?.search || "").trim();
-    const status = String(req.query?.status || req.body?.status || "").trim().toUpperCase();
-    const intent = String(req.query?.intent || req.body?.intent || "").trim();
-    const startDate = String(req.query?.startDate || req.body?.startDate || "").trim();
-    const endDate = String(req.query?.endDate || req.body?.endDate || "").trim();
-
-    // Ensure table exists
-    await sequelize.query(`
-      IF OBJECT_ID('dbo.AI_Query_Audit_Tbl', 'U') IS NULL
-      BEGIN
-        CREATE TABLE [dbo].[AI_Query_Audit_Tbl] (
-          [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
-          [Conversation_Id] VARCHAR(100) NULL,
-          [User_Id] VARCHAR(100) NULL,
-          [Emp_Code] VARCHAR(100) NULL,
-          [Role] VARCHAR(50) NULL,
-          [Comp_Code] VARCHAR(50) NULL,
-          [User_Query] NVARCHAR(MAX) NULL,
-          [Normalized_Query] NVARCHAR(MAX) NULL,
-          [Intent] VARCHAR(100) NULL,
-          [Tables_Used] VARCHAR(500) NULL,
-          [Generated_SQL] NVARCHAR(MAX) NULL,
-          [AI_Response] NVARCHAR(MAX) NULL,
-          [Rows_Returned] INT NULL DEFAULT 0,
-          [Execution_Time_Ms] INT NULL DEFAULT 0,
-          [Confidence_Score] DECIMAL(5,2) NULL DEFAULT 0.95,
-          [Status_Code] VARCHAR(30) NULL DEFAULT 'SUCCESS',
-          [Error_Message] NVARCHAR(MAX) NULL,
-          [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
-        );
-      END
-      ELSE IF COL_LENGTH('dbo.AI_Query_Audit_Tbl', 'AI_Response') IS NULL
-      BEGIN
-        ALTER TABLE [dbo].[AI_Query_Audit_Tbl] ADD [AI_Response] NVARCHAR(MAX) NULL;
-      END
-    `, { type: QueryTypes.RAW }).catch(() => {});
-
-    // Check if AI_Conversation_Tbl exists
-    const [convTableCheck] = await sequelize.query(`
-      SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'AI_Conversation_Tbl'
-    `, { type: QueryTypes.SELECT }).catch(() => []);
-    const hasConvTbl = Boolean(convTableCheck);
-
-    // Dynamic Filter Clauses
-    let whereClauses = ["1=1"];
-    let replacements = { limit, offset };
-
-    if (search) {
-      if (hasConvTbl) {
-        whereClauses.push("(A.User_Query LIKE :search OR A.Normalized_Query LIKE :search OR A.Generated_SQL LIKE :search OR A.Intent LIKE :search OR A.Emp_Code LIKE :search OR A.User_Id LIKE :search OR A.AI_Response LIKE :search OR A.Conversation_Id LIKE :search OR C.Title LIKE :search)");
-      } else {
-        whereClauses.push("(A.User_Query LIKE :search OR A.Normalized_Query LIKE :search OR A.Generated_SQL LIKE :search OR A.Intent LIKE :search OR A.Emp_Code LIKE :search OR A.User_Id LIKE :search OR A.AI_Response LIKE :search OR A.Conversation_Id LIKE :search)");
+    if (AI_V6?.getAuditLogs) {
+      const result = await AI_V6.getAuditLogs(req, res);
+      if (!res.headersSent) {
+        return res.status(200).json(result);
       }
-      replacements.search = `%${search}%`;
+      return;
     }
-
-    if (status && status !== "ALL") {
-      whereClauses.push("A.Status_Code = :status");
-      replacements.status = status;
-    }
-
-    if (intent && intent !== "ALL") {
-      whereClauses.push("A.Intent = :intent");
-      replacements.intent = intent;
-    }
-
-    if (startDate) {
-      whereClauses.push("A.Created_At >= :startDate");
-      replacements.startDate = `${startDate} 00:00:00`;
-    }
-
-    if (endDate) {
-      whereClauses.push("A.Created_At <= :endDate");
-      replacements.endDate = `${endDate} 23:59:59`;
-    }
-
-    const whereSql = whereClauses.join(" AND ");
-
-    const joinConvSql = hasConvTbl 
-      ? "LEFT JOIN [dbo].[AI_Conversation_Tbl] C WITH (NOLOCK) ON A.[Conversation_Id] = C.[Conversation_Id]"
-      : "";
-
-    // Fetch Total Count
-    const countResult = await sequelize.query(`
-      SELECT COUNT(1) AS TotalRecords 
-      FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
-      ${joinConvSql}
-      WHERE ${whereSql}
-    `, { replacements, type: QueryTypes.SELECT }).catch(() => [{ TotalRecords: 0 }]);
-
-    const totalRecords = Number(countResult[0]?.TotalRecords || 0);
-    const totalPages = Math.ceil(totalRecords / limit) || 1;
-
-    // Fetch Paginated Logs
-    const rows = await sequelize.query(`
-      SELECT 
-        A.[UTD],
-        A.[Conversation_Id] AS conversationId,
-        ${hasConvTbl ? "ISNULL(C.[Title], '')" : "''"} AS conversationTitle,
-        A.[User_Id] AS userId,
-        A.[Emp_Code] AS empCode,
-        A.[Role] AS role,
-        A.[Comp_Code] AS compCode,
-        A.[User_Query] AS userQuery,
-        A.[Normalized_Query] AS normalizedQuery,
-        A.[Intent] AS intent,
-        A.[Tables_Used] AS tablesUsed,
-        A.[Generated_SQL] AS generatedSql,
-        A.[AI_Response] AS aiResponse,
-        ISNULL(A.[Rows_Returned], 0) AS rowsReturned,
-        ISNULL(A.[Execution_Time_Ms], 0) AS executionTimeMs,
-        ISNULL(A.[Confidence_Score], 0.95) AS confidenceScore,
-        ISNULL(A.[Status_Code], 'SUCCESS') AS statusCode,
-        A.[Error_Message] AS errorMessage,
-        CONVERT(VARCHAR(19), A.[Created_At], 120) AS createdAt
-      FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
-      ${joinConvSql}
-      WHERE ${whereSql}
-      ORDER BY A.[UTD] DESC
-      OFFSET :offset ROWS
-      FETCH NEXT :limit ROWS ONLY
-    `, { replacements, type: QueryTypes.SELECT }).catch(() => []);
-
-    // Fetch Global Stats
-    const statsResult = await sequelize.query(`
-      SELECT 
-        COUNT(1) AS totalQueries,
-        SUM(CASE WHEN Status_Code = 'SUCCESS' THEN 1 ELSE 0 END) AS successQueries,
-        SUM(CASE WHEN Status_Code = 'FAILED' THEN 1 ELSE 0 END) AS failedQueries,
-        AVG(ISNULL(Execution_Time_Ms, 0)) AS avgExecutionTimeMs,
-        COUNT(DISTINCT User_Id) AS activeUsersCount,
-        SUM(CASE WHEN CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS todayQueriesCount
-      FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
-    `, { type: QueryTypes.SELECT }).catch(() => [{}]);
-
-    const globalStats = statsResult[0] || {};
-    const tot = Number(globalStats.totalQueries || 0);
-    const succ = Number(globalStats.successQueries || 0);
-    const successRate = tot > 0 ? ((succ / tot) * 100).toFixed(1) + "%" : "100%";
-
-    return res.status(200).json({
-      success: true,
-      data: rows,
-      pagination: {
-        page,
-        limit,
-        totalRecords,
-        totalPages,
-        hasMore: page < totalPages
-      },
-      stats: {
-        totalQueries: tot,
-        successQueries: succ,
-        failedQueries: Number(globalStats.failedQueries || 0),
-        successRate,
-        avgExecutionTimeMs: Math.round(Number(globalStats.avgExecutionTimeMs || 0)),
-        activeUsersCount: Number(globalStats.activeUsersCount || 0),
-        todayQueriesCount: Number(globalStats.todayQueriesCount || 0)
-      }
-    });
+    return res.status(500).json({ success: false, message: "AI Engine not initialized" });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    const errorMsg = extractAIErrMsg(err);
+    console.error("[aiservices.getAuditLogs] Error:", errorMsg, err);
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, message: errorMsg });
+    }
   }
 };
 
@@ -12796,22 +12526,6 @@ exports.submitFeedback = async (req, res) => {
     console.error("[aiservices.submitFeedback] Error:", errorMsg, err);
     return res.status(500).json({ success: false, message: errorMsg });
   }
-};
-
-const extractAIErrMsg = (err) => {
-  if (!err) return "Internal server error";
-  if (err.message && err.message.trim()) return err.message;
-  if (err.original?.message && err.original.message.trim()) return err.original.message;
-  if (err.parent?.message && err.parent.message.trim()) return err.parent.message;
-  if (Array.isArray(err.errors) && err.errors.length > 0) {
-    const msg = err.errors.map((e) => e.message).filter(Boolean).join("; ");
-    if (msg) return msg;
-  }
-  if (Array.isArray(err.original?.errors) && err.original.errors.length > 0) {
-    const msg = err.original.errors.map((e) => e.message).filter(Boolean).join("; ");
-    if (msg) return msg;
-  }
-  return "Database query execution error";
 };
 
 exports.getAILearnedRules = async (req, res) => {
