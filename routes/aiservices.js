@@ -715,11 +715,11 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
     console.warn("[aiservices] Non-fatal user message save error:", userMsgErr?.message);
   }
 
-  // ── Execute V6 Enterprise AI Copilot Engine (with automatic V1 fallback) ────
+  // ── Execute V6 Enterprise AI Copilot Engine ────────────────────────────────
   if (AI_V6?.askEnterpriseCopilotV6) {
     try {
       const v6Result = await AI_V6.askEnterpriseCopilotV6(req, payload);
-      if (v6Result && v6Result.answer) {
+      if (v6Result && (v6Result.answer || v6Result.message)) {
         v6Result.conversationId = conversationId;
 
         // Persist assistant response & update session timestamp
@@ -728,7 +728,7 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
             sequelize,
             conversationId,
             role: "assistant",
-            content: v6Result.answer,
+            content: v6Result.answer || v6Result.message || "Query executed.",
             routeType: v6Result.mode || "DATABASE",
             modelName: v6Result.model || "gpt-4o-mini",
             responseTimeMs: Date.now() - startedAt,
@@ -738,7 +738,7 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
               sql: v6Result.query?.sql,
               confidence: v6Result.confidence,
               lastEmployeeCode: (v6Result.resolvedEntities?.isAllRequested || !v6Result.resolvedEntities?.employeeCode) ? null : (v6Result.resolvedEntities?.employeeCode || null),
-              lastEmployeeName: (v6Result.resolvedEntities?.isAllRequested || !v6Result.resolvedEntities?.employeeCode) ? null : (v6Result.resolvedEntities?.employeeName || null),
+              lastEmployeeName: (v6Result.resolvedEntities?.isAllRequested) ? null : (v6Result.resolvedEntities?.employeeName || v6Result.resolvedEntities?.nameFilter || null),
               resolvedEntities: v6Result.resolvedEntities || null,
               count: v6Result.count || v6Result.data?.[0]?.TotalPresentCount || v6Result.data?.[0]?.TotalAbsentCount || v6Result.data?.[0]?.TotalCount || v6Result.data?.[0]?.TotalEmployees || null,
               specificDate: v6Result.specificDate || v6Result.resolvedEntities?.specificDate || null,
@@ -755,7 +755,32 @@ const askERPAssistant = exports.askERPAssistant = async (req, payload = {}) => {
         return v6Result;
       }
     } catch (v6Error) {
-      console.warn("[aiservices] V6 Copilot pipeline yielded notice, continuing with V1 engine:", v6Error?.message);
+      console.error("[aiservices] V6 Copilot execution notice:", v6Error?.message || v6Error);
+      const friendlyErrorMsg = `AutoVyn ERP AI processing issue: ${v6Error?.message || "An unexpected error occurred while processing query."}`;
+      try {
+        await saveConversationMessage({
+          sequelize,
+          conversationId,
+          role: "assistant",
+          content: friendlyErrorMsg,
+          routeType: "ERROR",
+          modelName: "system-error",
+          responseTimeMs: Date.now() - startedAt,
+          createdBy: String(userContext.numericUserId),
+          metadata: { error: v6Error?.message }
+        });
+      } catch (_) {}
+
+      return {
+        success: false,
+        conversationId,
+        answer: friendlyErrorMsg,
+        mode: "ERROR",
+        error: v6Error?.message,
+        data: [],
+        query: { sql: null, tablesUsed: [], rowCount: 0, executionTimeMs: Date.now() - startedAt },
+        responseTimeMs: Date.now() - startedAt
+      };
     }
   }
 

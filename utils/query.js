@@ -19449,13 +19449,13 @@ CREATE TABLE [dbo].[attendance_status_rules_table](
 	[policy_utd] [int] NOT NULL,
 	[company_code] [varchar](20) NOT NULL,
 	[desc_code] [varchar](10) NOT NULL,
-	[early_] [int] NULL,
+	[early_go] [int] NULL,
 	[late_come] [int] NULL,
 	[allow_days] [int] NULL,
 	[priority_code] [int] NULL,
 	[region] [varchar](20) NULL,
 	[half] [varchar](10) NULL,
-	[half_val] [int] NULL,
+	[half_val] [decimal](5,2) NULL,
 	[wef] [date] NULL,
 	[absent] [varchar](10) NULL,
 	[Created_By] [varchar](50) NULL,
@@ -19476,7 +19476,7 @@ WITH
 SYSTEM_VERSIONING = ON (HISTORY_TABLE = [dbo].[attendance_status_rules_Hst])
 )
 
-ALTER TABLE [dbo].[attendance_status_rules_table] ADD  DEFAULT ((0)) FOR [early_]
+ALTER TABLE [dbo].[attendance_status_rules_table] ADD  DEFAULT ((0)) FOR [early_go]
 
 ALTER TABLE [dbo].[attendance_status_rules_table] ADD  DEFAULT ((0)) FOR [late_come]
 

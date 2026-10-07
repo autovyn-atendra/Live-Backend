@@ -26,6 +26,8 @@ const leadRoute = require("./api/lead_route");
 const eicherRoute = require("./api/eicher_API")
 const defaultMst = require("./api/miscApi");
 const employeeImport = require("./api/employeeImport"); 
+const employeeReRunAPI = require("./api/employeeReRunAPI")
+const AttendancePolicyAPI = require("./api/AttendancePolicyAPI")
 
 
 
@@ -143,6 +145,9 @@ app.use("/quotation", leadRoute);
 app.use("/backend/quotation", leadRoute);
 app.use("/eicher", eicherRoute);
 app.use("/misc", defaultMst);
+app.use("/attendance",employeeReRunAPI)
+app.use("/admin",AttendancePolicyAPI)
+
 
 
 

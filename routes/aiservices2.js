@@ -95,7 +95,9 @@ const SEARCH_STOP_WORDS = new Set([
   "inki", "inka", "inke", "inhe", "inhein", "unka", "unki", "unke", "unhe", "unhein", "iska", "iski", "iske",
   "yes", "yep", "yeah", "yup", "ha", "haan", "haa", "han", "sure", "ok", "okay", "theek", "thik", "sahi", "accha", "achha", "done", "bilkul", "zaroor",
   "thanks", "thank", "thx", "dhanyawad", "shukriya", "welcome", "bye", "tata", "alvida",
-  "no", "nope", "nahi", "nahin", "na", "never", "cancel", "hi", "hello", "hey"
+  "no", "nope", "nahi", "nahin", "na", "never", "cancel", "hi", "hello", "hey",
+  "sath", "saath", "sabhi", "sab", "sabka", "sabki", "sabke", "dono", "teeno", "charo", "paancho", "sare", "saare",
+  "apna", "apne", "kisi", "dusra", "dusre", "agla", "agle", "pichla", "pichle", "dono", "both", "all"
 ]);
 
 // ============================================================================
@@ -990,7 +992,19 @@ const handleConversationalAndGuidanceViaAI = async ({
   try {
     const client = getOpenAIClient();
 
-    const systemPrompt = `You are "AutoVyn AI Copilot" — the official, world-class enterprise AI assistant and expert consultant for AutoVyn Automotive ERP.
+    const isEnLang = userLanguage?.code === "en";
+    const isDevaLang = userLanguage?.code === "hi_deva";
+    const isHinglishLang = userLanguage?.code === "hi_latn";
+
+    const strictLanguageBlock = isEnLang
+      ? "### ═══ STRICT LANGUAGE MANDATE (CRITICAL) ═══\n- The user wrote in ENGLISH: \"" + rawMessage + "\"\n- You MUST reply 100% STRICTLY in pure, fluent, professional ENGLISH.\n- ABSOLUTELY NO HINDI OR HINGLISH WORDS (Do NOT use 'ji', 'madad', 'kaise hain', 'shuru karte hain', etc.).\n- Examples:\n  * If user says 'Good Morning': 'Good morning! How are you doing today? How can I assist you with AutoVyn ERP?'\n  * If user says 'My name is Atendra': 'Welcome, Atendra! It's great to meet you. How can I help you today in AutoVyn ERP?'"
+      : (isDevaLang
+        ? "### ═══ STRICT LANGUAGE MANDATE (CRITICAL) ═══\n- The user wrote in HINDI DEVANAGARI: \"" + rawMessage + "\"\n- You MUST reply strictly in respectful, natural HINDI written in Devanagari script.\n- Examples:\n  * 'सुप्रभात! ऑटोवाइन ईआरपी में आपका स्वागत है। मैं आपकी क्या सहायता कर सकता हूँ?'\n  * 'नमस्ते अतेन्द्र जी! आपसे मिलकर खुशी हुई।'"
+        : "### ═══ STRICT LANGUAGE MANDATE (CRITICAL) ═══\n- The user wrote in HINGLISH (Roman Hindi): \"" + rawMessage + "\"\n- You MUST reply in natural, polite, respectful Hinglish in Roman script.\n- Examples:\n  * 'Good Morning! AutoVyn ERP me aapka swagat hai. Kaise hain aap?'\n  * 'Welcome Atendra ji! Aapse milkar bahut accha laga.'");
+
+    const systemPrompt = `${strictLanguageBlock}
+
+You are "AutoVyn AI Copilot" — the official, world-class enterprise AI assistant and expert consultant for AutoVyn Automotive ERP.
 
 ### 🌟 PERSONALITY & HUMAN FEEL:
 - Talk like a genuine, smart, empathetic, and seasoned senior colleague / ERP advisor — NOT a cold, rigid chatbot or canned script.
@@ -1142,6 +1156,7 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
 
   const entities = {
     employeeCode: null,
+    employeeCodes: [],
     employeeName: null,
     accountNumber: null,
     panNumber: null,
@@ -1326,9 +1341,11 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
   }
 
   // Employee Code patterns (e.g. 1004, 1047, 2800035, 1953081, AU19795967, EMP102)
-  const empCodeMatch = message.match(/\b([A-Za-z]{1,4}\d{1,8}|\d{3,9})\b/i);
-  if (empCodeMatch) {
-    const rawCode = empCodeMatch[1].trim();
+  // Supports multi-employee code extraction e.g. "19000006 aur 2780063 dono employee ka detail"
+  const allEmpCodeMatches = [...message.matchAll(/\b([A-Za-z]{1,4}\d{1,8}|\d{3,9})\b/gi)];
+  const validExtractedCodes = [];
+  for (const m of allEmpCodeMatches) {
+    const rawCode = m[1].trim();
     const isYearNumber = /^(19\d{2}|20\d{2})$/.test(rawCode) && (parseInt(rawCode, 10) >= 1990 && parseInt(rawCode, 10) <= 2035);
     const hasDirectEmpPrefix = new RegExp(`\\b(?:emp|employee|karmchari|code|empcode|emp_code|id)\\s*[:=]?\\s*${rawCode}\\b`, 'i').test(normalized);
     const isSalaryNumber = salaryNumbers.has(rawCode) || salaryNumbers.has(String(parseFloat(rawCode)));
@@ -1336,11 +1353,24 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     const isPrecededBySubset = new RegExp(`\\b(?:inme\\s*se|unme\\s*se|isme\\s*se|usme\\s*se|out\\s*of|top|first|pehle|pahle)\\s*${rawCode}\\b`, 'i').test(normalized);
     const isFollowedByEntityCount = new RegExp(`\\b${rawCode}\\s*(?:employees?|karmchari|log|records?|staff|people|naam|names?)\\b`, 'i').test(normalized);
 
-    // Never treat a salary range/threshold number, 4-digit year, or subset limit count as an employee code unless explicitly prefixed with "emp 2026" or "code 50000"
-    if (((!isYearNumber && !isSalaryNumber && !isLimitNumber && !isPrecededBySubset && !isFollowedByEntityCount) || hasDirectEmpPrefix)) {
-      if ((!entities.accountNumber || entities.accountNumber.length <= 9) && !entities.aadharNumber) {
-        entities.employeeCode = rawCode;
+    const isMobileNum = entities.mobileNumber && entities.mobileNumber === rawCode;
+    const isAccountNum = entities.accountNumber && entities.accountNumber === rawCode;
+    const isAadharNum = entities.aadharNumber && entities.aadharNumber === rawCode;
+
+    if (!isMobileNum && !isAccountNum && !isAadharNum) {
+      if (((!isYearNumber && !isSalaryNumber && !isLimitNumber && !isPrecededBySubset && !isFollowedByEntityCount) || hasDirectEmpPrefix)) {
+        if (!validExtractedCodes.includes(rawCode)) {
+          validExtractedCodes.push(rawCode);
+        }
       }
+    }
+  }
+
+  if (validExtractedCodes.length > 0) {
+    entities.employeeCodes = validExtractedCodes;
+    entities.employeeCode = validExtractedCodes[0];
+    if (validExtractedCodes.length > 1) {
+      entities.isMultiEmployeeQuery = true;
     }
   }
 
@@ -1375,10 +1405,11 @@ const classifyIntentAndExtractEntities = async ({ message, originalMessage, hist
     candidateName = candidateName.replace(/\s+(along|with|and|aur|their|unka|unki|unke|iska|iski|iske|ke|ki|ka|ko|se|me|mein|par|pe|whose|who|which|that|is|are|the|ye|yeh|wo|woh|bhi|na|ne|his|her|tell|give|show|batao|do|together|including|also|plus|as|having|details?|info|data|records?)\b.*$/i, "").trim();
 
     const lowerCand = candidateName.toLowerCase();
-    const hasForbiddenWord = /\b(kitne|kitna|kitni|kaun|kisne|kiske|kiska|kisko|total|sabka|kisi|koi|bich|beech|darmiyan|andar|tak|employee|employees|karmchari|staff|worker|person|people|log|user|users|admin|sir|batao|dikhao|karo|hai|hain|tha|thi|the|kya|kyu|kaise|kab|kahan|where|who|whom|what|which|how|many|count|salary|attendance|leave|record|records)\b/i.test(candidateName);
+    const hasForbiddenWord = /\b(sath|saath|sabhi|sab|sabka|sabki|sabke|dono|teeno|charo|sare|saare|apna|apne|kisi|koi|har|pratyek|each|every|all|both|together|details?|info|suchi|list|kitne|kitna|kitni|kaun|kisne|kiske|kiska|kisko|total|bich|beech|darmiyan|andar|tak|employee|employees|karmchari|staff|worker|person|people|log|user|users|admin|sir|batao|dikhao|karo|hai|hain|tha|thi|the|kya|kyu|kaise|kab|kahan|where|who|whom|what|which|how|many|count|salary|attendance|leave|record|records)\b/i.test(candidateName);
 
-    if (candidateName && !hasForbiddenWord && !SEARCH_STOP_WORDS.has(lowerCand) &&
-        !/^(employee|employees|karmchari|total|count|salary|attendance|branch|active|inactive|highest|lowest|list|all|kitne|sankhya|data)$/i.test(lowerCand)) {
+    const isExplicitForbiddenToken = /^(sath|saath|sabhi|sab|sabka|sabki|sabke|dono|teeno|charo|sare|saare|apna|apne|kisi|koi|all|both|each|every|list|detail|details|info|data|karmchari|employee|employees|total|count|active|inactive|branch|locations?|number|numbers)$/i.test(lowerCand);
+
+    if (candidateName && !hasForbiddenWord && !isExplicitForbiddenToken && !SEARCH_STOP_WORDS.has(lowerCand)) {
       entities.employeeName = candidateName;
       entities.nameFilter = candidateName;
     }
@@ -2224,6 +2255,7 @@ class MemoryEngine {
 
   async ensureContextFromDB(conversationId, sequelize, currentMessage = "") {
     if (!conversationId || !sequelize?.query) return null;
+    this.lastSequelize = sequelize;
     let existing = this.sessions.get(conversationId);
     // If in-memory context already has the latest turn details, never re-query DB to avoid stale turn bleeding
     if (existing && (existing.lastEmployeeCode || existing.lastEmployeeName || existing.lastUserMessage || existing.lastIntent || existing.lastSpecificDate)) {
@@ -2231,6 +2263,55 @@ class MemoryEngine {
     }
 
     try {
+      // 1. PRIMARY FAST PATH: Instant Snapshot from AI_Session_Context_Tbl (Post-server restart)
+      const snapshotRows = await sequelize.query(`
+        SELECT TOP 1 *
+        FROM [dbo].[AI_Session_Context_Tbl] WITH (NOLOCK)
+        WHERE [Conversation_Id] = :conversationId
+      `, { replacements: { conversationId }, type: QueryTypes.SELECT }).catch(() => []);
+
+      if (Array.isArray(snapshotRows) && snapshotRows.length > 0) {
+        const snap = snapshotRows[0];
+        let knownEmployees = [];
+        let lastEntities = {};
+        let branches = null;
+        try {
+          if (snap.Known_Employees_JSON) knownEmployees = JSON.parse(snap.Known_Employees_JSON);
+        } catch (_) {}
+        try {
+          if (snap.Last_Entities_JSON) lastEntities = JSON.parse(snap.Last_Entities_JSON);
+        } catch (_) {}
+        try {
+          if (snap.Last_Branches_JSON) branches = JSON.parse(snap.Last_Branches_JSON);
+        } catch (_) {}
+
+        const restored = {
+          conversationId,
+          userCode: snap.User_Code || null,
+          compCode: snap.Comp_Code || null,
+          userName: snap.User_Name || null,
+          lastIntent: snap.Last_Intent || null,
+          lastEmployeeCode: snap.Last_Emp_Code || null,
+          lastEmployeeName: snap.Last_Emp_Name || null,
+          lastBranch: snap.Last_Branch || null,
+          lastBranches: branches,
+          lastSpecificDate: snap.Last_Specific_Date || null,
+          lastCount: snap.Last_Count || null,
+          lastFlag: snap.Last_Flag || null,
+          lastUserMessage: snap.Last_User_Message || null,
+          lastAssistantAnswer: snap.Last_Assistant_Answer || null,
+          knownEmployees,
+          lastEntities,
+          turnCount: snap.Turn_Count || 1,
+          lastUpdated: Date.now()
+        };
+
+        this.sessions.set(conversationId, restored);
+        console.log(`🧠 [V6-MemoryEngine] Restored exact session snapshot from AI_Session_Context_Tbl (Post-restart memory intact): emp=${restored.lastEmployeeName || ''} (${restored.lastEmployeeCode || 'None'}), intent=${restored.lastIntent || 'None'}, user=${restored.userName || 'None'}`);
+        return restored;
+      }
+
+      // 2. SECONDARY FALLBACK: Parse recent turns from AI_Message_Tbl for legacy sessions
       const rows = await sequelize.query(`
         SELECT TOP 6 [Role], [Message_Content], [Metadata]
         FROM [dbo].[AI_Message_Tbl] WITH (NOLOCK)
@@ -2259,6 +2340,9 @@ class MemoryEngine {
             startIndex = 1;
           }
         }
+
+        let hasDeterminedSubject = false;
+        let hasDeterminedName = false;
 
         for (let i = startIndex; i < rows.length; i++) {
           const row = rows[i];
@@ -2307,24 +2391,39 @@ class MemoryEngine {
               );
 
               if (isRowCollective) {
-                // For collective intents, always null the employee code.
-                // HOWEVER: for name-filtered counts (e.g. EMPLOYEE_COUNT + nameFilter),
-                // we must preserve the name so follow-ups like "detail do" work correctly.
-                empCode = null;
-                const collectiveHasNameFilter = (
-                  meta.resolvedEntities?.employeeName ||
-                  meta.resolvedEntities?.nameFilter ||
-                  meta.nameFilter ||
-                  meta.employeeName
-                );
-                if (!collectiveHasNameFilter) {
-                  empName = null;
-                } else if (!empName) {
-                  empName = meta.resolvedEntities?.employeeName || meta.resolvedEntities?.nameFilter || meta.nameFilter || meta.employeeName;
+                if (!hasDeterminedSubject) {
+                  empCode = null;
+                  hasDeterminedSubject = true;
+                }
+                if (!hasDeterminedName) {
+                  const collectiveHasNameFilter = (
+                    meta.resolvedEntities?.employeeName ||
+                    meta.resolvedEntities?.nameFilter ||
+                    meta.nameFilter ||
+                    meta.employeeName
+                  );
+                  if (collectiveHasNameFilter) {
+                    empName = meta.resolvedEntities?.employeeName || meta.resolvedEntities?.nameFilter || meta.nameFilter || meta.employeeName;
+                  } else {
+                    empName = null;
+                  }
+                  hasDeterminedName = true;
                 }
               } else {
-                if (!empCode) empCode = meta.lastEmployeeCode || meta.resolvedEntities?.employeeCode || meta.employeeCode;
-                if (!empName) empName = meta.lastEmployeeName || meta.resolvedEntities?.employeeName || meta.employeeName || meta.nameFilter || meta.userName || meta.lastUserName || meta.resolvedEntities?.userName;
+                if (!hasDeterminedSubject) {
+                  const candidateCode = meta.lastEmployeeCode || meta.resolvedEntities?.employeeCode || meta.employeeCode;
+                  if (candidateCode && (/^\d+$/.test(String(candidateCode).trim()) || String(candidateCode).length < 20)) {
+                    empCode = candidateCode;
+                    hasDeterminedSubject = true;
+                  }
+                }
+                if (!hasDeterminedName) {
+                  const candidateName = meta.lastEmployeeName || meta.resolvedEntities?.employeeName || meta.employeeName || meta.nameFilter || meta.userName || meta.lastUserName || meta.resolvedEntities?.userName;
+                  if (candidateName && !/^\d+$/.test(String(candidateName).trim())) {
+                    empName = candidateName;
+                    hasDeterminedName = true;
+                  }
+                }
               }
               if (!intent) intent = meta.intent || meta.effectiveIntent;
               if (!specificDate) specificDate = meta.specificDate || meta.resolvedEntities?.specificDate;
@@ -2335,11 +2434,17 @@ class MemoryEngine {
               if (meta.resolvedEntities) lastEntities = { ...meta.resolvedEntities, ...lastEntities };
             } catch (_) {}
           }
-          if (!isRowCollective && !empCode && row.Message_Content) {
+          if (!hasDeterminedSubject && !isRowCollective && !empCode && row.Message_Content) {
             const codeMatch = String(row.Message_Content).match(/\b(?:Employee Code|Emp Code|Code|EMPCODE)[*\s:]+(\d{4,10})\b/i);
-            if (codeMatch) empCode = codeMatch[1];
+            if (codeMatch) {
+              empCode = codeMatch[1];
+              hasDeterminedSubject = true;
+            }
             const nameMatch = String(row.Message_Content).match(/(?:salary|karmchari|employee|hai)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+(?:ko|ki|ke|ka)\b/i);
-            if (nameMatch) empName = nameMatch[1];
+            if (nameMatch && !hasDeterminedName) {
+              empName = nameMatch[1];
+              hasDeterminedName = true;
+            }
           }
 
           // Stop after we have gathered both previous assistant response and user query
@@ -2389,8 +2494,9 @@ class MemoryEngine {
     const isDualEntityFollowup = /\b(dono\s*(?:ka|ki|ke|ko|bhi)?|both|both\s*of\s*them|dono\s*employee)\b/i.test(norm);
     const isIdentityQuestion = /\b(kon\s*hai|kaun\s*hai|who\s*is\s*(?:he|she|this|that|it)|unka\s*naam\s*kya\s*hai|iska\s*naam\s*kya\s*hai|kiska\s*naam\s*hai)\b/i.test(norm);
 
-    // 1.5 Subset / Referential Dataset Follow-Up (e.g. "inme se 1000 employee...", "in sabhi ka...", "in sabka...", "inka...", "unka...")
-    const isSubsetFollowup = /\b(inme\s*se|unme\s*se|isme\s*se|usme\s*se|in\s*(?:\d+\s*)?(?:logo|karmchari|employee|employees)\s*me\s*se|in\s*sab\s*me\s*se|inhi\s*me\s*se|among\s*them|out\s*of\s*(?:these|them|those|\d+)?|from\s*(?:these|them|those|this\s*list)?|in\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|un\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|in\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|un\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*karmchari(?:yo)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*employees\s*(?:ka|ki|ke|ko|se|me\s*se)?|these\s*employees|inka|unka|in\s*me\s*se|is\s*list\s*(?:se|me\s*se)|all\s*of\s*(?:these|them|those)?|their\s*(?:name|details|mobile|pf|salary)?|sabhi\s*ka|sabka)\b/i.test(norm) ||
+    // 1.5 Subset / Referential Dataset Follow-Up (e.g. "inme se 1000 employee...", "in sabhi ka...", "sabhi ki detail...", "details nikalo...")
+    const isSubsetFollowup = isPluralOrCollectiveFollowup ||
+      /\b(inme\s*se|unme\s*se|isme\s*se|usme\s*se|in\s*(?:\d+\s*)?(?:logo|karmchari|employee|employees)\s*me\s*se|in\s*sab\s*me\s*se|inhi\s*me\s*se|among\s*them|out\s*of\s*(?:these|them|those|\d+)?|from\s*(?:these|them|those|this\s*list)?|in\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|un\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|in\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|un\s*sab(?:hi)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*karmchari(?:yo)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*employees\s*(?:ka|ki|ke|ko|se|me\s*se)?|these\s*employees|inka|unka|in\s*me\s*se|is\s*list\s*(?:se|me\s*se)|all\s*of\s*(?:these|them|those)?|their\s*(?:name|details|mobile|pf|salary)?|sabhi\s*ka|sabka|sabhi\s*ki|sabhi\s*ke|sabhi\s*ko|sabhi\s*ki\s*detail|sabki\s*detail|detail\s*batao|details\s*batao|detail\s*do|details\s*do|detail\s*nikalo|details\s*nikalo|poori\s*list|puri\s*list|full\s*list)\b/i.test(norm) ||
       (Boolean(resolved.limit) && !resolved.employeeCode && (
         history.lastIntent === "PRESENT_COUNT" ||
         history.lastIntent === "ABSENT_COUNT" ||
@@ -2399,7 +2505,7 @@ class MemoryEngine {
         history.lastIntent === "ABSENT_EMPLOYEE_LIST"
       ));
 
-    if (isSubsetFollowup && (history.lastIntent || history.lastCount || history.lastSpecificDate || history.lastEmployeeName)) {
+    if (isSubsetFollowup && (history.lastIntent || history.lastCount || history.lastSpecificDate || history.lastEmployeeName || history.lastBranch || history.lastBranches)) {
       if (resolved.limit && resolved.employeeCode && (String(resolved.employeeCode) === String(resolved.limit) || parseInt(resolved.employeeCode, 10) === resolved.limit)) {
         resolved.employeeCode = null;
       }
@@ -2466,7 +2572,21 @@ class MemoryEngine {
         const countLabel = prevCount ? `${prevCount} ` : "";
         const limitStr = limitVal ? `${limitVal} ` : "sabhi ";
         const nameLabel = prevEmpName ? ` named "${prevEmpName}"` : "";
-        rewrittenQuestion = `Out of ${countLabel}employees${nameLabel}, provide the details of ${limitStr}employees.`;
+        const branchLabel = history.lastBranches && history.lastBranches.length > 0
+          ? ` in Branch ${history.lastBranches.join(' and ')}`
+          : (history.lastBranch ? ` in Branch ${history.lastBranch}` : '');
+        rewrittenQuestion = `Out of ${countLabel}employees${nameLabel}${branchLabel}, provide the details of ${limitStr}employees.`;
+      } else if (history.lastBranches || history.lastBranch) {
+        resolvedIntent = "EMPLOYEE_LOOKUP";
+        if (history.lastBranch) resolved.branch = history.lastBranch;
+        if (history.lastBranches) resolved.branches = history.lastBranches;
+        if (history.lastExcludeBranch) resolved.excludeBranch = history.lastExcludeBranch;
+        if (history.lastEmployeeStatus) resolved.employeeStatus = history.lastEmployeeStatus;
+        if (history.lastDesignation) resolved.designation = history.lastDesignation;
+        resolved.isAllRequested = true;
+        const limitStr = limitVal ? `${limitVal} ` : "sabhi ";
+        const branchLabel = history.lastBranches ? `Branch ${history.lastBranches.join(' aur ')}` : `Branch ${history.lastBranch}`;
+        rewrittenQuestion = `${branchLabel} ke ${limitStr}employees ki details do.`;
       } else if (prevDate) {
         resolvedIntent = "PRESENT_EMPLOYEE_LIST";
         if (prevDate) resolved.specificDate = prevDate;
@@ -2479,7 +2599,7 @@ class MemoryEngine {
         rewrittenQuestion = `Present employees on ${prevDate} me se ${limitStr}employees ka details do.`;
       }
 
-      console.log(`🧠 [V6-MemoryEngine] Resolved subset follow-up: intent=${resolvedIntent}, limit=${limitVal || 'ALL (No Limit)'}, date=${resolved.specificDate || 'none'}, branch=${resolved.branch || 'none'}, priorCount=${prevCount || 'none'}`);
+      console.log(`🧠 [V6-MemoryEngine] Resolved subset follow-up: intent=${resolvedIntent}, limit=${limitVal || 'ALL (No Limit)'}, date=${resolved.specificDate || 'none'}, branch=${resolved.branch || 'none'}, branches=${resolved.branches ? JSON.stringify(resolved.branches) : 'none'}, priorCount=${prevCount || 'none'}`);
       return {
         entities: resolved,
         intent: resolvedIntent,
@@ -2500,9 +2620,18 @@ class MemoryEngine {
       return { entities: resolved, intent: resolvedIntent, isFollowup: true, previousTurn: history };
     }
 
-    // 1.7 Prior Reference Follow-Up ("pehle wala", "previous employee")
-    if (isPriorReferenceFollowup && Array.isArray(history.knownEmployees) && history.knownEmployees.length >= 2) {
-      const priorEmp = history.knownEmployees[1];
+    // 1.7 Prior / Second Reference Follow-Up ("pehle wala", "dusra wala", "second employee")
+    const isSecondReferenceFollowup = /\b(dusra\s*wala|dusre\s*wale|dusri\s*wali|second\s*employee|second\s*one|other\s*one|doosra\s*wala|doosre\s*wale)\b/i.test(norm);
+    if (isSecondReferenceFollowup && Array.isArray(history.knownEmployees) && history.knownEmployees.length >= 2) {
+      const secondEmp = history.knownEmployees[1];
+      resolved.employeeCode = secondEmp.code;
+      resolved.employeeName = secondEmp.name || null;
+      console.log(`⏭️ [V6-MemoryEngine] Resolved second reference employee: ${secondEmp.name || secondEmp.code}`);
+      return { entities: resolved, intent: resolvedIntent, isFollowup: true, previousTurn: history };
+    }
+
+    if (isPriorReferenceFollowup && Array.isArray(history.knownEmployees) && history.knownEmployees.length >= 1) {
+      const priorEmp = history.knownEmployees.length >= 2 ? history.knownEmployees[0] : history.knownEmployees[0];
       resolved.employeeCode = priorEmp.code;
       resolved.employeeName = priorEmp.name || null;
       console.log(`⏮️ [V6-MemoryEngine] Resolved prior reference employee: ${priorEmp.name || priorEmp.code}`);
@@ -2699,7 +2828,20 @@ class MemoryEngine {
 
     // Multi-entity memory stack: keep track of recent employees in conversation
     let knownEmployees = Array.isArray(existing.knownEmployees) ? [...existing.knownEmployees] : [];
-    if (hasCurrentEmpCode) {
+    if (Array.isArray(entities.employeeCodes) && entities.employeeCodes.length > 0) {
+      for (const code of entities.employeeCodes) {
+        const empCodeStr = String(code);
+        knownEmployees = knownEmployees.filter(e => String(e.code) !== empCodeStr);
+        knownEmployees.push({
+          code: empCodeStr,
+          name: currentName || null,
+          branch: entities.branch || null,
+          designation: entities.designation || null,
+          timestamp: Date.now()
+        });
+      }
+      if (knownEmployees.length > 10) knownEmployees = knownEmployees.slice(-10);
+    } else if (hasCurrentEmpCode) {
       const empCodeStr = String(entities.employeeCode);
       const empNameStr = currentName || (existing.lastEmployeeCode === empCodeStr ? existing.lastEmployeeName : null);
       knownEmployees = knownEmployees.filter(e => String(e.code) !== empCodeStr);
@@ -2733,7 +2875,8 @@ class MemoryEngine {
     if (isCollectiveOrAllQuery) {
       // Universal / collective queries clear active individual employee context
       newEmpCode = null;
-      newEmpName = null;
+      const hasValidNameFilter = currentName && !/^(sath|saath|sabhi|sab|sabka|sabki|sabke|dono|teeno|charo|sare|saare|apna|apne|kisi|koi|all|both|each|every|list|detail|details|info|data|karmchari|employee|employees|total|count|active|inactive)$/i.test(currentName);
+      newEmpName = hasValidNameFilter ? currentName : null;
     } else if (hasCurrentEmpCode) {
       newEmpCode = String(entities.employeeCode);
       newEmpName = currentName || (isNewSubject ? null : existing.lastEmployeeName) || null;
@@ -2741,8 +2884,8 @@ class MemoryEngine {
       newEmpCode = null; // Stale code must NEVER bleed into a name query!
       newEmpName = currentName;
     } else {
-      newEmpCode = existing.lastEmployeeCode || null;
-      newEmpName = existing.lastEmployeeName || null;
+      newEmpCode = isNewSubject ? null : (existing.lastEmployeeCode || null);
+      newEmpName = isNewSubject ? null : (existing.lastEmployeeName || null);
     }
 
     const newBranch = entities.branch || (isNewSubject ? null : existing.lastBranch) || null;
@@ -2759,12 +2902,12 @@ class MemoryEngine {
       existing.lastCount || null
     );
 
-    this.sessions.set(conversationId, {
+    const updatedSession = {
       ...existing,
       userName: entities.userName || existing.userName || null,
       lastUserName: entities.userName || existing.lastUserName || null,
       lastEmployeeCode: newEmpCode,
-      lastEmployeeName: newEmpName || entities.userName || existing.lastEmployeeName || null,
+      lastEmployeeName: isCollectiveOrAllQuery ? newEmpName : (newEmpName || (isNewSubject ? null : existing.lastEmployeeName) || entities.userName || null),
       knownEmployees,
       lastBranch: newBranch,
       lastBranches: newBranches,
@@ -2786,7 +2929,144 @@ class MemoryEngine {
       lastEntities: { ...(existing.lastEntities || {}), ...(entities || {}) },
       tablesUsed: extra.tablesUsed || existing.tablesUsed || [],
       lastUpdated: Date.now()
-    });
+    };
+
+    this.sessions.set(conversationId, updatedSession);
+
+    // Asynchronously persist rich snapshot to AI_Session_Context_Tbl for durability across server restarts
+    this.persistSessionSnapshot(conversationId, updatedSession, extra.sequelize || this.lastSequelize, extra.userContext);
+  }
+
+  async persistSessionSnapshot(conversationId, sessionData = {}, sequelize = null, userContext = {}) {
+    const seq = sequelize || this.lastSequelize;
+    if (!conversationId || !seq?.query) return;
+
+    try {
+      const userCode = String(sessionData.userCode || userContext?.userCode || userContext?.numericUserId || "").trim();
+      const compCode = String(sessionData.compCode || userContext?.compcode || "01").trim();
+      const userName = sessionData.userName || sessionData.lastUserName || userContext?.userName || null;
+      const lastIntent = sessionData.lastIntent || null;
+      const lastEmpCode = sessionData.lastEmployeeCode || null;
+      const lastEmpName = sessionData.lastEmployeeName || null;
+      const lastBranch = sessionData.lastBranch || null;
+      const lastBranchesJson = sessionData.lastBranches ? JSON.stringify(sessionData.lastBranches) : null;
+      const lastSpecificDate = sessionData.lastSpecificDate || null;
+      const lastCount = sessionData.lastCount !== null && sessionData.lastCount !== undefined ? Number(sessionData.lastCount) : null;
+      const lastFlag = sessionData.lastFlag || null;
+      const lastUserMsg = sessionData.lastUserMessage ? String(sessionData.lastUserMessage).slice(0, 4000) : null;
+      const lastAsstMsg = sessionData.lastAssistantAnswer ? String(sessionData.lastAssistantAnswer).slice(0, 4000) : null;
+      const knownEmpsJson = Array.isArray(sessionData.knownEmployees) ? JSON.stringify(sessionData.knownEmployees.slice(0, 10)) : null;
+      const lastEntitiesJson = sessionData.lastEntities ? JSON.stringify(sessionData.lastEntities) : null;
+
+      await seq.query(`
+        MERGE [dbo].[AI_Session_Context_Tbl] AS target
+        USING (SELECT :conversationId AS Conversation_Id) AS source
+        ON (target.Conversation_Id = source.Conversation_Id)
+        WHEN MATCHED THEN
+          UPDATE SET
+            target.User_Code = COALESCE(NULLIF(:userCode, ''), target.User_Code),
+            target.Comp_Code = COALESCE(NULLIF(:compCode, ''), target.Comp_Code),
+            target.User_Name = COALESCE(:userName, target.User_Name),
+            target.Last_Intent = COALESCE(:lastIntent, target.Last_Intent),
+            target.Last_Emp_Code = :lastEmpCode,
+            target.Last_Emp_Name = :lastEmpName,
+            target.Last_Branch = :lastBranch,
+            target.Last_Branches_JSON = :lastBranchesJson,
+            target.Last_Specific_Date = :lastSpecificDate,
+            target.Last_Count = :lastCount,
+            target.Last_Flag = :lastFlag,
+            target.Last_User_Message = COALESCE(:lastUserMsg, target.Last_User_Message),
+            target.Last_Assistant_Answer = COALESCE(:lastAsstMsg, target.Last_Assistant_Answer),
+            target.Known_Employees_JSON = COALESCE(:knownEmpsJson, target.Known_Employees_JSON),
+            target.Last_Entities_JSON = COALESCE(:lastEntitiesJson, target.Last_Entities_JSON),
+            target.Turn_Count = target.Turn_Count + 1,
+            target.Updated_At = SYSDATETIME()
+        WHEN NOT MATCHED THEN
+          INSERT (
+            Conversation_Id, User_Code, Comp_Code, User_Name,
+            Last_Intent, Last_Emp_Code, Last_Emp_Name, Last_Branch, Last_Branches_JSON,
+            Last_Specific_Date, Last_Count, Last_Flag, Last_User_Message, Last_Assistant_Answer,
+            Known_Employees_JSON, Last_Entities_JSON, Turn_Count, Created_At, Updated_At
+          ) VALUES (
+            :conversationId, NULLIF(:userCode, ''), NULLIF(:compCode, ''), :userName,
+            :lastIntent, :lastEmpCode, :lastEmpName, :lastBranch, :lastBranchesJson,
+            :lastSpecificDate, :lastCount, :lastFlag, :lastUserMsg, :lastAsstMsg,
+            :knownEmpsJson, :lastEntitiesJson, 1, SYSDATETIME(), SYSDATETIME()
+          );
+      `, {
+        replacements: {
+          conversationId, userCode, compCode, userName, lastIntent, lastEmpCode, lastEmpName,
+          lastBranch, lastBranchesJson, lastSpecificDate, lastCount, lastFlag, lastUserMsg,
+          lastAsstMsg, knownEmpsJson, lastEntitiesJson
+        },
+        type: QueryTypes.RAW
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  async saveUserProfileMemory(userContext = {}, profileData = {}, sequelize = null) {
+    const seq = sequelize || this.lastSequelize;
+    const userCode = String(userContext?.userCode || userContext?.numericUserId || profileData?.userCode || "").trim();
+    const compCode = String(userContext?.compcode || profileData?.compCode || "01").trim();
+    if (!userCode || !seq?.query) return;
+
+    try {
+      const userName = profileData.userName || userContext?.userName || null;
+      const prefLang = profileData.preferredLanguage || null;
+      const defBranch = profileData.defaultBranch || userContext?.branch || null;
+      const selfEmpCode = profileData.selfEmpCode || null;
+      const role = profileData.role || userContext?.role || null;
+      const recentJson = profileData.recentSearched ? JSON.stringify(profileData.recentSearched) : null;
+
+      await seq.query(`
+        MERGE [dbo].[AI_User_Profile_Memory_Tbl] AS target
+        USING (SELECT :userCode AS User_Code, :compCode AS Comp_Code) AS source
+        ON (target.User_Code = source.User_Code AND target.Comp_Code = source.Comp_Code)
+        WHEN MATCHED THEN
+          UPDATE SET
+            target.User_Name = COALESCE(:userName, target.User_Name),
+            target.Preferred_Language = COALESCE(:prefLang, target.Preferred_Language),
+            target.Default_Branch = COALESCE(:defBranch, target.Default_Branch),
+            target.Self_Emp_Code = COALESCE(:selfEmpCode, target.Self_Emp_Code),
+            target.Role = COALESCE(:role, target.Role),
+            target.Recent_Searched_Employees_JSON = COALESCE(:recentJson, target.Recent_Searched_Employees_JSON),
+            target.Total_Interactions = target.Total_Interactions + 1,
+            target.Last_Active_At = SYSDATETIME()
+        WHEN NOT MATCHED THEN
+          INSERT (
+            User_Code, Comp_Code, User_Name, Preferred_Language,
+            Default_Branch, Self_Emp_Code, Role, Recent_Searched_Employees_JSON,
+            Total_Interactions, First_Seen_At, Last_Active_At
+          ) VALUES (
+            :userCode, :compCode, :userName, :prefLang,
+            :defBranch, :selfEmpCode, :role, :recentJson,
+            1, SYSDATETIME(), SYSDATETIME()
+          );
+      `, {
+        replacements: { userCode, compCode, userName, prefLang, defBranch, selfEmpCode, role, recentJson },
+        type: QueryTypes.RAW
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  async loadUserProfileMemory(userCode, compCode, sequelize = null) {
+    const seq = sequelize || this.lastSequelize;
+    const uCode = String(userCode || "").trim();
+    const cCode = String(compCode || "01").trim();
+    if (!uCode || !seq?.query) return null;
+
+    try {
+      const rows = await seq.query(`
+        SELECT TOP 1 *
+        FROM [dbo].[AI_User_Profile_Memory_Tbl] WITH (NOLOCK)
+        WHERE [User_Code] = :uCode AND [Comp_Code] = :cCode
+      `, { replacements: { uCode, cCode }, type: QueryTypes.SELECT }).catch(() => []);
+
+      if (Array.isArray(rows) && rows.length > 0) {
+        return rows[0];
+      }
+    } catch (_) {}
+    return null;
   }
 
   clearContext(conversationId) {
@@ -4144,11 +4424,56 @@ ORDER BY D.[DuplicateCount] DESC, D.[CleanAadhaar], E.[EMPCODE];`;
     case "EMPLOYEE_LOOKUP":
     case "EMPLOYEE_PROFILE":
       {
+        // 1. Multi-Employee Code Query (e.g. "19000006 aur 2780063 dono employee ka detail nikalo")
+        if (entities.employeeCodes && Array.isArray(entities.employeeCodes) && entities.employeeCodes.length > 1) {
+          const formattedCodes = entities.employeeCodes.map(c => `'${String(c).replace(/'/g, "''")}'`).join(", ");
+          let sql = `SELECT
+  LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  ISNULL(E.[TITLE], '') AS [Title],
+  LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
+  E.[EMPFIRSTNAME] AS [FirstName],
+  E.[EMPLASTNAME] AS [LastName],
+  E.[LOCATION] AS [Location],
+  E.[EMPLOYEEDESIGNATION] AS [Designation],
+  NULL AS [Department],
+  E.[MOBILENO] AS [MobileNo],
+  E.[CORPORATEMAILID] AS [Email],
+  CONVERT(varchar(10), E.[CURRENTJOINDATE], 120) AS [JoiningDate],
+  CONVERT(varchar(10), E.[DOB], 120) AS [DateOfBirth],
+  CONVERT(varchar(10), E.[DOM], 120) AS [MarriageDate],
+  E.[PANNO] AS [PAN],
+  ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[ADHARNO]))), ''), ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[UID_NO]))), ''), E.[uidno])) AS [AadharNo],
+  E.[PFNUMBER] AS [PFNumber],
+  E.[UAN_No] AS [UANNumber],
+  E.[ESINO] AS [ESINo],
+  E.[BANKACCOUNTNO] AS [BankAccountNo],
+  E.[BANKNAME] AS [BankName],
+  E.[ifsc_code] AS [IFSC],
+  ISNULL(E.[MONTHLY_CTC], 0) AS [MonthlyCTC],
+  ISNULL(E.[ANNUAL_CTC], 0) AS [AnnualCTC],
+  E.[FATHERNAME] AS [FatherName],
+  E.[PERMANENTADDRESS1] AS [PermanentAddress1],
+  E.[PERMANENTADDRESS2] AS [PermanentAddress2],
+  E.[PCITY] AS [PermanentCity],
+  E.[PSTATE] AS [PermanentState],
+  E.[CURRENTADDRESS1] AS [CurrentAddress1],
+  E.[CURRENTADDRESS2] AS [CurrentAddress2],
+  E.[BLOODGROUP] AS [BloodGroup],
+  E.[GENDER] AS [Gender],
+  E.[MARITALSTATUS] AS [MaritalStatus],
+  CASE WHEN E.[EMP_STATUS] = 'A' OR E.[EMP_STATUS] = '1' THEN 'Active' ELSE 'Inactive' END AS [EmploymentStatus]
+FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
+WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) IN (${formattedCodes})
+ORDER BY E.[EMPCODE];`;
+          return { sql, requiresJoin: false, isTemplate: true, confidence: 0.99, targetTable: "EMPLOYEEMASTER" };
+        }
+
         const targetName = (entities.employeeName || entities.nameFilter || "").replace(/'/g, "''");
         if (emp || entities.searchToken) {
           const cleanEmp = (emp || entities.searchToken).replace(/'/g, "''");
           let sql = `SELECT TOP 1
   LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  ISNULL(E.[TITLE], '') AS [Title],
   LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
   E.[LOCATION] AS [Location],
   E.[EMPLOYEEDESIGNATION] AS [Designation],
@@ -4162,6 +4487,7 @@ ORDER BY D.[DuplicateCount] DESC, D.[CleanAadhaar], E.[EMPCODE];`;
   ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[ADHARNO]))), ''), ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[UID_NO]))), ''), E.[uidno])) AS [AadharNo],
   E.[PFNUMBER] AS [PFNumber],
   E.[UAN_No] AS [UANNumber],
+  E.[ESINO] AS [ESINo],
   E.[BANKACCOUNTNO] AS [BankAccountNo],
   E.[BANKNAME] AS [BankName],
   E.[ifsc_code] AS [IFSC],
@@ -4169,7 +4495,16 @@ ORDER BY D.[DuplicateCount] DESC, D.[CleanAadhaar], E.[EMPCODE];`;
   ISNULL(E.[ANNUAL_CTC], 0) AS [AnnualCTC],
   E.[FATHERNAME] AS [FatherName],
   E.[PERMANENTADDRESS1] AS [PermanentAddress],
+  E.[PERMANENTADDRESS1] AS [PermanentAddress1],
+  E.[PERMANENTADDRESS2] AS [PermanentAddress2],
+  E.[PCITY] AS [PermanentCity],
+  E.[PSTATE] AS [PermanentState],
   E.[CURRENTADDRESS1] AS [CurrentAddress],
+  E.[CURRENTADDRESS1] AS [CurrentAddress1],
+  E.[CURRENTADDRESS2] AS [CurrentAddress2],
+  E.[BLOODGROUP] AS [BloodGroup],
+  E.[GENDER] AS [Gender],
+  E.[MARITALSTATUS] AS [MaritalStatus],
   CASE WHEN E.[EMP_STATUS] = 'A' OR E.[EMP_STATUS] = '1' THEN 'Active' ELSE 'Inactive' END AS [EmploymentStatus]
 FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
 WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) = '${cleanEmp}'
@@ -4178,6 +4513,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) = '${cleanEmp}'
         } else if (targetName) {
           let sql = `SELECT TOP 50
   LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) AS [EmployeeCode],
+  ISNULL(E.[TITLE], '') AS [Title],
   LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], '') + ' ' + ISNULL(E.[EMPLASTNAME], ''))) AS [EmployeeName],
   E.[LOCATION] AS [Location],
   E.[EMPLOYEEDESIGNATION] AS [Designation],
@@ -4191,6 +4527,7 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) = '${cleanEmp}'
   ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[ADHARNO]))), ''), ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(varchar(50), E.[UID_NO]))), ''), E.[uidno])) AS [AadharNo],
   E.[PFNUMBER] AS [PFNumber],
   E.[UAN_No] AS [UANNumber],
+  E.[ESINO] AS [ESINo],
   E.[BANKACCOUNTNO] AS [BankAccountNo],
   E.[BANKNAME] AS [BankName],
   E.[ifsc_code] AS [IFSC],
@@ -4198,7 +4535,16 @@ WHERE LTRIM(RTRIM(CONVERT(varchar(50), E.[EMPCODE]))) = '${cleanEmp}'
   ISNULL(E.[ANNUAL_CTC], 0) AS [AnnualCTC],
   E.[FATHERNAME] AS [FatherName],
   E.[PERMANENTADDRESS1] AS [PermanentAddress],
+  E.[PERMANENTADDRESS1] AS [PermanentAddress1],
+  E.[PERMANENTADDRESS2] AS [PermanentAddress2],
+  E.[PCITY] AS [PermanentCity],
+  E.[PSTATE] AS [PermanentState],
   E.[CURRENTADDRESS1] AS [CurrentAddress],
+  E.[CURRENTADDRESS1] AS [CurrentAddress1],
+  E.[CURRENTADDRESS2] AS [CurrentAddress2],
+  E.[BLOODGROUP] AS [BloodGroup],
+  E.[GENDER] AS [Gender],
+  E.[MARITALSTATUS] AS [MaritalStatus],
   CASE WHEN E.[EMP_STATUS] = 'A' OR E.[EMP_STATUS] = '1' THEN 'Active' ELSE 'Inactive' END AS [EmploymentStatus]
 FROM [dbo].[EMPLOYEEMASTER] AS E WITH (NOLOCK)
 WHERE (E.[EMPFIRSTNAME] LIKE '%${targetName}%' OR CONCAT(E.[EMPFIRSTNAME], ' ', ISNULL(E.[EMPLASTNAME], '')) LIKE '%${targetName}%')
@@ -4230,9 +4576,22 @@ WHERE LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], ''))) NOT IN ('', '-', '--', '---')`;
           if (fallbackNameFilter) {
             sql += ` AND (E.[EMPFIRSTNAME] LIKE '%${fallbackNameFilter}%' OR CONCAT(LTRIM(RTRIM(ISNULL(E.[EMPFIRSTNAME], ''))), ' ', LTRIM(RTRIM(ISNULL(E.[EMPLASTNAME], '')))) LIKE '%${fallbackNameFilter}%')`;
           }
-          if (branch || entities.locCode) {
+          if (entities.branches && Array.isArray(entities.branches) && entities.branches.length > 0) {
+            const formattedBranches = entities.branches.map(b => {
+              const clean = String(b).replace(/'/g, "''");
+              return /^\d+$/.test(clean) ? clean : `'${clean}'`;
+            }).join(", ");
+            sql += ` AND E.[LOCATION] IN (${formattedBranches})`;
+          } else if (branch || entities.locCode) {
             const loc = branch || entities.locCode;
-            sql += ` AND (E.[LOCATION] = '${String(loc).replace(/'/g, "''")}' OR CONVERT(varchar(50), E.[LOCATION]) = '${String(loc).replace(/'/g, "''")}')`;
+            const cleanLoc = String(loc).replace(/'/g, "''");
+            const isNum = /^\d+$/.test(cleanLoc);
+            sql += ` AND (E.[LOCATION] = '${cleanLoc}' OR CONVERT(varchar(50), E.[LOCATION]) = '${cleanLoc}'${isNum ? ` OR E.[LOCATION] = ${cleanLoc}` : ''})`;
+          }
+          if (entities.excludeBranch) {
+            const cleanEx = String(entities.excludeBranch).replace(/'/g, "''");
+            const isNum = /^\d+$/.test(cleanEx);
+            sql += ` AND (E.[LOCATION] <> '${cleanEx}' AND CONVERT(varchar(50), E.[LOCATION]) <> '${cleanEx}'${isNum ? ` AND E.[LOCATION] <> ${cleanEx}` : ''})`;
           }
           if (entities.employeeStatus === "ACTIVE") {
             sql += ` AND (E.[EMP_STATUS] = 'A' OR E.[EMP_STATUS] = '1' OR E.[LASTWOR_DATE] IS NULL)`;
@@ -7331,8 +7690,19 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   // Event Formatter: Marriage Anniversary
   if (intent === "MARRIAGE_ANNIVERSARY" && rows.length > 0) {
     const isToday = entities.isToday || /\b(aaj|today)\b/i.test(message || "");
-    const dateStr = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : ""));
-    let ans = `AutoVyn ERP ke record ke anusar, ${dateStr} **${rows.length} employee(s)** ki **Marriage Anniversary** hai! 🎉💐\n\n`;
+    const dateStrHing = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : ""));
+    const dateStrEn = isToday ? "today" : (entities.specificDate ? `on **${entities.specificDate}**` : (entities.month ? `in this month (${entities.month}/${entities.year || new Date().getFullYear()})` : ""));
+    const dateStrDeva = isToday ? "आज" : (entities.specificDate ? `**${entities.specificDate}** को` : (entities.month ? `इस महीने (${entities.month}/${entities.year || new Date().getFullYear()}) में` : ""));
+
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, there are **${rows.length} employee(s)** celebrating their **Marriage Anniversary** ${dateStrEn}! 🎉💐\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${dateStrDeva} **${rows.length} कर्मचारियों** की **विवाह वर्षगांठ** है! 🎉💐\n\n`;
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar, ${dateStrHing} **${rows.length} employee(s)** ki **Marriage Anniversary** hai! 🎉💐\n\n`;
+    }
+
     ans += `| Emp Code | Employee Name | Marriage Date | Years Completed | Location / Branch | Designation | Mobile No |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, 50)) {
@@ -7348,15 +7718,26 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     if (rows.length > 50) ans += `\n*(Showing top 50 of ${rows.length} records)*`;
     return {
       answer: ans.trim(),
-      summary: `${rows.length} employees marriage anniversary ${dateStr}`
+      summary: `${rows.length} employees marriage anniversary ${isEn ? dateStrEn : (isDeva ? dateStrDeva : dateStrHing)}`
     };
   }
 
   // Event Formatter: Work Anniversary
   if (intent === "WORK_ANNIVERSARY" && rows.length > 0) {
     const isToday = entities.isToday || /\b(aaj|today)\b/i.test(message || "");
-    const dateStr = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : ""));
-    let ans = `AutoVyn ERP ke record ke anusar, ${dateStr} **${rows.length} employee(s)** ki **Work Anniversary (Joining Day)** hai! 🎉👏\n\n`;
+    const dateStrHing = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}/${entities.year || new Date().getFullYear()}) me` : ""));
+    const dateStrEn = isToday ? "today" : (entities.specificDate ? `on **${entities.specificDate}**` : (entities.month ? `in this month (${entities.month}/${entities.year || new Date().getFullYear()})` : ""));
+    const dateStrDeva = isToday ? "आज" : (entities.specificDate ? `**${entities.specificDate}** को` : (entities.month ? `इस महीने (${entities.month}/${entities.year || new Date().getFullYear()}) में` : ""));
+
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, there are **${rows.length} employee(s)** celebrating their **Work Anniversary (Joining Day)** ${dateStrEn}! 🎉👏\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${dateStrDeva} **${rows.length} कर्मचारियों** की **कार्य वर्षगांठ (Work Anniversary)** है! 🎉👏\n\n`;
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar, ${dateStrHing} **${rows.length} employee(s)** ki **Work Anniversary (Joining Day)** hai! 🎉👏\n\n`;
+    }
+
     ans += `| Emp Code | Employee Name | Joining Date | Years of Service | Location / Branch | Designation | Mobile No |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, 50)) {
@@ -7372,15 +7753,26 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     if (rows.length > 50) ans += `\n*(Showing top 50 of ${rows.length} records)*`;
     return {
       answer: ans.trim(),
-      summary: `${rows.length} employees work anniversary ${dateStr}`
+      summary: `${rows.length} employees work anniversary ${isEn ? dateStrEn : (isDeva ? dateStrDeva : dateStrHing)}`
     };
   }
 
   // Event Formatter: Birthday
   if ((intent === "BIRTHDAY_TODAY" || intent === "BIRTHDAY_BY_DATE" || intent === "BIRTHDAYS_MONTH") && rows.length > 0) {
     const isToday = entities.isToday || /\b(aaj|today)\b/i.test(message || "");
-    const dateStr = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}) me` : ""));
-    let ans = `AutoVyn ERP ke record ke anusar, ${dateStr} **${rows.length} employee(s)** ka **Birthday** hai! 🎂🎉\n\n`;
+    const dateStrHing = isToday ? "aaj" : (entities.specificDate ? `**${entities.specificDate}** ko` : (entities.month ? `is mahine (${entities.month}) me` : ""));
+    const dateStrEn = isToday ? "today" : (entities.specificDate ? `on **${entities.specificDate}**` : (entities.month ? `in this month (${entities.month})` : ""));
+    const dateStrDeva = isToday ? "आज" : (entities.specificDate ? `**${entities.specificDate}** को` : (entities.month ? `इस महीने (${entities.month}) में` : ""));
+
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, there are **${rows.length} employee(s)** celebrating their **Birthday** ${dateStrEn}! 🎂🎉\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${dateStrDeva} **${rows.length} कर्मचारियों** का **जन्मदिन** है! 🎂🎉\n\n`;
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar, ${dateStrHing} **${rows.length} employee(s)** ka **Birthday** hai! 🎂🎉\n\n`;
+    }
+
     ans += `| Emp Code | Employee Name | Date of Birth | Age | Location / Branch | Designation | Mobile No |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, 50)) {
@@ -7396,7 +7788,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     if (rows.length > 50) ans += `\n*(Showing top 50 of ${rows.length} records)*`;
     return {
       answer: ans.trim(),
-      summary: `${rows.length} employees birthday ${dateStr}`
+      summary: `${rows.length} employees birthday ${isEn ? dateStrEn : (isDeva ? dateStrDeva : dateStrHing)}`
     };
   }
 
@@ -7458,17 +7850,43 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const isSeparated = r.SeparatedEmployeeCount !== undefined;
     const isDeact = r.InactiveEmployeeCount !== undefined;
     const count = isAct ? r.ActiveEmployeeCount : (isSeparated ? r.SeparatedEmployeeCount : (isDeact ? r.InactiveEmployeeCount : r.TotalEmployeeCount));
-    const statusLabel = isAct ? "active" : (isSeparated ? "separated (chhod ke gaye)" : (isDeact ? "inactive" : "total"));
-    let locLabel = "";
-    if (entities.branches && entities.branches.length > 0) locLabel = ` Branches (${entities.branches.join(', ')}) me`;
-    else if (entities.excludeBranch) locLabel = ` Branch ${entities.excludeBranch} ko chhodkar`;
-    else if (entities.branch) locLabel = ` Branch ${entities.branch} me`;
     const desigLabel = entities.designation ? ` ${entities.designation}` : "";
-    const periodLabel = entities.month ? ` (${entities.month}/${entities.year || new Date().getFullYear()})` : "";
-    return {
-      answer: `AutoVyn ERP ke record ke anusar,${locLabel} total **${count} ${statusLabel}${desigLabel} employees** hain${periodLabel}.`,
-      summary: `${count} ${statusLabel} employees${locLabel}`.trim()
-    };
+    const formattedCount = Number(count).toLocaleString('en-IN');
+
+    if (isEn) {
+      const statusLabel = isAct ? "active" : (isSeparated ? "separated" : (isDeact ? "inactive" : "total"));
+      let locLabel = "";
+      if (entities.branches && entities.branches.length > 0) locLabel = ` in branches (${entities.branches.join(', ')})`;
+      else if (entities.excludeBranch) locLabel = ` excluding branch ${entities.excludeBranch}`;
+      else if (entities.branch) locLabel = ` in branch ${entities.branch}`;
+      const periodLabel = entities.month ? ` for period (${entities.month}/${entities.year || new Date().getFullYear()})` : "";
+      return {
+        answer: `According to AutoVyn ERP records,${locLabel} there are a total of **${formattedCount} ${statusLabel}${desigLabel} employee(s)**${periodLabel}.`,
+        summary: `${count} ${statusLabel} employees${locLabel}`.trim()
+      };
+    } else if (isDeva) {
+      const statusLabel = isAct ? "सक्रिय (Active)" : (isSeparated ? "कार्यमुक्त (Separated)" : (isDeact ? "निष्क्रिय (Inactive)" : "कुल (Total)"));
+      let locLabel = "";
+      if (entities.branches && entities.branches.length > 0) locLabel = ` शाखाओं (${entities.branches.join(', ')}) में`;
+      else if (entities.excludeBranch) locLabel = ` शाखा ${entities.excludeBranch} को छोड़कर`;
+      else if (entities.branch) locLabel = ` शाखा ${entities.branch} में`;
+      const periodLabel = entities.month ? ` (${entities.month}/${entities.year || new Date().getFullYear()})` : "";
+      return {
+        answer: `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार,${locLabel} कुल **${formattedCount} ${statusLabel}${desigLabel} कर्मचारी** हैं${periodLabel}।`,
+        summary: `${count} ${statusLabel} कर्मचारी`.trim()
+      };
+    } else {
+      const statusLabel = isAct ? "active" : (isSeparated ? "separated (chhod ke gaye)" : (isDeact ? "inactive" : "total"));
+      let locLabel = "";
+      if (entities.branches && entities.branches.length > 0) locLabel = ` Branches (${entities.branches.join(', ')}) me`;
+      else if (entities.excludeBranch) locLabel = ` Branch ${entities.excludeBranch} ko chhodkar`;
+      else if (entities.branch) locLabel = ` Branch ${entities.branch} me`;
+      const periodLabel = entities.month ? ` (${entities.month}/${entities.year || new Date().getFullYear()})` : "";
+      return {
+        answer: `AutoVyn ERP ke record ke anusar,${locLabel} total **${formattedCount} ${statusLabel}${desigLabel} employees** hain${periodLabel}.`,
+        summary: `${count} ${statusLabel} employees${locLabel}`.trim()
+      };
+    }
   }
 
   const firstRow = rows[0] || {};
@@ -7532,15 +7950,38 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     );
     const avgPF = Number(r.AvgPFDeduction !== undefined ? r.AvgPFDeduction : (count > 0 ? totPF / count : 0));
 
-    let ans = `AutoVyn ERP ke record ke anusar, **${mName} ${yVal}** me${branchStr} total **${count.toLocaleString("en-IN")} employee(s)** ka PF deduction hua hai.`;
-
-    if (totPF > 0 || totEmplr > 0 || totPension > 0) {
-      ans += `\n\n**PF Deduction & Contribution Summary (${mName} ${yVal}):**\n` +
-        `• **Total Employees with PF Deduction:** **${count.toLocaleString("en-IN")}**\n` +
-        (totPF > 0 ? `• **Total Employee PF Deduction (Salary se kata):** **₹${totPF.toLocaleString("en-IN")}**\n` : "") +
-        (totEmplr > 0 ? `• **Total Employer PF Contribution:** ₹${totEmplr.toLocaleString("en-IN")}\n` : "") +
-        (totPension > 0 ? `• **Total Pension Contribution (EPS):** ₹${totPension.toLocaleString("en-IN")}\n` : "") +
-        (avgPF > 0 ? `• **Average Employee PF Deduction:** ₹${Math.round(avgPF).toLocaleString("en-IN")}\n` : "");
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, a total of **${count.toLocaleString("en-IN")} employee(s)** had PF deducted in **${mName} ${yVal}**${branchStr}.`;
+      if (totPF > 0 || totEmplr > 0 || totPension > 0) {
+        ans += `\n\n**PF Deduction & Contribution Summary (${mName} ${yVal}):**\n` +
+          `• **Total Employees with PF Deduction:** **${count.toLocaleString("en-IN")}**\n` +
+          (totPF > 0 ? `• **Total Employee PF Deduction (from salary):** **₹${totPF.toLocaleString("en-IN")}**\n` : "") +
+          (totEmplr > 0 ? `• **Total Employer PF Contribution:** ₹${totEmplr.toLocaleString("en-IN")}\n` : "") +
+          (totPension > 0 ? `• **Total Pension Contribution (EPS):** ₹${totPension.toLocaleString("en-IN")}\n` : "") +
+          (avgPF > 0 ? `• **Average Employee PF Deduction:** ₹${Math.round(avgPF).toLocaleString("en-IN")}\n` : "");
+      }
+    } else if (isDeva) {
+      const bDeva = entities.branch ? ` शाखा **${entities.branch}** में` : "";
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${mName} ${yVal}** में${bDeva} कुल **${count.toLocaleString("en-IN")} कर्मचारियों** का पीएफ काटा गया है।`;
+      if (totPF > 0 || totEmplr > 0 || totPension > 0) {
+        ans += `\n\n**पीएफ कटौती और अंशदान सारांश (${mName} ${yVal}):**\n` +
+          `• **पीएफ कटौती वाले कुल कर्मचारी:** **${count.toLocaleString("en-IN")}**\n` +
+          (totPF > 0 ? `• **कुल कर्मचारी पीएफ कटौती (वेतन से काटा गया):** **₹${totPF.toLocaleString("en-IN")}**\n` : "") +
+          (totEmplr > 0 ? `• **कुल नियोक्ता पीएफ अंशदान:** ₹${totEmplr.toLocaleString("en-IN")}\n` : "") +
+          (totPension > 0 ? `• **कुल पेंशन अंशदान (EPS):** ₹${totPension.toLocaleString("en-IN")}\n` : "") +
+          (avgPF > 0 ? `• **औसत कर्मचारी पीएफ कटौती:** ₹${Math.round(avgPF).toLocaleString("en-IN")}\n` : "");
+      }
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar, **${mName} ${yVal}** me${branchStr} total **${count.toLocaleString("en-IN")} employee(s)** ka PF deduction hua hai.`;
+      if (totPF > 0 || totEmplr > 0 || totPension > 0) {
+        ans += `\n\n**PF Deduction & Contribution Summary (${mName} ${yVal}):**\n` +
+          `• **Total Employees with PF Deduction:** **${count.toLocaleString("en-IN")}**\n` +
+          (totPF > 0 ? `• **Total Employee PF Deduction (Salary se kata):** **₹${totPF.toLocaleString("en-IN")}**\n` : "") +
+          (totEmplr > 0 ? `• **Total Employer PF Contribution:** ₹${totEmplr.toLocaleString("en-IN")}\n` : "") +
+          (totPension > 0 ? `• **Total Pension Contribution (EPS):** ₹${totPension.toLocaleString("en-IN")}\n` : "") +
+          (avgPF > 0 ? `• **Average Employee PF Deduction:** ₹${Math.round(avgPF).toLocaleString("en-IN")}\n` : "");
+      }
     }
 
     // If individual employee records are available, also display a clean table!
@@ -7609,16 +8050,41 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const grossEarn = Number(r.GrossEarnings !== undefined ? r.GrossEarnings : (r.Gross_Earn || 0));
       const basicEarn = Number(r.Basic_Earn !== undefined ? r.Basic_Earn : (r.BasicEarnings || 0));
 
-      let ans = `AutoVyn ERP record ke anusar, **${empName} (${empCode})** ka **${mName} ${yVal}** me **PF Deduction (Provident Fund)**:\n\n` +
-        (pfNum !== "-" ? `• **PF Number:** \`${pfNum}\`\n` : "") +
-        `• **Employee PF Deduction (Salary se kata):** **₹${pfEmp.toLocaleString("en-IN")}**\n` +
-        `• **Employer PF Contribution:** ₹${pfEmplr.toLocaleString("en-IN")}\n` +
-        `• **Pension Contribution (EPS):** ₹${pfPension.toLocaleString("en-IN")}\n` +
-        `• **Total PF Deposit:** ₹${totPF.toLocaleString("en-IN")}\n` +
-        (basicEarn > 0 ? `• **Basic Pay:** ₹${basicEarn.toLocaleString("en-IN")}\n` : "") +
-        (grossEarn > 0 ? `• **Gross Earnings:** ₹${grossEarn.toLocaleString("en-IN")}\n` : "") +
-        `• **Total Salary Deductions:** ₹${totDed.toLocaleString("en-IN")}\n` +
-        (netPay > 0 ? `• **Net In-Hand Salary:** ₹${netPay.toLocaleString("en-IN")}\n` : "");
+      let ans = "";
+      if (isEn) {
+        ans = `According to AutoVyn ERP records, here is the **PF Deduction (Provident Fund)** for **${empName} (${empCode})** in **${mName} ${yVal}**:\n\n` +
+          (pfNum !== "-" ? `• **PF Number:** \`${pfNum}\`\n` : "") +
+          `• **Employee PF Deduction (from salary):** **₹${pfEmp.toLocaleString("en-IN")}**\n` +
+          `• **Employer PF Contribution:** ₹${pfEmplr.toLocaleString("en-IN")}\n` +
+          `• **Pension Contribution (EPS):** ₹${pfPension.toLocaleString("en-IN")}\n` +
+          `• **Total PF Deposit:** ₹${totPF.toLocaleString("en-IN")}\n` +
+          (basicEarn > 0 ? `• **Basic Pay:** ₹${basicEarn.toLocaleString("en-IN")}\n` : "") +
+          (grossEarn > 0 ? `• **Gross Earnings:** ₹${grossEarn.toLocaleString("en-IN")}\n` : "") +
+          `• **Total Salary Deductions:** ₹${totDed.toLocaleString("en-IN")}\n` +
+          (netPay > 0 ? `• **Net In-Hand Salary:** ₹${netPay.toLocaleString("en-IN")}\n` : "");
+      } else if (isDeva) {
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${empName} (${empCode})** का **${mName} ${yVal}** में **पीएफ कटौती (Provident Fund)** विवरण:\n\n` +
+          (pfNum !== "-" ? `• **पीएफ नंबर:** \`${pfNum}\`\n` : "") +
+          `• **कर्मचारी पीएफ कटौती (वेतन से काटा गया):** **₹${pfEmp.toLocaleString("en-IN")}**\n` +
+          `• **नियोक्ता पीएफ अंशदान:** ₹${pfEmplr.toLocaleString("en-IN")}\n` +
+          `• **पेंशन अंशदान (EPS):** ₹${pfPension.toLocaleString("en-IN")}\n` +
+          `• **कुल पीएफ जमा:** ₹${totPF.toLocaleString("en-IN")}\n` +
+          (basicEarn > 0 ? `• **मूल वेतन (Basic Pay):** ₹${basicEarn.toLocaleString("en-IN")}\n` : "") +
+          (grossEarn > 0 ? `• **सकल वेतन (Gross Earnings):** ₹${grossEarn.toLocaleString("en-IN")}\n` : "") +
+          `• **कुल कटौती:** ₹${totDed.toLocaleString("en-IN")}\n` +
+          (netPay > 0 ? `• **नेट इन-हैंड वेतन:** ₹${netPay.toLocaleString("en-IN")}\n` : "");
+      } else {
+        ans = `AutoVyn ERP record ke anusar, **${empName} (${empCode})** ka **${mName} ${yVal}** me **PF Deduction (Provident Fund)**:\n\n` +
+          (pfNum !== "-" ? `• **PF Number:** \`${pfNum}\`\n` : "") +
+          `• **Employee PF Deduction (Salary se kata):** **₹${pfEmp.toLocaleString("en-IN")}**\n` +
+          `• **Employer PF Contribution:** ₹${pfEmplr.toLocaleString("en-IN")}\n` +
+          `• **Pension Contribution (EPS):** ₹${pfPension.toLocaleString("en-IN")}\n` +
+          `• **Total PF Deposit:** ₹${totPF.toLocaleString("en-IN")}\n` +
+          (basicEarn > 0 ? `• **Basic Pay:** ₹${basicEarn.toLocaleString("en-IN")}\n` : "") +
+          (grossEarn > 0 ? `• **Gross Earnings:** ₹${grossEarn.toLocaleString("en-IN")}\n` : "") +
+          `• **Total Salary Deductions:** ₹${totDed.toLocaleString("en-IN")}\n` +
+          (netPay > 0 ? `• **Net In-Hand Salary:** ₹${netPay.toLocaleString("en-IN")}\n` : "");
+      }
 
       return {
         answer: ans.trim(),
@@ -7628,7 +8094,10 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
     // Multiple rows / employees list
     const hasPFNum = rows.some(r => Boolean(r.PFNUMBER || r.PF_Number || r.pfnumber));
-    let ans = `**AutoVyn ERP - PF Deduction & Contribution Statement:**\n\n`;
+    let ans = isEn
+      ? `**AutoVyn ERP - PF Deduction & Contribution Statement:**\n\n`
+      : (isDeva ? `**ऑटोवाइन ईआरपी - पीएफ कटौती और अंशदान विवरण:**\n\n` : `**AutoVyn ERP - PF Deduction & Contribution Statement:**\n\n`);
+
     if (hasPFNum) {
       ans += `| Emp Code | Employee Name | PF Number | Month/Year | Employee PF (Deduction) | Employer PF | Pension (EPS) | Net Pay |\n`;
       ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
@@ -7681,8 +8150,17 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const rawVal = pfCountKey ? firstRow[pfCountKey] : Object.values(firstRow)[0];
     const count = Number(rawVal) || 0;
     const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, a total of **${Number(count).toLocaleString()} employee(s)** have a valid registered PF Number${branchStr}.`;
+    } else if (isDeva) {
+      const bDeva = entities.branch ? ` शाखा **${entities.branch}** में` : "";
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार,${bDeva} कुल **${Number(count).toLocaleString()} कर्मचारियों** के पास पंजीकृत पीएफ नंबर है।`;
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar,${branchStr} total **${Number(count).toLocaleString()} employee(s)** ke pass valid PF Number registered hai.`;
+    }
     return {
-      answer: `AutoVyn ERP ke record ke anusar,${branchStr} total **${Number(count).toLocaleString()} employee(s)** ke pass valid PF Number registered hai.`,
+      answer: ans,
       summary: `${count} employees with PF registered${branchStr}`.trim()
     };
   }
@@ -7693,8 +8171,17 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const val = Object.values(rows[0])[0];
       if (typeof val === "number" || /^\d+$/.test(String(val).trim())) {
         const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
+        let ans = "";
+        if (isEn) {
+          ans = `According to AutoVyn ERP records, a total of **${Number(val).toLocaleString()} employee(s)** have a valid registered PF Number${branchStr}.`;
+        } else if (isDeva) {
+          const bDeva = entities.branch ? ` शाखा **${entities.branch}** में` : "";
+          ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार,${bDeva} कुल **${Number(val).toLocaleString()} कर्मचारियों** के पास पंजीकृत पीएफ नंबर है।`;
+        } else {
+          ans = `AutoVyn ERP ke record ke anusar,${branchStr} total **${Number(val).toLocaleString()} employee(s)** ke pass valid PF Number registered hai.`;
+        }
         return {
-          answer: `AutoVyn ERP ke record ke anusar,${branchStr} total **${Number(val).toLocaleString()} employee(s)** ke pass valid PF Number registered hai.`,
+          answer: ans,
           summary: `${val} employees with PF registered${branchStr}`.trim()
         };
       }
@@ -7702,7 +8189,15 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
     const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
     const displayLimitPF = entities.limit ? Math.min(Number(entities.limit), 5000) : (rows.length <= 5000 ? rows.length : 50);
-    let ans = `AutoVyn ERP ke record ke anusar,${branchStr} **${rows.length} employee(s)** ke pass PF Number registered mila hai:\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, **${rows.length} employee(s)** were found with registered PF numbers${branchStr}:\n\n`;
+    } else if (isDeva) {
+      const bDeva = entities.branch ? ` शाखा **${entities.branch}** में` : "";
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार,${bDeva} **${rows.length} कर्मचारियों** के पास पंजीकृत पीएफ नंबर उपलब्ध है:\n\n`;
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar,${branchStr} **${rows.length} employee(s)** ke pass PF Number registered mila hai:\n\n`;
+    }
     ans += `| Emp Code | Employee Name | Mobile No | PF Number | UAN No | ESI No | Location | Designation |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, displayLimitPF)) {
@@ -7855,9 +8350,18 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     }
 
     const modifiedList = Array.from(empMap.values());
-    const dateStr = entities.specificDate ? `on **${entities.specificDate}**` : "aaj (Today)";
-    let ans = `AutoVyn ERP Master Audit History (\`EMPLOYEEMASTER_hst\` Comparison):\n\n`;
-    ans += `${dateStr} **${modifiedList.length} employee(s)** ke profile records modify hue hain:\n\n`;
+    const dateStr = entities.specificDate ? `on **${entities.specificDate}**` : (isEn ? "today" : (isDeva ? "आज" : "aaj (Today)"));
+    let ans = "";
+    if (isEn) {
+      ans = `AutoVyn ERP Master Audit History (\`EMPLOYEEMASTER_hst\` Comparison):\n\n`;
+      ans += `Profile records of **${modifiedList.length} employee(s)** were modified ${dateStr}:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी मास्टर ऑडिट इतिहास (\`EMPLOYEEMASTER_hst\` तुलना):\n\n`;
+      ans += `${dateStr} कुल **${modifiedList.length} कर्मचारियों** के प्रोफाइल रिकॉर्ड संशोधित किए गए हैं:\n\n`;
+    } else {
+      ans = `AutoVyn ERP Master Audit History (\`EMPLOYEEMASTER_hst\` Comparison):\n\n`;
+      ans += `${dateStr} **${modifiedList.length} employee(s)** ke profile records modify hue hain:\n\n`;
+    }
 
     ans += `| Emp Code | Employee Name | Modified Field | Previous Value (\`_hst\`) | Updated Value (Current) | Modified By | Modified On |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
@@ -7885,12 +8389,29 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const invalid = row.TotalInvalidAccounts || 0;
     const totalVer = row.TotalPennyDropVerifications || (verified + invalid);
 
-    return {
-      answer: `AutoVyn ERP Bank Account Verification (Penny-Drop) Status:\n\n` +
+    let ans = "";
+    if (isEn) {
+      ans = `AutoVyn ERP Bank Account Verification (Penny-Drop) Status:\n\n` +
         `• **Total Employees With Bank Accounts in Master:** ${total}\n` +
         `• **Total Penny-Drop API Logs:** ${totalVer}\n` +
         `• **Verified & Valid Bank Accounts:** ${verified}\n` +
-        `• **Invalid / Rejected Accounts:** ${invalid}`,
+        `• **Invalid / Rejected Accounts:** ${invalid}`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी बैंक खाता सत्यापन (Penny-Drop) स्थिति:\n\n` +
+        `• **मास्टर में बैंक खाते वाले कुल कर्मचारी:** ${total}\n` +
+        `• **कुल पेनी-ड्रॉप एपीआई लॉग्स:** ${totalVer}\n` +
+        `• **सत्यापित और मान्य बैंक खाते:** ${verified}\n` +
+        `• **अमान्य / अस्वीकृत खाते:** ${invalid}`;
+    } else {
+      ans = `AutoVyn ERP Bank Account Verification (Penny-Drop) Status:\n\n` +
+        `• **Total Employees With Bank Accounts in Master:** ${total}\n` +
+        `• **Total Penny-Drop API Logs:** ${totalVer}\n` +
+        `• **Verified & Valid Bank Accounts:** ${verified}\n` +
+        `• **Invalid / Rejected Accounts:** ${invalid}`;
+    }
+
+    return {
+      answer: ans,
       summary: `Verified: ${verified}, Invalid: ${invalid}`
     };
   }
@@ -7905,14 +8426,35 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const panCard = row.PanCardVerifiedCount || 0;
     const panNameMatch = row.PanNameMatchVerifiedCount || 0;
 
-    let ans = `AutoVyn ERP KYC & Identity Verification Summary:\n\n`;
-    if (totalKYC) ans += `• **Total KYC Records:** ${totalKYC}\n`;
-    if (aadhaarCard) ans += `• **Aadhaar Card Verified:** ${aadhaarCard}\n`;
-    if (aadhaarLinked) ans += `• **Aadhaar Linked Verified:** ${aadhaarLinked}\n`;
-    if (aadhaarLinkedPan) ans += `• **Aadhaar Linked with PAN:** ${aadhaarLinkedPan}\n`;
-    if (aadhaarNameMatch) ans += `• **Aadhaar Name Matched:** ${aadhaarNameMatch}\n`;
-    if (panCard) ans += `• **PAN Card Verified:** ${panCard}\n`;
-    if (panNameMatch) ans += `• **PAN Name Matched:** ${panNameMatch}\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `AutoVyn ERP KYC & Identity Verification Summary:\n\n`;
+      if (totalKYC) ans += `• **Total KYC Records:** ${totalKYC}\n`;
+      if (aadhaarCard) ans += `• **Aadhaar Card Verified:** ${aadhaarCard}\n`;
+      if (aadhaarLinked) ans += `• **Aadhaar Linked Verified:** ${aadhaarLinked}\n`;
+      if (aadhaarLinkedPan) ans += `• **Aadhaar Linked with PAN:** ${aadhaarLinkedPan}\n`;
+      if (aadhaarNameMatch) ans += `• **Aadhaar Name Matched:** ${aadhaarNameMatch}\n`;
+      if (panCard) ans += `• **PAN Card Verified:** ${panCard}\n`;
+      if (panNameMatch) ans += `• **PAN Name Matched:** ${panNameMatch}\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी केवाईसी एवं पहचान सत्यापन सारांश:\n\n`;
+      if (totalKYC) ans += `• **कुल केवाईसी रिकॉर्ड:** ${totalKYC}\n`;
+      if (aadhaarCard) ans += `• **सत्यापित आधार कार्ड:** ${aadhaarCard}\n`;
+      if (aadhaarLinked) ans += `• **आधार लिंक सत्यापित:** ${aadhaarLinked}\n`;
+      if (aadhaarLinkedPan) ans += `• **पैन से लिंक आधार:** ${aadhaarLinkedPan}\n`;
+      if (aadhaarNameMatch) ans += `• **आधार नाम मिलान:** ${aadhaarNameMatch}\n`;
+      if (panCard) ans += `• **सत्यापित पैन कार्ड:** ${panCard}\n`;
+      if (panNameMatch) ans += `• **पैन नाम मिलान:** ${panNameMatch}\n`;
+    } else {
+      ans = `AutoVyn ERP KYC & Identity Verification Summary:\n\n`;
+      if (totalKYC) ans += `• **Total KYC Records:** ${totalKYC}\n`;
+      if (aadhaarCard) ans += `• **Aadhaar Card Verified:** ${aadhaarCard}\n`;
+      if (aadhaarLinked) ans += `• **Aadhaar Linked Verified:** ${aadhaarLinked}\n`;
+      if (aadhaarLinkedPan) ans += `• **Aadhaar Linked with PAN:** ${aadhaarLinkedPan}\n`;
+      if (aadhaarNameMatch) ans += `• **Aadhaar Name Matched:** ${aadhaarNameMatch}\n`;
+      if (panCard) ans += `• **PAN Card Verified:** ${panCard}\n`;
+      if (panNameMatch) ans += `• **PAN Name Matched:** ${panNameMatch}\n`;
+    }
 
     return {
       answer: ans.trim(),
@@ -7921,7 +8463,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "AADHAAR_VERIFY_LIST" && rows.length > 0) {
-    let ans = `AutoVyn ERP me **${rows.length} employee(s)** ke Aadhaar verification records mile hain:\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, found **${rows.length} employee(s)** with Aadhaar verification details:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${rows.length} कर्मचारियों** के आधार सत्यापन रिकॉर्ड प्राप्त हुए हैं:\n\n`;
+    } else {
+      ans = `AutoVyn ERP me **${rows.length} employee(s)** ke Aadhaar verification records mile hain:\n\n`;
+    }
     ans += `| Emp Code | Employee Name | Location | Aadhaar Card | Aadhaar Linked | PAN Linked | Name Matched |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, 50)) {
@@ -7935,7 +8484,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       ans += `| ${code} | ${name} | ${loc} | ${card} | ${linked} | ${panLink} | ${nameMatch} |\n`;
     }
     if (rows.length > 50) {
-      ans += `\n*...aur ${rows.length - 50} aur employees hain.*`;
+      ans += isEn ? `\n*(Showing top 50 of ${rows.length} records)*` : (isDeva ? `\n*(शीर्ष 50 / कुल ${rows.length} रिकॉर्ड दिखाए गए हैं)*` : `\n*(Showing top 50 of ${rows.length} records)*`);
     }
     return {
       answer: ans,
@@ -7953,15 +8502,40 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const rej = Number(r.RejectedMissPunch || r.RejectedCount || 0);
     const pend = Number(r.PendingMissPunch || r.PendingCount || 0);
 
-    let ans = `AutoVyn ERP **Miss Punch Summary** for **${empName} (${empCode})**:\n\n` +
-      `• **Employee Code:** ${empCode}\n` +
-      `• **Employee Name:** **${empName}**\n` +
-      `• **Date of Joining:** ${doj}\n` +
-      `• **Total Miss Punch Applications (Joining se abhi tak):** **${total}**\n`;
-    if (appr > 0 || rej > 0 || pend > 0) {
-      ans += `• **Approved Miss Punches (✅):** ${appr}\n` +
-        `• **Pending Applications (⏳):** ${pend}\n` +
-        `• **Rejected Applications (❌):** ${rej}\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `AutoVyn ERP **Miss Punch Summary** for **${empName} (${empCode})**:\n\n` +
+        `• **Employee Code:** ${empCode}\n` +
+        `• **Employee Name:** **${empName}**\n` +
+        `• **Date of Joining:** ${doj}\n` +
+        `• **Total Miss Punch Applications (Since Joining):** **${total}**\n`;
+      if (appr > 0 || rej > 0 || pend > 0) {
+        ans += `• **Approved Miss Punches (✅):** ${appr}\n` +
+          `• **Pending Applications (⏳):** ${pend}\n` +
+          `• **Rejected Applications (❌):** ${rej}\n`;
+      }
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी **मिस पंच सारांश** - **${empName} (${empCode})**:\n\n` +
+        `• **कर्मचारी कोड:** ${empCode}\n` +
+        `• **कर्मचारी का नाम:** **${empName}**\n` +
+        `• **कार्यभार ग्रहण तिथि:** ${doj}\n` +
+        `• **कुल मिस पंच आवेदन (ज्वाइनिंग से अब तक):** **${total}**\n`;
+      if (appr > 0 || rej > 0 || pend > 0) {
+        ans += `• **स्वीकृत मिस पंच (✅):** ${appr}\n` +
+          `• **लंबित आवेदन (⏳):** ${pend}\n` +
+          `• **अस्वीकृत आवेदन (❌):** ${rej}\n`;
+      }
+    } else {
+      ans = `AutoVyn ERP **Miss Punch Summary** for **${empName} (${empCode})**:\n\n` +
+        `• **Employee Code:** ${empCode}\n` +
+        `• **Employee Name:** **${empName}**\n` +
+        `• **Date of Joining:** ${doj}\n` +
+        `• **Total Miss Punch Applications (Joining se abhi tak):** **${total}**\n`;
+      if (appr > 0 || rej > 0 || pend > 0) {
+        ans += `• **Approved Miss Punches (✅):** ${appr}\n` +
+          `• **Pending Applications (⏳):** ${pend}\n` +
+          `• **Rejected Applications (❌):** ${rej}\n`;
+      }
     }
     return {
       answer: ans.trim(),
@@ -7978,15 +8552,36 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const pend = r.PendingCount || 0;
     const fromDate = r.From_Date ? String(r.From_Date).slice(0, 10) : "";
     const toDate = r.To_Date ? String(r.To_Date).slice(0, 10) : "";
-    const periodStr = fromDate && toDate ? ` (Payroll Cycle: **${fromDate}** se **${toDate}**)` : "";
+    const periodStrEn = fromDate && toDate ? ` (Payroll Cycle: **${fromDate}** to **${toDate}**)` : "";
+    const periodStrDeva = fromDate && toDate ? ` (पेरोल अवधि: **${fromDate}** से **${toDate}**)` : "";
+    const periodStrHing = fromDate && toDate ? ` (Payroll Cycle: **${fromDate}** se **${toDate}**)` : "";
 
-    return {
-      answer: `AutoVyn ERP **Miss Punch Summary**${periodStr}:\n\n` +
+    let ans = "";
+    if (isEn) {
+      ans = `AutoVyn ERP **Miss Punch Summary**${periodStrEn}:\n\n` +
         `• **Total Miss Punch Applications:** **${total}**\n` +
         `• **Total Employees Affected:** **${emps}**\n` +
         `• **Approved Miss Punches (✅):** **${appr}**\n` +
         `• **Pending Applications (⏳):** **${pend}**\n` +
-        `• **Rejected Applications (❌):** **${rej}**`,
+        `• **Rejected Applications (❌):** **${rej}**`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी **मिस पंच सारांश**${periodStrDeva}:\n\n` +
+        `• **कुल मिस पंच आवेदन:** **${total}**\n` +
+        `• **प्रभावित कुल कर्मचारी:** **${emps}**\n` +
+        `• **स्वीकृत मिस पंच (✅):** **${appr}**\n` +
+        `• **लंबित आवेदन (⏳):** **${pend}**\n` +
+        `• **अस्वीकृत आवेदन (❌):** **${rej}**`;
+    } else {
+      ans = `AutoVyn ERP **Miss Punch Summary**${periodStrHing}:\n\n` +
+        `• **Total Miss Punch Applications:** **${total}**\n` +
+        `• **Total Employees Affected:** **${emps}**\n` +
+        `• **Approved Miss Punches (✅):** **${appr}**\n` +
+        `• **Pending Applications (⏳):** **${pend}**\n` +
+        `• **Rejected Applications (❌):** **${rej}**`;
+    }
+
+    return {
+      answer: ans,
       summary: `Total Miss Punches: ${total} (Approved: ${appr}, Pending: ${pend})`
     };
   }
@@ -7994,10 +8589,18 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   if ((intent === "MISPUNCH_REPORT" || intent === "MISPUNCH_LOOKUP_BY_EMP" || (rows.length > 0 && (rows[0].MispunchReason !== undefined || rows[0].MispunchReasonCode !== undefined))) && rows.length > 0) {
     const fromDate = rows[0].From_Date ? String(rows[0].From_Date).slice(0, 10) : "";
     const toDate = rows[0].To_Date ? String(rows[0].To_Date).slice(0, 10) : "";
-    const periodStr = fromDate && toDate ? ` (Payroll Period: **${fromDate}** se **${toDate}**)` : "";
+    const periodStrEn = fromDate && toDate ? ` (Payroll Period: **${fromDate}** to **${toDate}**)` : "";
+    const periodStrDeva = fromDate && toDate ? ` (पेरोल अवधि: **${fromDate}** से **${toDate}**)` : "";
+    const periodStrHing = fromDate && toDate ? ` (Payroll Period: **${fromDate}** se **${toDate}**)` : "";
 
-    let ans = `AutoVyn ERP **Miss Punch Report**${periodStr}:\n\n`;
-    ans += `Is period me total **${rows.length} miss punch records** paye gaye hain:\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `AutoVyn ERP **Miss Punch Report**${periodStrEn}:\n\nA total of **${rows.length} miss punch records** were found for this period:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी **मिस पंच रिपोर्ट**${periodStrDeva}:\n\nइस अवधि में कुल **${rows.length} मिस पंच रिकॉर्ड** पाए गए हैं:\n\n`;
+    } else {
+      ans = `AutoVyn ERP **Miss Punch Report**${periodStrHing}:\n\nIs period me total **${rows.length} miss punch records** paye gaye hain:\n\n`;
+    }
     ans += `| # | Emp Code | Employee Name | Date | Day | Punch In | Punch Out | Reason / Miss Punch | Approval Status | Branch |\n`;
     ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
 
@@ -8010,16 +8613,16 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const inTime = r.InTime ? (typeof r.InTime === "string" ? (r.InTime.includes("T") ? r.InTime.slice(11, 16) : r.InTime) : new Date(r.InTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })) : (r.in1 ? new Date(r.in1).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "❌ Missing");
       const outTime = r.OutTime ? (typeof r.OutTime === "string" ? (r.OutTime.includes("T") ? r.OutTime.slice(11, 16) : r.OutTime) : new Date(r.OutTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })) : (r.out1 ? new Date(r.out1).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "❌ Missing");
       const reason = r.MispunchReason || r.Misc_Name || "MISPUNCH (MP)";
-      let apprStatus = "⏳ Pending";
-      if (r.ManualApproved === "Y" || r.MAN_APPR === "Y" || r.ManualApproved === 1 || r.MAN_APPR === 1 || r.status === "Approved") apprStatus = "✅ Approved";
-      else if (r.ManualRejected === "Y" || r.MAN_REJ === "Y" || r.ManualRejected === 1 || r.MAN_REJ === 1 || r.status === "Rejected") apprStatus = "❌ Rejected";
+      let apprStatus = isEn ? "⏳ Pending" : (isDeva ? "⏳ लंबित" : "⏳ Pending");
+      if (r.ManualApproved === "Y" || r.MAN_APPR === "Y" || r.ManualApproved === 1 || r.MAN_APPR === 1 || r.status === "Approved") apprStatus = isEn ? "✅ Approved" : (isDeva ? "✅ स्वीकृत" : "✅ Approved");
+      else if (r.ManualRejected === "Y" || r.MAN_REJ === "Y" || r.ManualRejected === 1 || r.MAN_REJ === 1 || r.status === "Rejected") apprStatus = isEn ? "❌ Rejected" : (isDeva ? "❌ अस्वीकृत" : "❌ Rejected");
       const loc = r.Location || "-";
 
       ans += `| **${idx + 1}** | **${code}** | ${name} | ${date} | ${day} | ${inTime} | ${outTime} | ${reason} | ${apprStatus} | ${loc} |\n`;
     }
 
     if (rows.length > 60) {
-      ans += `\n*...aur ${rows.length - 60} aur miss punch records hain.*`;
+      ans += isEn ? `\n*(Showing top 60 of ${rows.length} miss punch records)*` : (isDeva ? `\n*(शीर्ष 60 / कुल ${rows.length} मिस पंच रिकॉर्ड दिखाए गए हैं)*` : `\n*...aur ${rows.length - 60} aur miss punch records hain.*`);
     }
 
     return {
@@ -8040,9 +8643,20 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       else if (f === "HD") hdCount++;
     }
 
-    let ans = `AutoVyn ERP Attendance Summary for **${empName} (${empCode})**:\n\n`;
-    ans += `• **Total Records:** ${rows.length} days\n`;
-    ans += `• **Present (P):** ${pCount} days | **Absent (A):** ${aCount} days | **Weekly Off (WO):** ${woCount} days | **Half Day (HD):** ${hdCount} days\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `AutoVyn ERP Attendance Summary for **${empName} (${empCode})**:\n\n` +
+        `• **Total Records:** ${rows.length} days\n` +
+        `• **Present (P):** ${pCount} days | **Absent (A):** ${aCount} days | **Weekly Off (WO):** ${woCount} days | **Half Day (HD):** ${hdCount} days\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी उपस्थिति सारांश - **${empName} (${empCode})**:\n\n` +
+        `• **कुल रिकॉर्ड:** ${rows.length} दिन\n` +
+        `• **उपस्थित (P):** ${pCount} दिन | **अनुपस्थित (A):** ${aCount} दिन | **साप्ताहिक अवकाश (WO):** ${woCount} दिन | **आधा दिन (HD):** ${hdCount} दिन\n\n`;
+    } else {
+      ans = `AutoVyn ERP Attendance Summary for **${empName} (${empCode})**:\n\n` +
+        `• **Total Records:** ${rows.length} days\n` +
+        `• **Present (P):** ${pCount} days | **Absent (A):** ${aCount} days | **Weekly Off (WO):** ${woCount} days | **Half Day (HD):** ${hdCount} days\n\n`;
+    }
     ans += `| Date | Day | Flag | In Time | Out Time | Hours Worked |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, 35)) {
@@ -8075,27 +8689,61 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const ifsc = row.IFSC || parsedRaw.result?.ifsc_details?.ifsc || parsedRaw.data?.ifsc || null;
     const utr = parsedRaw.result?.utr || parsedRaw.data?.utr || null;
 
-    let status = "PENDING / UNVERIFIED";
+    let status = isEn ? "PENDING / UNVERIFIED" : (isDeva ? "लंबित / असत्यापित" : "PENDING / UNVERIFIED");
     if (parsedRaw.result?.account_status === "VALID" || parsedRaw.data?.account_exists === true || row.AccountExistsFlag === 1) {
-      status = "✅ VALID / VERIFIED";
+      status = isEn ? "✅ VALID / VERIFIED" : (isDeva ? "✅ मान्य / सत्यापित" : "✅ VALID / VERIFIED");
     } else if (parsedRaw.result?.account_status === "INVALID" || parsedRaw.data?.account_exists === false || row.AccountExistsFlag === 0) {
-      status = "❌ INVALID / REJECTED";
+      status = isEn ? "❌ INVALID / REJECTED" : (isDeva ? "❌ अमान्य / अस्वीकृत" : "❌ INVALID / REJECTED");
     }
 
-    let ans = `Bank Account Number **${row.BankAccountNo || entities.accountNumber || ""}** ke employee details:\n\n` +
-      `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
-      `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
-      `• **Designation:** ${row.Designation || "-"}\n` +
-      `• **Location / Branch:** ${row.Location || "-"}\n` +
-      `• **Bank Name in Master:** ${row.BankName || "-"}\n` +
-      `• **PAN No:** ${row.PAN || "-"}\n`;
-    if (nameAtBank) ans += `• **Name at Bank (Penny-Drop):** ${nameAtBank}\n`;
-    if (bankName) ans += `• **Bank Name at Bank:** ${bankName}\n`;
-    if (branchName) ans += `• **Bank Branch:** ${branchName}\n`;
-    if (ifsc) ans += `• **IFSC Code:** ${ifsc}\n`;
-    if (utr) ans += `• **Verification UTR:** ${utr}\n`;
-    ans += `• **Penny-Drop Verification Status:** ${status}\n`;
-    if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+    let ans = "";
+    const accNo = row.BankAccountNo || entities.accountNumber || "";
+    if (isEn) {
+      ans = `Employee details for Bank Account Number **${accNo}**:\n\n` +
+        `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+        `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+        `• **Designation:** ${row.Designation || "-"}\n` +
+        `• **Location / Branch:** ${row.Location || "-"}\n` +
+        `• **Bank Name in Master:** ${row.BankName || "-"}\n` +
+        `• **PAN No:** ${row.PAN || "-"}\n`;
+      if (nameAtBank) ans += `• **Name at Bank (Penny-Drop):** ${nameAtBank}\n`;
+      if (bankName) ans += `• **Bank Name at Bank:** ${bankName}\n`;
+      if (branchName) ans += `• **Bank Branch:** ${branchName}\n`;
+      if (ifsc) ans += `• **IFSC Code:** ${ifsc}\n`;
+      if (utr) ans += `• **Verification UTR:** ${utr}\n`;
+      ans += `• **Penny-Drop Verification Status:** ${status}\n`;
+      if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+    } else if (isDeva) {
+      ans = `बैंक खाता संख्या **${accNo}** के कर्मचारी विवरण:\n\n` +
+        `• **कर्मचारी कोड:** ${row.EmployeeCode || "-"}\n` +
+        `• **कर्मचारी का नाम:** **${row.EmployeeName || "-"}**\n` +
+        `• **पद (Designation):** ${row.Designation || "-"}\n` +
+        `• **लोकेशन / शाखा:** ${row.Location || "-"}\n` +
+        `• **मास्टर में बैंक का नाम:** ${row.BankName || "-"}\n` +
+        `• **पैन नंबर:** ${row.PAN || "-"}\n`;
+      if (nameAtBank) ans += `• **बैंक में नाम (Penny-Drop):** ${nameAtBank}\n`;
+      if (bankName) ans += `• **बैंक का नाम:** ${bankName}\n`;
+      if (branchName) ans += `• **शाखा:** ${branchName}\n`;
+      if (ifsc) ans += `• **IFSC कोड:** ${ifsc}\n`;
+      if (utr) ans += `• **सत्यापन UTR:** ${utr}\n`;
+      ans += `• **पेनी-ड्रॉप सत्यापन स्थिति:** ${status}\n`;
+      if (row.VerificationDate) ans += `• **सत्यापन तिथि:** ${row.VerificationDate}\n`;
+    } else {
+      ans = `Bank Account Number **${accNo}** ke employee details:\n\n` +
+        `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+        `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+        `• **Designation:** ${row.Designation || "-"}\n` +
+        `• **Location / Branch:** ${row.Location || "-"}\n` +
+        `• **Bank Name in Master:** ${row.BankName || "-"}\n` +
+        `• **PAN No:** ${row.PAN || "-"}\n`;
+      if (nameAtBank) ans += `• **Name at Bank (Penny-Drop):** ${nameAtBank}\n`;
+      if (bankName) ans += `• **Bank Name at Bank:** ${bankName}\n`;
+      if (branchName) ans += `• **Bank Branch:** ${branchName}\n`;
+      if (ifsc) ans += `• **IFSC Code:** ${ifsc}\n`;
+      if (utr) ans += `• **Verification UTR:** ${utr}\n`;
+      ans += `• **Penny-Drop Verification Status:** ${status}\n`;
+      if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+    }
 
     return {
       answer: ans.trim(),
@@ -8104,7 +8752,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "DUPLICATE_BANK_ACCOUNTS" && rows.length > 0) {
-    let ans = `AutoVyn ERP me **${rows.length} employee records** duplicate bank account share kar rahe hain:\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, **${rows.length} employee records** share duplicate bank accounts:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${rows.length} कर्मचारी रिकॉर्ड** में डुप्लीकेट बैंक खाते साझा किए गए हैं:\n\n`;
+    } else {
+      ans = `AutoVyn ERP me **${rows.length} employee records** duplicate bank account share kar rahe hain:\n\n`;
+    }
     ans += `| Bank Account No | Emp Code | Employee Name | Location | Designation | Duplicate Usage |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, 50)) {
@@ -8117,7 +8772,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       ans += `| \`${acc}\` | ${code} | **${name}** | ${loc} | ${desg} | ${count} employees |\n`;
     }
     if (rows.length > 50) {
-      ans += `\n*...aur ${rows.length - 50} aur duplicate records hain.*`;
+      ans += isEn ? `\n*(Showing top 50 of ${rows.length} duplicate records)*` : (isDeva ? `\n*(शीर्ष 50 / कुल ${rows.length} रिकॉर्ड दिखाए गए हैं)*` : `\n*...aur ${rows.length - 50} aur duplicate records hain.*`);
     }
     return {
       answer: ans,
@@ -8135,38 +8790,84 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
     if (isCountResult) {
       const countVal = firstRow[firstKey] || Object.values(firstRow)[0] || 0;
+      let ans = "";
+      if (isEn) {
+        ans = `According to AutoVyn ERP records, Aadhaar Number **${aadharVal}** was found registered with **${countVal} employee(s)**.`;
+      } else if (isDeva) {
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, आधार संख्या **${aadharVal}** कुल **${countVal} कर्मचारियों** के पास पंजीकृत है।`;
+      } else {
+        ans = `AutoVyn ERP ke records ke anusar, Aadhaar Number **${aadharVal}** total **${countVal} employee(s)** ke pass registered mila hai.`;
+      }
       return {
-        answer: `AutoVyn ERP ke records ke anusar, Aadhaar Number **${aadharVal}** total **${countVal} employee(s)** ke pass registered mila hai.`,
+        answer: ans,
         summary: `Aadhaar ${aadharVal} is registered with ${countVal} employees`
       };
     }
 
     if (rows.length === 1) {
       const row = rows[0];
-      const cardVer = String(row.AadhaarCardVerified).toLowerCase() === "true" || row.AadhaarCardVerified === 1 || row.AadhaarCardVerified === "1" ? "✅ Verified" : "❌ Not Verified / Pending";
-      const linkedVer = String(row.AadhaarLinkedVerified).toLowerCase() === "true" || row.AadhaarLinkedVerified === 1 || row.AadhaarLinkedVerified === "1" ? "✅ Linked" : "Pending";
-      const panLinkVer = String(row.AadhaarLinkedWithPanVerified).toLowerCase() === "true" || row.AadhaarLinkedWithPanVerified === 1 || row.AadhaarLinkedWithPanVerified === "1" ? "✅ Linked" : "Pending";
+      const cardVer = String(row.AadhaarCardVerified).toLowerCase() === "true" || row.AadhaarCardVerified === 1 || row.AadhaarCardVerified === "1" ? (isEn ? "✅ Verified" : (isDeva ? "✅ सत्यापित" : "✅ Verified")) : (isEn ? "❌ Not Verified / Pending" : (isDeva ? "❌ असत्यापित / लंबित" : "❌ Not Verified / Pending"));
+      const linkedVer = String(row.AadhaarLinkedVerified).toLowerCase() === "true" || row.AadhaarLinkedVerified === 1 || row.AadhaarLinkedVerified === "1" ? (isEn ? "✅ Linked" : (isDeva ? "✅ लिंक" : "✅ Linked")) : (isEn ? "Pending" : (isDeva ? "लंबित" : "Pending"));
+      const panLinkVer = String(row.AadhaarLinkedWithPanVerified).toLowerCase() === "true" || row.AadhaarLinkedWithPanVerified === 1 || row.AadhaarLinkedWithPanVerified === "1" ? (isEn ? "✅ Linked" : (isDeva ? "✅ लिंक" : "✅ Linked")) : (isEn ? "Pending" : (isDeva ? "लंबित" : "Pending"));
 
-      let ans = `Aadhaar Number **${row.AadharNo || aadharVal}** ke employee details:\n\n` +
-        `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
-        `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
-        `• **Designation:** ${row.Designation || "-"}\n` +
-        `• **Location / Branch:** ${row.Location || "-"}\n` +
-        `• **Mobile No:** ${row.MobileNo || "-"}\n` +
-        `• **PAN No:** ${row.PAN || "-"}\n` +
-        `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
-        `• **Bank Name:** ${row.BankName || "-"}\n` +
-        `• **Aadhaar Card Verified:** ${cardVer}\n` +
-        `• **Aadhaar Linked Status:** ${linkedVer}\n` +
-        `• **Aadhaar Linked with PAN:** ${panLinkVer}\n`;
-      if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+      let ans = "";
+      if (isEn) {
+        ans = `Employee details for Aadhaar Number **${row.AadharNo || aadharVal}**:\n\n` +
+          `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+          `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+          `• **Designation:** ${row.Designation || "-"}\n` +
+          `• **Location / Branch:** ${row.Location || "-"}\n` +
+          `• **Mobile No:** ${row.MobileNo || "-"}\n` +
+          `• **PAN No:** ${row.PAN || "-"}\n` +
+          `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
+          `• **Bank Name:** ${row.BankName || "-"}\n` +
+          `• **Aadhaar Card Verified:** ${cardVer}\n` +
+          `• **Aadhaar Linked Status:** ${linkedVer}\n` +
+          `• **Aadhaar Linked with PAN:** ${panLinkVer}\n`;
+        if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+      } else if (isDeva) {
+        ans = `आधार संख्या **${row.AadharNo || aadharVal}** के कर्मचारी विवरण:\n\n` +
+          `• **कर्मचारी कोड:** ${row.EmployeeCode || "-"}\n` +
+          `• **कर्मचारी का नाम:** **${row.EmployeeName || "-"}**\n` +
+          `• **पद (Designation):** ${row.Designation || "-"}\n` +
+          `• **लोकेशन / शाखा:** ${row.Location || "-"}\n` +
+          `• **मोबाइल नंबर:** ${row.MobileNo || "-"}\n` +
+          `• **पैन नंबर:** ${row.PAN || "-"}\n` +
+          `• **बैंक खाता संख्या:** ${row.BankAccountNo || "-"}\n` +
+          `• **बैंक का नाम:** ${row.BankName || "-"}\n` +
+          `• **आधार कार्ड सत्यापन:** ${cardVer}\n` +
+          `• **आधार लिंक स्थिति:** ${linkedVer}\n` +
+          `• **पैन से आधार लिंक:** ${panLinkVer}\n`;
+        if (row.VerificationDate) ans += `• **सत्यापन तिथि:** ${row.VerificationDate}\n`;
+      } else {
+        ans = `Aadhaar Number **${row.AadharNo || aadharVal}** ke employee details:\n\n` +
+          `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+          `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+          `• **Designation:** ${row.Designation || "-"}\n` +
+          `• **Location / Branch:** ${row.Location || "-"}\n` +
+          `• **Mobile No:** ${row.MobileNo || "-"}\n` +
+          `• **PAN No:** ${row.PAN || "-"}\n` +
+          `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
+          `• **Bank Name:** ${row.BankName || "-"}\n` +
+          `• **Aadhaar Card Verified:** ${cardVer}\n` +
+          `• **Aadhaar Linked Status:** ${linkedVer}\n` +
+          `• **Aadhaar Linked with PAN:** ${panLinkVer}\n`;
+        if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+      }
 
       return {
         answer: ans.trim(),
         summary: `Aadhaar ${row.AadharNo || aadharVal} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
       };
     } else {
-      let ans = `AutoVyn ERP me Aadhaar Number **${aadharVal}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      let ans = "";
+      if (isEn) {
+        ans = `According to AutoVyn ERP records, Aadhaar Number **${aadharVal}** was found registered with **${rows.length} employee(s)**:\n\n`;
+      } else if (isDeva) {
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, आधार संख्या **${aadharVal}** कुल **${rows.length} कर्मचारियों** के पास पंजीकृत है:\n\n`;
+      } else {
+        ans = `AutoVyn ERP me Aadhaar Number **${aadharVal}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      }
       ans += `| # | Emp Code | Employee Name | Location / Branch | Designation | Mobile | PAN | Bank Account No |\n`;
       ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
       rows.forEach((r, idx) => {
@@ -8189,35 +8890,77 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
     if (isCountResult) {
       const countVal = firstRow[firstKey] || Object.values(firstRow)[0] || 0;
+      let ans = "";
+      if (isEn) {
+        ans = `According to AutoVyn ERP records, PAN Number **${panVal}** was found registered with **${countVal} employee(s)**.`;
+      } else if (isDeva) {
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, पैन नंबर **${panVal}** कुल **${countVal} कर्मचारियों** के पास पंजीकृत है।`;
+      } else {
+        ans = `AutoVyn ERP ke records ke anusar, PAN Number **${panVal}** total **${countVal} employee(s)** ke pass registered mila hai.`;
+      }
       return {
-        answer: `AutoVyn ERP ke records ke anusar, PAN Number **${panVal}** total **${countVal} employee(s)** ke pass registered mila hai.`,
+        answer: ans,
         summary: `PAN ${panVal} is registered with ${countVal} employees`
       };
     }
 
     if (rows.length === 1) {
       const row = rows[0];
-      const panVer = String(row.PanCardVerified).toLowerCase() === "true" || row.PanCardVerified === 1 || row.PanCardVerified === "1" ? "✅ Verified" : "❌ Not Verified / Pending";
-      const panMatch = String(row.PanNameMatchVerified).toLowerCase() === "true" || row.PanNameMatchVerified === 1 || row.PanNameMatchVerified === "1" ? "✅ Matched" : "Pending";
+      const panVer = String(row.PanCardVerified).toLowerCase() === "true" || row.PanCardVerified === 1 || row.PanCardVerified === "1" ? (isEn ? "✅ Verified" : (isDeva ? "✅ सत्यापित" : "✅ Verified")) : (isEn ? "❌ Not Verified / Pending" : (isDeva ? "❌ असत्यापित / लंबित" : "❌ Not Verified / Pending"));
+      const panMatch = String(row.PanNameMatchVerified).toLowerCase() === "true" || row.PanNameMatchVerified === 1 || row.PanNameMatchVerified === "1" ? (isEn ? "✅ Matched" : (isDeva ? "✅ नाम मिलान" : "✅ Matched")) : (isEn ? "Pending" : (isDeva ? "लंबित" : "Pending"));
 
-      let ans = `PAN Number **${row.PAN || panVal}** ke employee details:\n\n` +
-        `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
-        `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
-        `• **Designation:** ${row.Designation || "-"}\n` +
-        `• **Location / Branch:** ${row.Location || "-"}\n` +
-        `• **Mobile No:** ${row.MobileNo || "-"}\n` +
-        `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
-        `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
-        `• **PAN Card Verified:** ${panVer}\n` +
-        `• **PAN Name Matched:** ${panMatch}\n`;
-      if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+      let ans = "";
+      if (isEn) {
+        ans = `Employee details for PAN Number **${row.PAN || panVal}**:\n\n` +
+          `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+          `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+          `• **Designation:** ${row.Designation || "-"}\n` +
+          `• **Location / Branch:** ${row.Location || "-"}\n` +
+          `• **Mobile No:** ${row.MobileNo || "-"}\n` +
+          `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
+          `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
+          `• **PAN Card Verified:** ${panVer}\n` +
+          `• **PAN Name Matched:** ${panMatch}\n`;
+        if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+      } else if (isDeva) {
+        ans = `पैन नंबर **${row.PAN || panVal}** के कर्मचारी विवरण:\n\n` +
+          `• **कर्मचारी कोड:** ${row.EmployeeCode || "-"}\n` +
+          `• **कर्मचारी का नाम:** **${row.EmployeeName || "-"}**\n` +
+          `• **पद (Designation):** ${row.Designation || "-"}\n` +
+          `• **लोकेशन / शाखा:** ${row.Location || "-"}\n` +
+          `• **मोबाइल नंबर:** ${row.MobileNo || "-"}\n` +
+          `• **आधार संख्या:** ${row.AadharNo || "-"}\n` +
+          `• **बैंक खाता संख्या:** ${row.BankAccountNo || "-"}\n` +
+          `• **पैन कार्ड सत्यापन:** ${panVer}\n` +
+          `• **पैन नाम मिलान:** ${panMatch}\n`;
+        if (row.VerificationDate) ans += `• **सत्यापन तिथि:** ${row.VerificationDate}\n`;
+      } else {
+        ans = `PAN Number **${row.PAN || panVal}** ke employee details:\n\n` +
+          `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+          `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+          `• **Designation:** ${row.Designation || "-"}\n` +
+          `• **Location / Branch:** ${row.Location || "-"}\n` +
+          `• **Mobile No:** ${row.MobileNo || "-"}\n` +
+          `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
+          `• **Bank Account No:** ${row.BankAccountNo || "-"}\n` +
+          `• **PAN Card Verified:** ${panVer}\n` +
+          `• **PAN Name Matched:** ${panMatch}\n`;
+        if (row.VerificationDate) ans += `• **Verification Date:** ${row.VerificationDate}\n`;
+      }
 
       return {
         answer: ans.trim(),
         summary: `PAN ${row.PAN || panVal} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
       };
     } else {
-      let ans = `AutoVyn ERP me PAN Number **${panVal}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      let ans = "";
+      if (isEn) {
+        ans = `According to AutoVyn ERP records, PAN Number **${panVal}** was found registered with **${rows.length} employee(s)**:\n\n`;
+      } else if (isDeva) {
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, पैन नंबर **${panVal}** कुल **${rows.length} कर्मचारियों** के पास पंजीकृत है:\n\n`;
+      } else {
+        ans = `AutoVyn ERP me PAN Number **${panVal}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      }
       ans += `| # | Emp Code | Employee Name | Location / Branch | Designation | Mobile | Bank Account No |\n`;
       ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
       rows.forEach((r, idx) => {
@@ -8240,28 +8983,64 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
     if (isCountResult) {
       const countVal = firstRow[firstKey] || Object.values(firstRow)[0] || 0;
+      let ans = "";
+      if (isEn) {
+        ans = `According to AutoVyn ERP records, Mobile Number **${mob}** was found registered with **${countVal} employee(s)**.`;
+      } else if (isDeva) {
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, मोबाइल नंबर **${mob}** कुल **${countVal} कर्मचारियों** के पास पंजीकृत है।`;
+      } else {
+        ans = `AutoVyn ERP ke records ke anusar, Mobile Number **${mob}** total **${countVal} employee(s)** ke pass registered mila hai.`;
+      }
       return {
-        answer: `AutoVyn ERP ke records ke anusar, Mobile Number **${mob}** total **${countVal} employee(s)** ke pass registered mila hai.`,
+        answer: ans,
         summary: `Mobile ${mob} is registered with ${countVal} employees`
       };
     }
 
     if (rows.length === 1) {
       const row = rows[0];
-      let ans = `Mobile Number **${mob}** ke employee details:\n\n` +
-        `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
-        `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
-        `• **Designation:** ${row.Designation || "-"}\n` +
-        `• **Location / Branch:** ${row.Location || "-"}\n` +
-        `• **PAN No:** ${row.PAN || "-"}\n` +
-        `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
-        `• **Bank Account No:** ${row.BankAccountNo || "-"}\n`;
+      let ans = "";
+      if (isEn) {
+        ans = `Employee details for Mobile Number **${mob}**:\n\n` +
+          `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+          `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+          `• **Designation:** ${row.Designation || "-"}\n` +
+          `• **Location / Branch:** ${row.Location || "-"}\n` +
+          `• **PAN No:** ${row.PAN || "-"}\n` +
+          `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
+          `• **Bank Account No:** ${row.BankAccountNo || "-"}\n`;
+      } else if (isDeva) {
+        ans = `मोबाइल नंबर **${mob}** के कर्मचारी विवरण:\n\n` +
+          `• **कर्मचारी कोड:** ${row.EmployeeCode || "-"}\n` +
+          `• **कर्मचारी का नाम:** **${row.EmployeeName || "-"}**\n` +
+          `• **पद (Designation):** ${row.Designation || "-"}\n` +
+          `• **लोकेशन / शाखा:** ${row.Location || "-"}\n` +
+          `• **पैन नंबर:** ${row.PAN || "-"}\n` +
+          `• **आधार संख्या:** ${row.AadharNo || "-"}\n` +
+          `• **बैंक खाता संख्या:** ${row.BankAccountNo || "-"}\n`;
+      } else {
+        ans = `Mobile Number **${mob}** ke employee details:\n\n` +
+          `• **Employee Code:** ${row.EmployeeCode || "-"}\n` +
+          `• **Employee Name:** **${row.EmployeeName || "-"}**\n` +
+          `• **Designation:** ${row.Designation || "-"}\n` +
+          `• **Location / Branch:** ${row.Location || "-"}\n` +
+          `• **PAN No:** ${row.PAN || "-"}\n` +
+          `• **Aadhaar No:** ${row.AadharNo || "-"}\n` +
+          `• **Bank Account No:** ${row.BankAccountNo || "-"}\n`;
+      }
       return {
         answer: ans.trim(),
         summary: `Mobile ${mob} belongs to ${row.EmployeeName} (${row.EmployeeCode})`
       };
     } else {
-      let ans = `AutoVyn ERP me Mobile Number **${mob}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      let ans = "";
+      if (isEn) {
+        ans = `According to AutoVyn ERP records, Mobile Number **${mob}** was found registered with **${rows.length} employee(s)**:\n\n`;
+      } else if (isDeva) {
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, मोबाइल नंबर **${mob}** कुल **${rows.length} कर्मचारियों** के पास पंजीकृत है:\n\n`;
+      } else {
+        ans = `AutoVyn ERP me Mobile Number **${mob}** total **${rows.length} employee(s)** ke pass registered mila hai:\n\n`;
+      }
       ans += `| # | Emp Code | Employee Name | Location / Branch | Designation | PAN | Bank Account No |\n`;
       ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
       rows.forEach((r, idx) => {
@@ -8275,7 +9054,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "DUPLICATE_AADHAAR_NUMBERS" && rows.length > 0) {
-    let ans = `AutoVyn ERP me **${rows.length} employee records** duplicate Aadhaar number share kar rahe hain:\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, **${rows.length} employee records** share duplicate Aadhaar numbers:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${rows.length} कर्मचारी रिकॉर्ड** में डुप्लीकेट आधार संख्या साझा की गई है:\n\n`;
+    } else {
+      ans = `AutoVyn ERP me **${rows.length} employee records** duplicate Aadhaar number share kar rahe hain:\n\n`;
+    }
     ans += `| Aadhaar Number | Emp Code | Employee Name | Location | Designation | Duplicate Usage |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, 50)) {
@@ -8287,6 +9073,9 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const count = r.DuplicateCount || "-";
       ans += `| \`${aadhar}\` | ${code} | **${name}** | ${loc} | ${desg} | ${count} employees |\n`;
     }
+    if (rows.length > 50) {
+      ans += isEn ? `\n*(Showing top 50 of ${rows.length} duplicate records)*` : (isDeva ? `\n*(शीर्ष 50 / कुल ${rows.length} रिकॉर्ड दिखाए गए हैं)*` : `\n*...aur ${rows.length - 50} aur duplicate records hain.*`);
+    }
     return {
       answer: ans,
       summary: `${rows.length} duplicate Aadhaar records found`
@@ -8294,7 +9083,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "DUPLICATE_PAN_NUMBERS" && rows.length > 0) {
-    let ans = `AutoVyn ERP me **${rows.length} employee records** duplicate PAN number share kar rahe hain:\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `According to AutoVyn ERP records, **${rows.length} employee records** share duplicate PAN numbers:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${rows.length} कर्मचारी रिकॉर्ड** में डुप्लीकेट पैन संख्या साझा की गई है:\n\n`;
+    } else {
+      ans = `AutoVyn ERP me **${rows.length} employee records** duplicate PAN number share kar rahe hain:\n\n`;
+    }
     ans += `| PAN Number | Emp Code | Employee Name | Location | Designation | Duplicate Usage |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows.slice(0, 50)) {
@@ -8306,13 +9102,15 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const count = r.DuplicateCount || "-";
       ans += `| \`${pan}\` | ${code} | **${name}** | ${loc} | ${desg} | ${count} employees |\n`;
     }
+    if (rows.length > 50) {
+      ans += isEn ? `\n*(Showing top 50 of ${rows.length} duplicate records)*` : (isDeva ? `\n*(शीर्ष 50 / कुल ${rows.length} रिकॉर्ड दिखाए गए हैं)*` : `\n*...aur ${rows.length - 50} aur duplicate records hain.*`);
+    }
     return {
       answer: ans,
       summary: `${rows.length} duplicate PAN records found`
     };
   }
 
-  // Birthday Direct Formatters
   const isBirthdayQuery = intent === "BIRTHDAY_LOOKUP" || intent === "DOB_LOOKUP" || /\b(birthday|bday|b'day|janamdin|dob|date of birth)\b/i.test(message || entities.rawMessage || "");
   if (isBirthdayQuery && rows.length > 0 && (rows[0].DateOfBirth !== undefined || rows[0].DOB !== undefined)) {
     const r = rows[0];
@@ -8321,12 +9119,29 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const dob = r.DateOfBirth || r.DOB || "-";
     const age = r.Age ? ` (${r.Age} years old)` : "";
 
-    let ans = `🎂 **${empName} (${empCode})** ka Date of Birth / Birthday:\n\n` +
-      `• **Birthday / DOB:** **${dob}**${age}\n` +
-      `• **Designation:** ${r.Designation || "-"}\n` +
-      `• **Location / Branch:** ${r.Location || "-"}\n` +
-      `• **Mobile No:** ${r.MobileNo || "-"}\n`;
-    if (r.Email) ans += `• **Email:** ${r.Email}\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `🎂 Date of Birth / Birthday for **${empName} (${empCode})**:\n\n` +
+        `• **Birthday / DOB:** **${dob}**${age}\n` +
+        `• **Designation:** ${r.Designation || "-"}\n` +
+        `• **Location / Branch:** ${r.Location || "-"}\n` +
+        `• **Mobile No:** ${r.MobileNo || "-"}\n`;
+      if (r.Email) ans += `• **Email:** ${r.Email}\n`;
+    } else if (isDeva) {
+      ans = `🎂 **${empName} (${empCode})** की जन्मतिथि / जन्मदिन विवरण:\n\n` +
+        `• **जन्मदिन / DOB:** **${dob}**${age}\n` +
+        `• **पद (Designation):** ${r.Designation || "-"}\n` +
+        `• **लोकेशन / शाखा:** ${r.Location || "-"}\n` +
+        `• **मोबाइल नंबर:** ${r.MobileNo || "-"}\n`;
+      if (r.Email) ans += `• **ईमेल:** ${r.Email}\n`;
+    } else {
+      ans = `🎂 **${empName} (${empCode})** ka Date of Birth / Birthday:\n\n` +
+        `• **Birthday / DOB:** **${dob}**${age}\n` +
+        `• **Designation:** ${r.Designation || "-"}\n` +
+        `• **Location / Branch:** ${r.Location || "-"}\n` +
+        `• **Mobile No:** ${r.MobileNo || "-"}\n`;
+      if (r.Email) ans += `• **Email:** ${r.Email}\n`;
+    }
 
     return {
       answer: ans.trim(),
@@ -8335,7 +9150,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "BIRTHDAY_TODAY" && rows.length > 0) {
-    let ans = `🎉 **Aaj ${rows.length} employee(s) ka Birthday hai:**\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `🎉 **Today ${rows.length} employee(s) have their Birthday:**\n\n`;
+    } else if (isDeva) {
+      ans = `🎉 **आज कुल ${rows.length} कर्मचारियों का जन्मदिन है:**\n\n`;
+    } else {
+      ans = `🎉 **Aaj ${rows.length} employee(s) ka Birthday hai:**\n\n`;
+    }
     ans += `| Emp Code | Employee Name | DOB | Age | Location | Designation | Mobile |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows) {
@@ -8348,7 +9170,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (intent === "BIRTHDAYS_MONTH" && rows.length > 0) {
-    let ans = `🎂 **Employee Birthdays (${rows.length} employees):**\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `🎂 **Employee Birthdays (${rows.length} employees):**\n\n`;
+    } else if (isDeva) {
+      ans = `🎂 **कर्मचारी जन्मदिन सूची (${rows.length} कर्मचारी):**\n\n`;
+    } else {
+      ans = `🎂 **Employee Birthdays (${rows.length} employees):**\n\n`;
+    }
     ans += `| Emp Code | Employee Name | DOB | Day | Age | Location | Designation |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows) {
@@ -8369,13 +9198,13 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
     let dateLabel = "";
     if (isToday) {
-      dateLabel = "Aaj";
+      dateLabel = isEn ? "Today" : (isDeva ? "आज" : "Aaj");
     } else if (entities.day && entities.month) {
       dateLabel = `${entities.day} ${monthName}${yearStr}`;
     } else if (entities.month) {
-      dateLabel = `${monthName}${yearStr} me`;
+      dateLabel = isEn ? `in ${monthName}${yearStr}` : (isDeva ? `${monthName}${yearStr} में` : `${monthName}${yearStr} me`);
     } else {
-      dateLabel = "Iss period me";
+      dateLabel = isEn ? "in this period" : (isDeva ? "इस अवधि में" : "Iss period me");
     }
 
     // 1. Guard for COUNT query (e.g. SELECT COUNT(*) AS TotalAnniversaryCount)
@@ -8390,8 +9219,16 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     if (isCountQuery) {
       const rawCount = countKey ? firstRow[countKey] : Object.values(firstRow)[0];
       const countVal = Number(rawCount) || 0;
+      let ans = "";
+      if (isEn) {
+        ans = `🎉 According to AutoVyn ERP records, a total of **${countVal.toLocaleString()} employee(s)** celebrate their Work Anniversary ${dateLabel.toLowerCase()}.`;
+      } else if (isDeva) {
+        ans = `🎉 ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${dateLabel} कुल ${countVal.toLocaleString()} कर्मचारियों** की कार्य वर्षगांठ (Work Anniversary) है।`;
+      } else {
+        ans = `🎉 AutoVyn ERP ke records ke anusar, **${dateLabel} total ${countVal.toLocaleString()} employee(s)** ki Work Anniversary hai.`;
+      }
       return {
-        answer: `🎉 AutoVyn ERP ke records ke anusar, **${dateLabel} total ${countVal.toLocaleString()} employee(s)** ki Work Anniversary hai.`,
+        answer: ans,
         summary: `${dateLabel} work anniversary: ${countVal} employee(s)`
       };
     }
@@ -8400,7 +9237,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const isDayGroupedQuery = rows.length > 0 && rows[0].AnniversaryDay !== undefined && (rows[0].TotalEmployees !== undefined || rows[0].EmployeeCount !== undefined || rows[0].TotalEmployeesOnThisDay !== undefined || rows[0].Count !== undefined || rows[0].count !== undefined) && !rows[0].EmployeeName;
     if (isDayGroupedQuery) {
       let totalEmps = 0;
-      let ans = `🎉 **${dateLabel} din-war (day-wise) Work Anniversaries:**\n\n`;
+      let ans = "";
+      if (isEn) {
+        ans = `🎉 **Day-wise Work Anniversaries (${dateLabel}):**\n\n`;
+      } else if (isDeva) {
+        ans = `🎉 **${dateLabel} दिन-वार कार्य वर्षगांठ विवरण:**\n\n`;
+      } else {
+        ans = `🎉 **${dateLabel} din-war (day-wise) Work Anniversaries:**\n\n`;
+      }
       ans += `| # | Anniversary Day | Total Employees |\n`;
       ans += `| :- | :--- | :--- |\n`;
       for (let i = 0; i < rows.length; i++) {
@@ -8410,7 +9254,13 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         totalEmps += c;
         ans += `| **${i + 1}** | **${day} ${monthName}** | **${c} employee(s)** |\n`;
       }
-      ans += `\n**Total:** ${totalEmps.toLocaleString()} employee(s) ki work anniversary hai ${dateLabel}.`;
+      if (isEn) {
+        ans += `\n**Total:** ${totalEmps.toLocaleString()} employee(s) celebrate their work anniversary ${dateLabel.toLowerCase()}.`;
+      } else if (isDeva) {
+        ans += `\n**कुल:** ${totalEmps.toLocaleString()} कर्मचारियों की कार्य वर्षगांठ ${dateLabel} है।`;
+      } else {
+        ans += `\n**Total:** ${totalEmps.toLocaleString()} employee(s) ki work anniversary hai ${dateLabel}.`;
+      }
       return {
         answer: ans.trim(),
         summary: `${dateLabel} work anniversary: ${totalEmps} employee(s) across ${rows.length} days`
@@ -8422,7 +9272,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       ? `\n📅 **Anniversary Days${monthName ? ` (${monthName}${yearStr})` : ""}:** ${uniqueDays.join(', ')}${monthName ? ` ${monthName}` : ""}\n\n`
       : "\n\n";
 
-    let ans = `🎉 **${dateLabel} total ${rows.length} employee(s) ki Work Anniversary hai:**${daysSummary}`;
+    let ans = "";
+    if (isEn) {
+      ans = `🎉 **A total of ${rows.length} employee(s) celebrate their Work Anniversary ${dateLabel.toLowerCase()}:**${daysSummary}`;
+    } else if (isDeva) {
+      ans = `🎉 **${dateLabel} कुल ${rows.length} कर्मचारियों की कार्य वर्षगांठ (Work Anniversary) है:**${daysSummary}`;
+    } else {
+      ans = `🎉 **${dateLabel} total ${rows.length} employee(s) ki Work Anniversary hai:**${daysSummary}`;
+    }
     ans += `| # | Anniversary Day | Emp Code | Employee Name | Joining Date | Years Of Service${yearStr ? ` (in${yearStr})` : ""} | Location | Designation |\n`;
     ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (let i = 0; i < rows.length; i++) {
@@ -8451,13 +9308,13 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
     let dateLabel = "";
     if (isToday) {
-      dateLabel = "Aaj";
+      dateLabel = isEn ? "Today" : (isDeva ? "आज" : "Aaj");
     } else if (entities.day && entities.month) {
       dateLabel = `${entities.day} ${monthName}${yearStr}`;
     } else if (entities.month) {
-      dateLabel = `${monthName}${yearStr} me`;
+      dateLabel = isEn ? `in ${monthName}${yearStr}` : (isDeva ? `${monthName}${yearStr} में` : `${monthName}${yearStr} me`);
     } else {
-      dateLabel = "Iss period me";
+      dateLabel = isEn ? "in this period" : (isDeva ? "इस अवधि में" : "Iss period me");
     }
 
     // 1. Guard for COUNT query
@@ -8472,8 +9329,16 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     if (isCountQuery) {
       const rawCount = countKey ? firstRow[countKey] : Object.values(firstRow)[0];
       const countVal = Number(rawCount) || 0;
+      let ans = "";
+      if (isEn) {
+        ans = `💍 According to AutoVyn ERP records, a total of **${countVal.toLocaleString()} employee(s)** celebrate their Marriage Anniversary ${dateLabel.toLowerCase()}.`;
+      } else if (isDeva) {
+        ans = `💍 ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${dateLabel} कुल ${countVal.toLocaleString()} कर्मचारियों** की विवाह वर्षगांठ (Marriage Anniversary) है।`;
+      } else {
+        ans = `💍 AutoVyn ERP ke records ke anusar, **${dateLabel} total ${countVal.toLocaleString()} employee(s)** ki Marriage Anniversary hai.`;
+      }
       return {
-        answer: `💍 AutoVyn ERP ke records ke anusar, **${dateLabel} total ${countVal.toLocaleString()} employee(s)** ki Marriage Anniversary hai.`,
+        answer: ans,
         summary: `${dateLabel} marriage anniversary: ${countVal} employee(s)`
       };
     }
@@ -8482,7 +9347,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const isDayGroupedQuery = rows.length > 0 && rows[0].AnniversaryDay !== undefined && (rows[0].TotalEmployees !== undefined || rows[0].EmployeeCount !== undefined || rows[0].TotalEmployeesOnThisDay !== undefined || rows[0].Count !== undefined || rows[0].count !== undefined) && !rows[0].EmployeeName;
     if (isDayGroupedQuery) {
       let totalEmps = 0;
-      let ans = `💍 **${dateLabel} din-war (day-wise) Marriage Anniversaries:**\n\n`;
+      let ans = "";
+      if (isEn) {
+        ans = `💍 **Day-wise Marriage Anniversaries (${dateLabel}):**\n\n`;
+      } else if (isDeva) {
+        ans = `💍 **${dateLabel} दिन-वार विवाह वर्षगांठ विवरण:**\n\n`;
+      } else {
+        ans = `💍 **${dateLabel} din-war (day-wise) Marriage Anniversaries:**\n\n`;
+      }
       ans += `| # | Anniversary Day | Total Employees |\n`;
       ans += `| :- | :--- | :--- |\n`;
       for (let i = 0; i < rows.length; i++) {
@@ -8492,7 +9364,13 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         totalEmps += c;
         ans += `| **${i + 1}** | **${day} ${monthName}** | **${c} employee(s)** |\n`;
       }
-      ans += `\n**Total:** ${totalEmps.toLocaleString()} employee(s) ki marriage anniversary hai ${dateLabel}.`;
+      if (isEn) {
+        ans += `\n**Total:** ${totalEmps.toLocaleString()} employee(s) celebrate their marriage anniversary ${dateLabel.toLowerCase()}.`;
+      } else if (isDeva) {
+        ans += `\n**कुल:** ${totalEmps.toLocaleString()} कर्मचारियों की विवाह वर्षगांठ ${dateLabel} है।`;
+      } else {
+        ans += `\n**Total:** ${totalEmps.toLocaleString()} employee(s) ki marriage anniversary hai ${dateLabel}.`;
+      }
       return {
         answer: ans.trim(),
         summary: `${dateLabel} marriage anniversary: ${totalEmps} employee(s) across ${rows.length} days`
@@ -8504,7 +9382,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       ? `\n💍 **Marriage Anniversary Days${monthName ? ` (${monthName}${yearStr})` : ""}:** ${uniqueDays.join(', ')}${monthName ? ` ${monthName}` : ""}\n\n`
       : "\n\n";
 
-    let ans = `💍 **${dateLabel} total ${rows.length} employee(s) ki Marriage Anniversary hai:**${daysSummary}`;
+    let ans = "";
+    if (isEn) {
+      ans = `💍 **A total of ${rows.length} employee(s) celebrate their Marriage Anniversary ${dateLabel.toLowerCase()}:**${daysSummary}`;
+    } else if (isDeva) {
+      ans = `💍 **${dateLabel} कुल ${rows.length} कर्मचारियों की विवाह वर्षगांठ (Marriage Anniversary) है:**${daysSummary}`;
+    } else {
+      ans = `💍 **${dateLabel} total ${rows.length} employee(s) ki Marriage Anniversary hai:**${daysSummary}`;
+    }
     ans += `| # | Anniversary Day | Emp Code | Employee Name | Marriage Date | Years Of Marriage${yearStr ? ` (in${yearStr})` : ""} | Location | Designation |\n`;
     ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (let i = 0; i < rows.length; i++) {
@@ -8527,7 +9412,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   // Specific Date Birthday Formatter
   if (intent === "BIRTHDAY_BY_DATE" && rows.length > 0) {
     const dateLabel = entities.day && entities.month ? `${entities.day}/${entities.month}` : (entities.specificDate || "Requested date");
-    let ans = `🎂 **${dateLabel} ko ${rows.length} employee(s) ka Birthday tha / hai:**\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `🎂 **On ${dateLabel}, ${rows.length} employee(s) celebrate their Birthday:**\n\n`;
+    } else if (isDeva) {
+      ans = `🎂 **${dateLabel} को कुल ${rows.length} कर्मचारियों का जन्मदिन है:**\n\n`;
+    } else {
+      ans = `🎂 **${dateLabel} ko ${rows.length} employee(s) ka Birthday tha / hai:**\n\n`;
+    }
     ans += `| Emp Code | Employee Name | DOB | Age | Location | Designation | Mobile |\n`;
     ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
     for (const r of rows) {
@@ -8559,13 +9451,28 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const locStr = entities.branch ? ` (Location / Branch: **${entities.branch}**)` : "";
 
     if (basicNum === 0 && grossNum === 0 && netNum === 0 && totalEmp === 0) {
+      let emptyAns = "";
+      if (isEn) {
+        emptyAns = `According to AutoVyn ERP records, no salary/payroll data has been processed for **${mStr}**${locStr} (Total Basic: ₹0.00).`;
+      } else if (isDeva) {
+        emptyAns = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${mStr}**${locStr} के लिए कोई वेतन डेटा संसाधित नहीं हुआ है (मूल वेतन: ₹0.00)।`;
+      } else {
+        emptyAns = `AutoVyn ERP me **${mStr}**${locStr} ke liye koi salary / payroll data process nahi hua hai (Total Basic: ₹0.00).`;
+      }
       return {
-        answer: `AutoVyn ERP me **${mStr}**${locStr} ke liye koi salary / payroll data process nahi hua hai (Total Basic: ₹0.00).`,
+        answer: emptyAns,
         summary: `No salary records for ${mStr}${locStr}`
       };
     }
 
-    let ans = `AutoVyn ERP Salary & Payroll Summary for **${mStr}**${locStr}:\n\n`;
+    let ans = "";
+    if (isEn) {
+      ans = `AutoVyn ERP Salary & Payroll Summary for **${mStr}**${locStr}:\n\n`;
+    } else if (isDeva) {
+      ans = `ऑटोवाइन ईआरपी वेतन एवं पेरोल सारांश **${mStr}**${locStr}:\n\n`;
+    } else {
+      ans = `AutoVyn ERP Salary & Payroll Summary for **${mStr}**${locStr}:\n\n`;
+    }
     if (entities.salaryField === "Basic_Earn") {
       ans += `• 💰 **Total Basic Pay / Earnings (SUM):** **₹${basic}**\n`;
       if (totalEmp > 0) ans += `• 👥 **Total Employees:** ${totalEmp} employee(s)\n`;
@@ -8602,24 +9509,66 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     const count = r.TotalEmployeesWithSalary ?? r.TotalEmployees ?? r.TotalCount ?? Object.values(r)[0] ?? 0;
     const mStr = entities.month ? ` **${entities.month}/${entities.year || new Date().getFullYear()}** ke liye` : "";
     const locStr = entities.branch ? ` Branch / Location **${entities.branch}** me` : "";
+
     if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
       const minF = Number(entities.salaryMin).toLocaleString("en-IN");
       const maxF = Number(entities.salaryMax).toLocaleString("en-IN");
+      let ans = "";
+      if (isEn) {
+        const mEn = entities.month ? ` for **${entities.month}/${entities.year || new Date().getFullYear()}**` : "";
+        const locEn = entities.branch ? ` in branch **${entities.branch}**` : "";
+        ans = `According to AutoVyn ERP records, there are a total of **${count} employee(s)** with salary between **₹${minF}** and **₹${maxF}**${locEn}${mEn}.`;
+      } else if (isDeva) {
+        const mDeva = entities.month ? ` **${entities.month}/${entities.year || new Date().getFullYear()}** के लिए` : "";
+        const locDeva = entities.branch ? ` शाखा **${entities.branch}** में` : "";
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार,${locDeva}${mDeva} **₹${minF}** से **₹${maxF}** के बीच वेतन वाले कुल **${count} कर्मचारी** हैं।`;
+      } else {
+        ans = `AutoVyn ERP ke record ke anusar,${locStr}${mStr} **₹${minF}** se **₹${maxF}** ke beech salary wale kul **${count} employee(s)** hain.`;
+      }
       return {
-        answer: `AutoVyn ERP ke record ke anusar,${locStr}${mStr} **₹${minF}** se **₹${maxF}** ke beech salary wale kul **${count} employee(s)** hain.`,
-        summary: `₹${minF} se ₹${maxF} ke beech salary: ${count} employee(s)`
+        answer: ans,
+        summary: `Salary ₹${minF} - ₹${maxF}: ${count} employee(s)`
       };
     }
+
     if (entities.salaryThreshold) {
-      const compWord = (entities.salaryComparison === "<" || entities.salaryComparison === "<=") ? "kam" : "jyada";
+      const isLess = (entities.salaryComparison === "<" || entities.salaryComparison === "<=");
       const threshFormatted = Number(entities.salaryThreshold).toLocaleString("en-IN");
+      let ans = "";
+      if (isEn) {
+        const compEn = isLess ? "less than" : "more than";
+        const mEn = entities.month ? ` for **${entities.month}/${entities.year || new Date().getFullYear()}**` : "";
+        const locEn = entities.branch ? ` in branch **${entities.branch}**` : "";
+        ans = `According to AutoVyn ERP records, there are a total of **${count} employee(s)** with salary ${compEn} **₹${threshFormatted}**${locEn}${mEn}.`;
+      } else if (isDeva) {
+        const compDeva = isLess ? "कम" : "ज्यादा";
+        const mDeva = entities.month ? ` **${entities.month}/${entities.year || new Date().getFullYear()}** के लिए` : "";
+        const locDeva = entities.branch ? ` शाखा **${entities.branch}** में` : "";
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार,${locDeva}${mDeva} **₹${threshFormatted}** से ${compDeva} वेतन वाले कुल **${count} कर्मचारी** हैं।`;
+      } else {
+        const compWord = isLess ? "kam" : "jyada";
+        ans = `AutoVyn ERP ke record ke anusar,${locStr}${mStr} **₹${threshFormatted}** se **${compWord}** salary wale kul **${count} employee(s)** hain.`;
+      }
       return {
-        answer: `AutoVyn ERP ke record ke anusar,${locStr}${mStr} **₹${threshFormatted}** se **${compWord}** salary wale kul **${count} employee(s)** hain.`,
-        summary: `₹${threshFormatted} se ${compWord} salary: ${count} employee(s)`
+        answer: ans,
+        summary: `Salary threshold ₹${threshFormatted}: ${count} employee(s)`
       };
+    }
+
+    let ans = "";
+    if (isEn) {
+      const mEn = entities.month ? ` for period **${entities.month}/${entities.year || new Date().getFullYear()}**` : "";
+      const locEn = entities.branch ? ` in branch **${entities.branch}**` : "";
+      ans = `According to AutoVyn ERP records, salary has been processed for a total of **${count} employee(s)**${locEn}${mEn}.`;
+    } else if (isDeva) {
+      const mDeva = entities.month ? ` **${entities.month}/${entities.year || new Date().getFullYear()}** के लिए` : "";
+      const locDeva = entities.branch ? ` शाखा **${entities.branch}** में` : "";
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार,${locDeva}${mDeva} कुल **${count} कर्मचारियों** का वेतन संसाधित हुआ है।`;
+    } else {
+      ans = `AutoVyn ERP ke record ke anusar,${mStr}${locStr} total **${count} employee(s)** ki salary generate / process hui hai.`;
     }
     return {
-      answer: `AutoVyn ERP ke record ke anusar,${mStr}${locStr} total **${count} employee(s)** ki salary generate / process hui hai.`,
+      answer: ans,
       summary: `${count} employees salary processed ${mStr}${locStr}`.trim()
     };
   }
@@ -8634,35 +9583,56 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const gross = (r.GrossSalary || r.GrossEarnings || 0).toLocaleString("en-IN");
       const basic = (r.BasicPay || r.BasicEarnings || 0).toLocaleString("en-IN");
       const hra = (r.HRA || r.HRAEarnings || 0).toLocaleString("en-IN");
+      const ded = Number(r.TotalDeductions || r.Deductions || (Number(r.GrossSalary || r.GrossEarnings || 0) - Number(r.NetSalary || r.NetPayment || r.FinalPayment || 0)) || 0).toLocaleString("en-IN");
+
       // Check if user specifically asked for net, basic, gross, or deduction ("jitna puchhe utna hi jawab de")
       const lowerMsg = (message || entities.rawMessage || "").toLowerCase();
       if (/\b(net\s*salary|net\s*pay|final\s*payment|in\s*hand|haath\s*me)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **Net Salary (In-Hand / Final Payment)** of **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** for **${m}/${y}** is: **₹${net}**.`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** का **${m}/${y}** में **नेट इन-हैंड वेतन (Final Payment)**: **₹${net}** है।`;
+        else ans = `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Net Salary (In-Hand / Final Payment)**: **₹${net}** hai.`;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Net Salary (In-Hand / Final Payment)**: **₹${net}** hai.`,
+          answer: ans,
           summary: `Net Salary for ${r.EmployeeCode} (${m}/${y}): ₹${net}`
         };
       }
       if (/\b(basic\s*pay|basic\s*salary|mool\s*vetan)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **Basic Pay** of **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** for **${m}/${y}** is: **₹${basic}**.`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** का **${m}/${y}** में **मूल वेतन (Basic Pay)**: **₹${basic}** है।`;
+        else ans = `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Basic Pay**: **₹${basic}** hai.`;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Basic Pay**: **₹${basic}** hai.`,
+          answer: ans,
           summary: `Basic Pay for ${r.EmployeeCode} (${m}/${y}): ₹${basic}`
         };
       }
       if (/\b(gross\s*salary|gross\s*earn|gross\s*earnings)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **Gross Earnings** of **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** for **${m}/${y}** is: **₹${gross}**.`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** का **${m}/${y}** में **सकल वेतन (Gross Earnings)**: **₹${gross}** है।`;
+        else ans = `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Gross Earnings**: **₹${gross}** hai.`;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Gross Earnings**: **₹${gross}** hai.`,
+          answer: ans,
           summary: `Gross for ${r.EmployeeCode} (${m}/${y}): ₹${gross}`
         };
       }
       if (/\b(deduction|deductions|katauti|kitna\s*kata)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **Total Deductions** for **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** in **${m}/${y}** is: **₹${ded}**.`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** का **${m}/${y}** में **कुल कटौती**: **₹${ded}** है।`;
+        else ans = `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Total Deductions**: **₹${ded}** hai.`;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** ki **${m}/${y}** me **Total Deductions**: **₹${ded}** hai.`,
+          answer: ans,
           summary: `Deductions for ${r.EmployeeCode} (${m}/${y}): ₹${ded}`
         };
       }
 
-      let ans = `Salary Slip Summary for **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** for **${m}/${y}**:\n\n` +
-        `• **Gross Earnings:** ₹${gross}\n` +
+      let ans = isEn
+        ? `Salary Slip Summary for **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** for **${m}/${y}**:\n\n`
+        : (isDeva ? `**${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** का **${m}/${y}** का वेतन विवरण:\n\n` : `Salary Slip Summary for **${r.EmployeeName || "Employee"} (${r.EmployeeCode || "-"})** for **${m}/${y}**:\n\n`);
+
+      ans += `• **Gross Earnings:** ₹${gross}\n` +
         `• **Basic Pay:** ₹${basic}\n` +
         `• **HRA:** ₹${hra}\n` +
         `• **Total Deductions:** ₹${ded}\n` +
@@ -8674,11 +9644,16 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         summary: `Salary Slip for ${r.EmployeeCode} (${m}/${y}): Net ₹${net}`
       };
     } else {
-      let titleHeader = `AutoVyn ERP me **${rows.length} employee(s)** ke salary records mile hain`;
+      let titleHeader = isEn
+        ? `According to AutoVyn ERP records, salary records for **${rows.length} employee(s)** were retrieved`
+        : (isDeva ? `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${rows.length} कर्मचारियों** के वेतन रिकॉर्ड मिले हैं` : `AutoVyn ERP me **${rows.length} employee(s)** ke salary records mile hain`);
+
       if (entities.isSalaryRange && entities.salaryMin != null && entities.salaryMax != null) {
         const minF = Number(entities.salaryMin).toLocaleString("en-IN");
         const maxF = Number(entities.salaryMax).toLocaleString("en-IN");
-        titleHeader = `AutoVyn ERP ke record ke anusar, **₹${minF}** se **₹${maxF}** ke beech salary wale **${rows.length} employee(s)** ke records mile hain`;
+        titleHeader = isEn
+          ? `According to AutoVyn ERP records, **${rows.length} employee(s)** with salary between **₹${minF}** and **₹${maxF}** were found`
+          : (isDeva ? `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **₹${minF}** से **₹${maxF}** के बीच वेतन वाले **${rows.length} कर्मचारी** मिले हैं` : `AutoVyn ERP ke record ke anusar, **₹${minF}** se **₹${maxF}** ke beech salary wale **${rows.length} employee(s)** ke records mile hain`);
       }
       let ans = `${titleHeader}:\n\n`;
       ans += `| Emp Code | Employee Name | Month/Year | Gross Earn | Net Pay | Deductions | Location |\n`;
@@ -8689,7 +9664,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         const ded = Number(r.TotalDeductions || r.Deductions || 0).toLocaleString("en-IN");
         ans += `| ${r.EmployeeCode || "-"} | **${r.EmployeeName || "-"}** | ${r.SalaryMonth || "-"}/${r.SalaryYear || "-"} | ₹${gross} | **₹${net}** | ₹${ded} | ${r.Location || "-"} |\n`;
       }
-      if (rows.length > 50) ans += `\n*...aur ${rows.length - 50} aur records hain.*`;
+      if (rows.length > 50) ans += isEn ? `\n*(Showing top 50 of ${rows.length} records)*` : (isDeva ? `\n*(शीर्ष 50 / कुल ${rows.length} रिकॉर्ड दिखाए गए हैं)*` : `\n*(Showing top 50 of ${rows.length} records)*`);
       return {
         answer: ans.trim(),
         summary: `${rows.length} salary records retrieved`
@@ -8735,32 +9710,51 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     }
 
     if (!isFullProfileRequested) {
+      const formatEmpAttr = (nameEn, nameHi, nameDeva, val, notAvailEn = "Not available", notAvailHi = "Not Available") => {
+        const displayVal = val ? String(val).trim() : null;
+        if (isEn) {
+          return `According to AutoVyn ERP records, the **${nameEn}** of **${empName} (${empCode})** is: **${displayVal || notAvailEn}**.`;
+        }
+        if (isDeva) {
+          return `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${empName} (${empCode})** का **${nameDeva}**: **${displayVal || "डेटाबेस में उपलब्ध नहीं है"}** है।`;
+        }
+        return `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **${nameHi}**: **${displayVal || notAvailHi}** hai.`;
+      };
+
       if (/\b(pan|pan\s*no|pan\s*number|pan\s*card)\b/i.test(lowerQ)) {
         const pan = r.PAN || r.PANNO || null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **PAN Number**: **${pan ? String(pan).trim() : 'Database me blank / update nahi hai (Not Available)'}** hai.`,
+          answer: formatEmpAttr("PAN Number", "PAN Number", "पैन नंबर", pan, "Not available in database", "Database me blank / update nahi hai (Not Available)"),
           summary: `PAN for ${empName} (${empCode}): ${pan || 'Not available'}`
         };
       }
       if (/\b(aadhaar|aadhar|uid|uidai|adhar)\b/i.test(lowerQ)) {
         const aadhar = r.AadharNo || r.ADHARNO || r.UID_NO || null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Aadhaar Number**: **${aadhar ? String(aadhar).trim() : 'Database me blank / update nahi hai (Not Available)'}** hai.`,
+          answer: formatEmpAttr("Aadhaar Number", "Aadhaar Number", "आधार नंबर", aadhar, "Not available in database", "Database me blank / update nahi hai (Not Available)"),
           summary: `Aadhaar for ${empName} (${empCode}): ${aadhar || 'Not available'}`
         };
       }
       if (/\b(mobile|phone|contact\s*no|contact\s*number|mobile\s*no|mob)\b/i.test(lowerQ)) {
         const mob = r.MobileNo || r.MOBILENO || null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Mobile Number**: **${mob ? String(mob).trim() : 'Not Available'}** hai.`,
+          answer: formatEmpAttr("Mobile Number", "Mobile Number", "मोबाइल नंबर", mob, "Not available in database", "Not Available"),
           summary: `Mobile for ${empName} (${empCode}): ${mob || 'Not available'}`
         };
       }
       if (/\b(designation|post|role|pad|kya\s*kaam)\b/i.test(lowerQ)) {
         const desg = r.Designation || r.EMPLOYEEDESIGNATION || null;
         const loc = r.Location || r.Branch || "-";
+        let ans = "";
+        if (isEn) {
+          ans = `According to AutoVyn ERP records, the **Designation** of **${empName} (${empCode})** is: **${desg || 'Not Available'}** (Location / Branch: **${loc}**).`;
+        } else if (isDeva) {
+          ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${empName} (${empCode})** का **पद (Designation)**: **${desg || 'उपलब्ध नहीं है'}** है (शाखा / स्थान: **${loc}**)।`;
+        } else {
+          ans = `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Designation**: **${desg || 'Not Available'}** hai (Location / Branch: **${loc}**).`;
+        }
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Designation**: **${desg || 'Not Available'}** hai (Location / Branch: **${loc}**).`,
+          answer: ans,
           summary: `Designation for ${empName} (${empCode}): ${desg || 'Not available'}`
         };
       }
@@ -8768,67 +9762,87 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         const acc = r.BankAccountNo || r.BANKACCOUNTNO || "-";
         const bank = r.BankName || r.BANKNAME || "-";
         const ifsc = r.IFSC || r.ifsc_code || "-";
+        let ans = "";
+        if (isEn) {
+          ans = `According to AutoVyn ERP records, the **Bank Details** of **${empName} (${empCode})** are:\n\n• **Bank Account No:** **${acc}**\n• **Bank Name:** ${bank}\n• **IFSC Code:** ${ifsc}`;
+        } else if (isDeva) {
+          ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${empName} (${empCode})** का **बैंक विवरण**:\n\n• **बैंक खाता संख्या:** **${acc}**\n• **बैंक का नाम:** ${bank}\n• **IFSC कोड:** ${ifsc}`;
+        } else {
+          ans = `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Bank Details**:\n\n• **Bank Account No:** **${acc}**\n• **Bank Name:** ${bank}\n• **IFSC Code:** ${ifsc}`;
+        }
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Bank Details**:\n\n• **Bank Account No:** **${acc}**\n• **Bank Name:** ${bank}\n• **IFSC Code:** ${ifsc}`,
+          answer: ans,
           summary: `Bank details for ${empName} (${empCode}): Acc ${acc}`
         };
       }
       if (/\b(email|mail|corporate\s*mail)\b/i.test(lowerQ)) {
         const email = r.Email || r.CORPORATEMAILID || r.OfficialEmail || r.PersonalEmail || null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ka **Email ID**: **${email || 'Not Available'}** hai.`,
+          answer: formatEmpAttr("Email ID", "Email ID", "ईमेल आईडी", email, "Not available in database", "Not Available"),
           summary: `Email for ${empName} (${empCode}): ${email || 'Not available'}`
         };
       }
       if (/\b(joining|doj|kab\s*join|joining\s*date|join\s*kiya)\b/i.test(lowerQ)) {
         const doj = r.JoiningDate || r.DateOfJoining || r.CURRENTJOINDATE || null;
+        const dojFormatted = doj ? String(doj).slice(0, 10) : null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ki **Joining Date (DOJ)**: **${doj ? String(doj).slice(0, 10) : 'Not Available'}** hai.`,
+          answer: formatEmpAttr("Joining Date (DOJ)", "Joining Date (DOJ)", "ज्वाइनिंग तिथि (DOJ)", dojFormatted, "Not available in database", "Not Available"),
           summary: `Joining date for ${empName} (${empCode}): ${doj || 'Not available'}`
         };
       }
       if (/\b(dob|birth\s*date|birthday|janamdin|date\s*of\s*birth)\b/i.test(lowerQ)) {
         const dob = r.DateOfBirth || r.DOB || null;
+        const dobFormatted = dob ? String(dob).slice(0, 10) : null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ki **Date of Birth (DOB)**: **${dob ? String(dob).slice(0, 10) : 'Not Available'}** hai.`,
+          answer: formatEmpAttr("Date of Birth (DOB)", "Date of Birth (DOB)", "जन्म तिथि (DOB)", dobFormatted, "Not available in database", "Not Available"),
           summary: `DOB for ${empName} (${empCode}): ${dob || 'Not available'}`
         };
       }
       if (/\b(father|pitaji|father's\s*name)\b/i.test(lowerQ)) {
         const fn = r.FatherName || r.FATHERNAME || null;
         const fm = r.FatherMobile || r.FATHERCONTACTNO || null;
+        const valStr = fn ? `${fn}${fm ? ` (Contact: ${fm})` : ''}` : null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Father Name**: **${fn || 'Not Available'}**${fm ? ` (Contact: ${fm})` : ''} hai.`,
+          answer: formatEmpAttr("Father's Name", "Father Name", "पिता का नाम", valStr, "Not available in database", "Not Available"),
           summary: `Father name for ${empName} (${empCode}): ${fn || 'Not available'}`
         };
       }
       if (/\b(mother|mataji|mother's\s*name)\b/i.test(lowerQ)) {
         const mn = r.MotherName || r.MOTHERNAME || null;
         const mm = r.MotherMobile || r.MOTHERCONTACTNO || null;
+        const valStr = mn ? `${mn}${mm ? ` (Contact: ${mm})` : ''}` : null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Mother Name**: **${mn || 'Not Available'}**${mm ? ` (Contact: ${mm})` : ''} hai.`,
+          answer: formatEmpAttr("Mother's Name", "Mother Name", "माता का नाम", valStr, "Not available in database", "Not Available"),
           summary: `Mother name for ${empName} (${empCode}): ${mn || 'Not available'}`
         };
       }
       if (/\b(spouse|patni|wife|husband|pati)\b/i.test(lowerQ)) {
         const sn = r.SpouseName || r.SPOUSENAME || null;
         const sm = r.SpouseMobile || r.SPOUSECONTACTNO || null;
+        const valStr = sn ? `${sn}${sm ? ` (Contact: ${sm})` : ''}` : null;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **Spouse Name**: **${sn || 'Not Available'}**${sm ? ` (Contact: ${sm})` : ''} hai.`,
+          answer: formatEmpAttr("Spouse Name", "Spouse Name", "जीवनसाथी का नाम", valStr, "Not available in database", "Not Available"),
           summary: `Spouse name for ${empName} (${empCode}): ${sn || 'Not available'}`
         };
       }
       if (/\b(pf\s*no|pf\s*number|provident\s*fund|uan)\b/i.test(lowerQ)) {
         const pf = r.PFNumber || r.PFNO || "-";
         const uan = r.UAN_No || r.UAN || "-";
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **PF / UAN Details** of **${empName} (${empCode})** are:\n\n• **PF Number:** \`${pf}\`\n• **UAN:** \`${uan}\``;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${empName} (${empCode})** का **पीएफ / यूएएन विवरण**:\n\n• **पीएफ नंबर:** \`${pf}\`\n• **यूएएन:** \`${uan}\``;
+        else ans = `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **PF / UAN Details**:\n\n• **PF Number:** \`${pf}\`\n• **UAN:** \`${uan}\``;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ke **PF / UAN Details**:\n\n• **PF Number:** \`${pf}\`\n• **UAN:** \`${uan}\``,
+          answer: ans,
           summary: `PF for ${empName} (${empCode}): ${pf}`
         };
       }
     }
 
-    let ans = `Employee Profile for **${empName} (${empCode})**:\n\n`;
+    let ans = isEn
+      ? `Employee Profile for **${empName} (${empCode})**:\n\n`
+      : (isDeva ? `कर्मचारी प्रोफाइल: **${empName} (${empCode})**:\n\n` : `Employee Profile for **${empName} (${empCode})**:\n\n`);
+
     ans += `• **Designation:** ${r.Designation || "-"} | **Department:** ${r.Department || "-"}\n`;
     ans += `• **Location / Branch:** ${r.Location || r.Branch || "-"}\n`;
     ans += `• **Date of Joining:** ${r.JoiningDate || r.DateOfJoining || "-"} | **Status:** ${r.EmploymentStatus || r.Status || "Active"}\n`;
@@ -8849,6 +9863,47 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     return {
       answer: ans.trim(),
       summary: `Profile retrieved for ${empName} (${empCode})`
+    };
+  }
+
+  // Dedicated Formatter: Multi-Employee Profile Comparison (e.g. "19000006 aur 2780063 dono employee ka detail nikalo")
+  if (rows.length >= 2 && rows.length <= 5 && (entities.isMultiEmployeeQuery || (entities.employeeCodes && entities.employeeCodes.length > 1) || /\b(dono|both|each)\b/i.test(message || entities.rawMessage || ""))) {
+    let ans = isEn
+      ? `According to AutoVyn ERP records, here are the complete details for **${rows.length} employee(s)**:\n\n`
+      : (isDeva ? `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${rows.length} कर्मचारियों** का पूरा विवरण:\n\n` : `AutoVyn ERP ke record ke anusar, **${rows.length} employees** ke complete details:\n\n`);
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const title = r.Title ? `${String(r.Title).trim()} ` : "";
+      const empName = r.EmployeeName || (r.EMPFIRSTNAME ? `${r.EMPFIRSTNAME} ${r.EMPLASTNAME || ""}`.trim() : `Employee ${i + 1}`);
+      const empCode = r.EmployeeCode || r.EMPCODE || "-";
+      const perm1 = r.PermanentAddress1 || r.PERMANENTADDRESS1 || r.PermanentAddress || "";
+      const perm2 = r.PermanentAddress2 || r.PERMANENTADDRESS2 || "";
+      const pCity = r.PermanentCity || r.PCITY || "";
+      const pState = r.PermanentState || r.PSTATE || "";
+      const fullPermAddr = [perm1, perm2, pCity, pState].filter(Boolean).map(s => String(s).trim()).filter(s => s && s !== '0' && s !== '-').join(", ");
+
+      const curr1 = r.CurrentAddress1 || r.CURRENTADDRESS1 || r.CurrentAddress || "";
+      const curr2 = r.CurrentAddress2 || r.CURRENTADDRESS2 || "";
+      const fullCurrAddr = [curr1, curr2].filter(Boolean).map(s => String(s).trim()).filter(s => s && s !== '0' && s !== '-').join(", ");
+
+      ans += `### 👤 Employee ${i + 1}: **${title}${empName} (${empCode})**\n`;
+      ans += `• **Designation & Branch:** ${r.Designation || "-"} | **Location:** ${r.Location || "-"}\n`;
+      ans += `• **Mobile No:** ${r.MobileNo || "-"} | **Email:** ${r.Email || "-"}\n`;
+      if (fullPermAddr) ans += `• 🏠 **Permanent Address:** ${fullPermAddr}\n`;
+      if (fullCurrAddr) ans += `• 📍 **Current Address:** ${fullCurrAddr}\n`;
+      ans += `• **PAN No:** \`${r.PAN || r.PANNO || "-"}\` | **Aadhaar No:** \`${r.AadharNo || r.ADHARNO || "-"}\`\n`;
+      ans += `• **PF No:** \`${r.PFNumber || r.PFNO || "-"}\` | **ESI No:** \`${r.ESINo || r.ESINO || "-"}\` | **UAN:** \`${r.UANNumber || r.UAN_No || "-"}\`\n`;
+      ans += `• **DOB:** ${r.DateOfBirth || r.DOB || "-"} | **Gender:** ${r.Gender || "-"} | **Blood Group:** ${r.BloodGroup || "-"}\n`;
+      ans += `• **Marital Status:** ${r.MaritalStatus === '0' || r.MaritalStatus === 0 ? 'Single/Unmarried' : (r.MaritalStatus === '1' || r.MaritalStatus === 1 ? 'Married' : (r.MaritalStatus || "-"))}\n`;
+      if (r.FatherName) ans += `• **Father Name:** ${r.FatherName}\n`;
+      if (r.BankAccountNo) ans += `• **Bank Details:** Acc: \`${r.BankAccountNo}\` (${r.BankName || "-"}) | IFSC: \`${r.IFSC || "-"}\`\n`;
+      ans += `• **Joining Date:** ${r.JoiningDate || "-"} | **Status:** **${r.EmploymentStatus || "Active"}**\n\n`;
+    }
+
+    return {
+      answer: ans.trim(),
+      summary: `Details retrieved for ${rows.length} employees: ${rows.map(r => r.EmployeeCode || r.EMPCODE).join(', ')}`
     };
   }
 
@@ -8909,8 +9964,12 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const isAskingHighest = intent === "HIGHEST_SALARY_RANKING" || /\b(highest|maximum|sabse\s*jyada|sabse\s*badi|max|top\s*\d*)\b/i.test(message || entities.rawMessage || "");
 
       if (isAskingHighest) {
-        let ans = `AutoVyn ERP ke records ke anusar, **${m} ${y}** me sabse jyada salary **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki pay hui hai:\n\n` +
-          `• **Employee Name:** **${r.EmployeeName || empName}**\n` +
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the highest paid salary in **${m} ${y}** was for **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})**:\n\n`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${m} ${y}** में सबसे अधिक वेतन **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** को दिया गया है:\n\n`;
+        else ans = `AutoVyn ERP ke records ke anusar, **${m} ${y}** me sabse jyada salary **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki pay hui hai:\n\n`;
+
+        ans += `• **Employee Name:** **${r.EmployeeName || empName}**\n` +
           `• **Emp Code:** **${r.EmployeeCode || empCode}**\n` +
           `• **Net Pay / Final Payment:** **₹${net}**\n` +
           `• **Gross Earnings:** ₹${gross}\n` +
@@ -8927,32 +9986,51 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       // Check if user specifically asked for net, basic, gross, or deduction ("jitna puchhe utna hi jawab de")
       const lowerMsg = (message || entities.rawMessage || "").toLowerCase();
       if (/\b(net\s*salary|net\s*pay|final\s*payment|in\s*hand|haath\s*me)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **Net Salary (In-Hand / Final Payment)** of **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** for **${m} ${y}** is: **₹${net}**.`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** का **${m} ${y}** में **नेट इन-हैंड वेतन (Final Payment)**: **₹${net}** है।`;
+        else ans = `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Net Salary (In-Hand / Final Payment)**: **₹${net}** hai.`;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Net Salary (In-Hand / Final Payment)**: **₹${net}** hai.`,
+          answer: ans,
           summary: `Net Salary for ${r.EmployeeCode || empCode} (${m} ${y}): ₹${net}`
         };
       }
       if (/\b(basic\s*pay|basic\s*salary|mool\s*vetan)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **Basic Pay** of **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** for **${m} ${y}** is: **₹${basic}**.`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** का **${m} ${y}** में **मूल वेतन (Basic Pay)**: **₹${basic}** है।`;
+        else ans = `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Basic Pay**: **₹${basic}** hai.`;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Basic Pay**: **₹${basic}** hai.`,
+          answer: ans,
           summary: `Basic Pay for ${r.EmployeeCode || empCode} (${m} ${y}): ₹${basic}`
         };
       }
       if (/\b(gross\s*salary|gross\s*earn|gross\s*earnings)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **Gross Earnings** of **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** for **${m} ${y}** is: **₹${gross}**.`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** का **${m} ${y}** में **सकल वेतन (Gross Earnings)**: **₹${gross}** है।`;
+        else ans = `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Gross Earnings**: **₹${gross}** hai.`;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Gross Earnings**: **₹${gross}** hai.`,
+          answer: ans,
           summary: `Gross for ${r.EmployeeCode || empCode} (${m} ${y}): ₹${gross}`
         };
       }
       if (/\b(deduction|deductions|katauti|kitna\s*kata)\b/i.test(lowerMsg) && !/\b(slip|summary|statement|poora|poori|complete)\b/i.test(lowerMsg)) {
+        let ans = "";
+        if (isEn) ans = `According to AutoVyn ERP records, the **Total Deductions** for **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** in **${m} ${y}** is: **₹${ded}**.`;
+        else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** का **${m} ${y}** में **कुल कटौती**: **₹${ded}** है।`;
+        else ans = `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Total Deductions**: **₹${ded}** hai.`;
         return {
-          answer: `AutoVyn ERP ke record ke anusar, **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** ki **${m} ${y}** me **Total Deductions**: **₹${ded}** hai.`,
+          answer: ans,
           summary: `Deductions for ${r.EmployeeCode || empCode} (${m} ${y}): ₹${ded}`
         };
       }
 
-      let ans = `Salary Slip Summary for **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** for **${m} ${y}**:\n\n` +
-        `• **Gross Earnings:** ₹${gross}\n` +
+      let ans = isEn
+        ? `Salary Slip Summary for **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** for **${m} ${y}**:\n\n`
+        : (isDeva ? `वेतन सारांश: **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** (${m} ${y}):\n\n` : `Salary Slip Summary for **${r.EmployeeName || empName} (${r.EmployeeCode || empCode})** for **${m} ${y}**:\n\n`);
+
+      ans += `• **Gross Earnings:** ₹${gross}\n` +
         `• **Basic Pay:** ₹${basic}\n` +
         `• **HRA:** ₹${hra}\n` +
         `• **Total Deductions:** ₹${ded}\n` +
@@ -8972,10 +10050,10 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
       const yVal = validRows[0].SalaryYear || entities.year || "";
       const isAskingHighest = intent === "HIGHEST_SALARY_RANKING" || /\b(highest|maximum|sabse\s*jyada|sabse\s*badi|max|top\s*\d*)\b/i.test(message || entities.rawMessage || "");
       let ans = isAskingHighest
-        ? `**AutoVyn ERP Highest Paid Salary Ranking (${mName} ${yVal}):**\n\n`
-        : `AutoVyn ERP me **${mName} ${yVal}** ke **${validRows.length} employee(s)** ke salary payout records mile hain:\n\n`;
+        ? (isEn ? `**AutoVyn ERP Highest Paid Salary Ranking (${mName} ${yVal}):**\n\n` : (isDeva ? `**ऑटोवाइन ईआरपी सर्वाधिक वेतन रैंकिंग (${mName} ${yVal}):**\n\n` : `**AutoVyn ERP Highest Paid Salary Ranking (${mName} ${yVal}):**\n\n`))
+        : (isEn ? `According to AutoVyn ERP records, salary payout records for **${validRows.length} employee(s)** were found for **${mName} ${yVal}**:\n\n` : (isDeva ? `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${mName} ${yVal}** के लिए **${validRows.length} कर्मचारियों** के वेतन रिकॉर्ड मिले हैं:\n\n` : `AutoVyn ERP me **${mName} ${yVal}** ke **${validRows.length} employee(s)** ke salary payout records mile hain:\n\n`));
       ans += `| Rank | Emp Code | Employee Name | Net Salary | Gross Earnings | Basic Pay | Deductions | Present Days | Location |\n`;
-      ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+      ans += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
       validRows.slice(0, 50).forEach((r, idx) => {
         const net = `₹${Number(r.NetSalary !== undefined ? r.NetSalary : (r.Final_Payment || 0)).toLocaleString("en-IN")}`;
         const gross = `₹${Number(r.GrossEarnings !== undefined ? r.GrossEarnings : (r.Gross_Earn || 0)).toLocaleString("en-IN")}`;
@@ -8984,7 +10062,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
         const pDays = r.PresentDays !== undefined ? r.PresentDays : (r.Present_days || "-");
         ans += `| **#${idx + 1}** | **${r.EmployeeCode || "-"}** | ${r.EmployeeName || "-"} | **${net}** | ${gross} | ${basic} | ${ded} | ${pDays} | ${r.Location || "-"} |\n`;
       });
-      if (validRows.length > 50) ans += `\n*(Showing top 50 of ${validRows.length} records)*`;
+      if (validRows.length > 50) ans += isEn ? `\n*(Showing top 50 of ${validRows.length} records)*` : (isDeva ? `\n*(शीर्ष 50 / कुल ${validRows.length} रिकॉर्ड दिखाए गए हैं)*` : `\n*(Showing top 50 of ${validRows.length} records)*`);
       return {
         answer: ans.trim(),
         summary: `${validRows.length} employees paid in ${mName} ${yVal}`
@@ -9004,11 +10082,13 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
 
     let ans = "";
     if (isAskingHighest) {
-      ans += `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ki sabse jyada salary **₹${maxNet.toLocaleString("en-IN")}** aai thi, jo **${peakMonths}** me mili thi.\n\n`;
-      ans += `### 📋 Month-wise Salary History (Ranked by Payout):\n\n`;
+      if (isEn) ans += `According to AutoVyn ERP records, the highest salary for **${empName} (${empCode})** was **₹${maxNet.toLocaleString("en-IN")}**, received in **${peakMonths}**.\n\n`;
+      else if (isDeva) ans += `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${empName} (${empCode})** का सबसे अधिक वेतन **₹${maxNet.toLocaleString("en-IN")}** था, जो **${peakMonths}** में मिला था।\n\n`;
+      else ans += `AutoVyn ERP ke record ke anusar, **${empName} (${empCode})** ki sabse jyada salary **₹${maxNet.toLocaleString("en-IN")}** aai thi, jo **${peakMonths}** me mili thi.\n\n`;
+      ans += isEn ? `### 📋 Month-wise Salary History (Ranked by Payout):\n\n` : (isDeva ? `### 📋 माहवार वेतन विवरण:\n\n` : `### 📋 Month-wise Salary History (Ranked by Payout):\n\n`);
     } else {
       const periodLabel = entities.year ? `Year ${entities.year}` : "Overall";
-      ans += `📋 **${empName} (${empCode})** ka **${periodLabel}** Month-wise Salary Statement:\n\n`;
+      ans += isEn ? `📋 Month-wise Salary Statement for **${empName} (${empCode})** (${periodLabel}):\n\n` : (isDeva ? `📋 **${empName} (${empCode})** का **${periodLabel}** वेतन विवरण:\n\n` : `📋 **${empName} (${empCode})** ka **${periodLabel}** Month-wise Salary Statement:\n\n`);
     }
 
     ans += `| Month / Year | Net Salary | Gross Earnings | Basic Pay | Deductions | Present Days |\n`;
@@ -9274,13 +10354,45 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     if (countKey && (entities.employeeName || entities.nameFilter || /\b(?:name|naam)\s+ke\b/i.test(message || ""))) {
       const targetName = entities.employeeName || entities.nameFilter || (message.match(/\b([A-Za-z]{2,30})\s+(?:name|naam)\s+ke\b/i)?.[1]) || "Requested";
       const countVal = sample[countKey];
+      let ans = "";
+      if (isEn) ans = `According to AutoVyn ERP records, there are a total of **${countVal} employee(s)** with the name **${targetName}**.`;
+      else if (isDeva) ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${targetName}** नाम के कुल **${countVal} कर्मचारी** हैं।`;
+      else ans = `AutoVyn ERP ke record ke anusar, **${targetName}** name ke total **${countVal} employee(s)** hain.`;
       return {
-        answer: `AutoVyn ERP ke record ke anusar, **${targetName}** name ke total **${countVal} employee(s)** hain.`,
+        answer: ans,
         summary: `Total employees with name ${targetName}: ${countVal}`
       };
     }
 
-    let ans = `**AutoVyn ERP Record Details:**\n\n`;
+    if (countKey && allKeys.length === 1) {
+      const countVal = Number(sample[countKey]).toLocaleString();
+      const isAct = /active/i.test(countKey) || /active/i.test(message || "");
+      const isSep = /separated|inactive/i.test(countKey) || /separated|inactive/i.test(message || "");
+      const branchStr = entities.branch ? ` in **${entities.branch}** branch` : "";
+      const branchDeva = entities.branch ? ` शाखा **${entities.branch}** में` : "";
+      const branchHing = entities.branch ? ` **${entities.branch}** branch me` : "";
+
+      let ans = "";
+      if (isEn) {
+        const empType = isAct ? "active " : (isSep ? "inactive/separated " : "");
+        ans = `According to AutoVyn ERP records, there are a total of **${countVal} ${empType}employee(s)**${branchStr}.`;
+      } else if (isDeva) {
+        const empType = isAct ? "सक्रिय " : (isSep ? "निष्क्रिय/कार्यमुक्त " : "");
+        ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार,${branchDeva} कुल **${countVal} ${empType}कर्मचारी** हैं।`;
+      } else {
+        const empType = isAct ? "active " : (isSep ? "inactive " : "");
+        ans = `AutoVyn ERP ke records ke anusar,${branchHing} total **${countVal} ${empType}employee(s)** hain.`;
+      }
+      return {
+        answer: ans,
+        summary: `Total ${countKey}: ${countVal}`
+      };
+    }
+
+    let ans = isEn
+      ? `**AutoVyn ERP Record Details:**\n\n`
+      : (isDeva ? `**ऑटोवाइन ईआरपी रिकॉर्ड विवरण:**\n\n` : `**AutoVyn ERP Record Details:**\n\n`);
+
     for (const key of allKeys) {
       const formattedKey = formatHeader(key);
       const val = formatCellValue(key, sample[key]);
@@ -9300,8 +10412,17 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     (sample.Designation !== undefined || sample.Location !== undefined)
   ) {
     const targetName = entities.employeeName || entities.nameFilter || "";
-    const namePrefix = targetName ? `**${targetName}** name ke ` : "";
-    let ans = `AutoVyn ERP ke record ke anusar, ${namePrefix}total **${totalCount} employee(s)** mile hain:\n\n`;
+    let ans = "";
+    if (isEn) {
+      const namePrefix = targetName ? `with name **${targetName}** ` : "";
+      ans = `According to AutoVyn ERP records, a total of **${totalCount} employee(s)** ${namePrefix}were found:\n\n`;
+    } else if (isDeva) {
+      const namePrefix = targetName ? `**${targetName}** नाम के ` : "";
+      ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, ${namePrefix}कुल **${totalCount} कर्मचारी** मिले हैं:\n\n`;
+    } else {
+      const namePrefix = targetName ? `**${targetName}** name ke ` : "";
+      ans = `AutoVyn ERP ke record ke anusar, ${namePrefix}total **${totalCount} employee(s)** mile hain:\n\n`;
+    }
     ans += `| # | Emp Code | Employee Name | Location | Designation | Mobile No | Joining Date | Status |\n`;
     ans += `| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
 
@@ -9320,10 +10441,16 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
     }
 
     if (totalCount > displayLimit) {
-      ans += `\n*(Showing top ${displayLimit} of ${totalCount} records)*`;
+      ans += isEn ? `\n*(Showing top ${displayLimit} of ${totalCount} records)*` : (isDeva ? `\n*(शीर्ष ${displayLimit} / कुल ${totalCount} रिकॉर्ड दिखाए गए हैं)*` : `\n*(Showing top ${displayLimit} of ${totalCount} records)*`);
     }
 
-    ans += `\n\n*Agar aapko inme se kisi specific employee ka pura profile, salary slip, ya address chahiye, toh unka **Employee Code** batayein.*`;
+    if (isEn) {
+      ans += `\n\n*If you need complete profile, salary slip, or address for any of these employees, please provide their **Employee Code**.*`;
+    } else if (isDeva) {
+      ans += `\n\n*यदि आपको इनमें से किसी विशिष्ट कर्मचारी की पूरी प्रोफाइल, वेतन पर्ची या पता चाहिए, तो कृपया उनका **कर्मचारी कोड** बताएं।*`;
+    } else {
+      ans += `\n\n*Agar aapko inme se kisi specific employee ka pura profile, salary slip, ya address chahiye, toh unka **Employee Code** batayein.*`;
+    }
 
     return {
       answer: ans.trim(),
@@ -9332,7 +10459,14 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   // Multi-Row / Tabular Record: Format as clean Markdown Table
-  let ans = `AutoVyn ERP ke records ke anusar, **${totalCount} record(s)** mile hain:\n\n`;
+  let ans = "";
+  if (isEn) {
+    ans = `According to AutoVyn ERP records, **${totalCount} record(s)** found:\n\n`;
+  } else if (isDeva) {
+    ans = `ऑटोवाइन ईआरपी रिकॉर्ड के अनुसार, **${totalCount} रिकॉर्ड** प्राप्त हुए हैं:\n\n`;
+  } else {
+    ans = `AutoVyn ERP ke records ke anusar, **${totalCount} record(s)** mile hain:\n\n`;
+  }
   ans += `| # | ` + allKeys.map(k => formatHeader(k)).join(" | ") + ` |\n`;
   ans += `| :- | ` + allKeys.map(() => ":---").join(" | ") + ` |\n`;
 
@@ -9345,7 +10479,7 @@ const formatHumanBusinessAnswer = async ({ message, intent, sql, rows = [], user
   }
 
   if (totalCount > displayLimit) {
-    ans += `\n*(Showing top ${displayLimit} of ${totalCount} records)*`;
+    ans += isEn ? `\n*(Showing top ${displayLimit} of ${totalCount} records)*` : (isDeva ? `\n*(शीर्ष ${displayLimit} / कुल ${totalCount} रिकॉर्ड दिखाए गए हैं)*` : `\n*(Showing top ${displayLimit} of ${totalCount} records)*`);
   }
 
   return {
@@ -9466,62 +10600,72 @@ const recordLearningAndTelemetry = async ({
       await targetGlobalSeq.query(updateSql, { type: QueryTypes.RAW }).catch(() => { });
     }
 
-    // 2. Ensure Table & Record in AI_Query_Audit_Tbl
-    const auditSql = `
-      IF OBJECT_ID('dbo.AI_Query_Audit_Tbl', 'U') IS NULL
-      BEGIN
-        CREATE TABLE [dbo].[AI_Query_Audit_Tbl] (
-          [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
-          [Conversation_Id] VARCHAR(100) NULL,
-          [User_Id] VARCHAR(100) NULL,
-          [Emp_Code] VARCHAR(100) NULL,
-          [Role] VARCHAR(50) NULL,
-          [Comp_Code] VARCHAR(50) NULL,
-          [User_Query] NVARCHAR(MAX) NULL,
-          [Normalized_Query] NVARCHAR(MAX) NULL,
-          [Intent] VARCHAR(100) NULL,
-          [Tables_Used] VARCHAR(500) NULL,
-          [Generated_SQL] NVARCHAR(MAX) NULL,
-          [AI_Response] NVARCHAR(MAX) NULL,
-          [Rows_Returned] INT NULL DEFAULT 0,
-          [Execution_Time_Ms] INT NULL DEFAULT 0,
-          [Confidence_Score] DECIMAL(5,2) NULL DEFAULT 0.95,
-          [Status_Code] VARCHAR(30) NULL DEFAULT 'SUCCESS',
-          [Error_Message] NVARCHAR(MAX) NULL,
-          [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
-        );
-      END
-      ELSE IF COL_LENGTH('dbo.AI_Query_Audit_Tbl', 'AI_Response') IS NULL
-      BEGIN
-        ALTER TABLE [dbo].[AI_Query_Audit_Tbl] ADD [AI_Response] NVARCHAR(MAX) NULL;
-      END
+    // 2. Ensure Table (Once) & Parameterized Record in AI_Query_Audit_Tbl
+    if (!isAuditTblChecked) {
+      await sequelize.query(`
+        IF OBJECT_ID('dbo.AI_Query_Audit_Tbl', 'U') IS NULL
+        BEGIN
+          CREATE TABLE [dbo].[AI_Query_Audit_Tbl] (
+            [UTD] BIGINT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+            [Conversation_Id] VARCHAR(100) NULL,
+            [User_Id] VARCHAR(100) NULL,
+            [Emp_Code] VARCHAR(100) NULL,
+            [Role] VARCHAR(50) NULL,
+            [Comp_Code] VARCHAR(50) NULL,
+            [User_Query] NVARCHAR(MAX) NULL,
+            [Normalized_Query] NVARCHAR(MAX) NULL,
+            [Intent] VARCHAR(100) NULL,
+            [Tables_Used] VARCHAR(500) NULL,
+            [Generated_SQL] NVARCHAR(MAX) NULL,
+            [AI_Response] NVARCHAR(MAX) NULL,
+            [Rows_Returned] INT NULL DEFAULT 0,
+            [Execution_Time_Ms] INT NULL DEFAULT 0,
+            [Confidence_Score] DECIMAL(5,2) NULL DEFAULT 0.95,
+            [Status_Code] VARCHAR(30) NULL DEFAULT 'SUCCESS',
+            [Error_Message] NVARCHAR(MAX) NULL,
+            [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME()
+          );
+        END
+        ELSE IF COL_LENGTH('dbo.AI_Query_Audit_Tbl', 'AI_Response') IS NULL
+        BEGIN
+          ALTER TABLE [dbo].[AI_Query_Audit_Tbl] ADD [AI_Response] NVARCHAR(MAX) NULL;
+        END
+      `, { type: QueryTypes.RAW }).then(() => { isAuditTblChecked = true; }).catch(() => {});
+    }
 
+    await sequelize.query(`
       INSERT INTO [dbo].[AI_Query_Audit_Tbl] (
         Conversation_Id, User_Id, Emp_Code, Role, Comp_Code,
         User_Query, Normalized_Query, Intent, Tables_Used,
         Generated_SQL, AI_Response, Rows_Returned, Execution_Time_Ms,
         Confidence_Score, Status_Code, Error_Message, Created_At
       ) VALUES (
-        ${conversationId ? `'${conversationId.replace(/'/g, "''")}'` : 'NULL'},
-        '${(userContext.userCode || "USER").replace(/'/g, "''")}',
-        '${(userContext.employeeCode || "").replace(/'/g, "''")}',
-        '${(userContext.role || "USER").replace(/'/g, "''")}',
-        '${(userContext.compcode || "AUTOVYN").replace(/'/g, "''")}',
-        N'${escapedRaw}',
-        N'${escapedNormalized}',
-        '${escapedIntent}',
-        '${escapedTables}',
-        N'${escapedSQL}',
-        ${escapedAnswer ? `N'${escapedAnswer}'` : 'NULL'},
-        ${rowCount},
-        ${executionTimeMs},
-        ${success ? 0.95 : 0.0},
-        '${success ? "SUCCESS" : "FAILED"}',
-        ${errorMessage ? `N'${String(errorMessage).replace(/'/g, "''")}'` : 'NULL'},
-        GETDATE()
-      );
-    `;
-    await sequelize.query(auditSql, { type: QueryTypes.RAW }).catch((err) => {
+        :conversationId, :userId, :empCode, :role, :compCode,
+        :userQuery, :normalizedQuery, :intent, :tablesUsed,
+        :generatedSql, :aiResponse, :rowsReturned, :executionTimeMs,
+        :confidenceScore, :statusCode, :errorMessage, SYSDATETIME()
+      )
+    `, {
+      replacements: {
+        conversationId: conversationId || null,
+        userId: String(userContext.userCode || "USER"),
+        empCode: String(userContext.employeeCode || ""),
+        role: String(userContext.role || "USER"),
+        compCode: String(userContext.compcode || "AUTOVYN"),
+        userQuery: rawQuery || normalizedQuery || "",
+        normalizedQuery: normalizedQuery || "",
+        intent: intent || "GENERAL",
+        tablesUsed: Array.isArray(tablesUsed) ? tablesUsed.join(", ") : String(tablesUsed || ""),
+        generatedSql: sql || "",
+        aiResponse: answer || null,
+        rowsReturned: Number(rowCount) || 0,
+        executionTimeMs: Number(executionTimeMs) || 0,
+        confidenceScore: success ? 0.95 : 0.0,
+        statusCode: success ? "SUCCESS" : "FAILED",
+        errorMessage: errorMessage ? String(errorMessage) : null
+      },
+      type: QueryTypes.RAW
+    }).catch((err) => {
       console.warn("[V6-Telemetry] Audit log insert notice:", err?.message);
     });
   } catch (err) {
@@ -9823,32 +10967,12 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
   // Detect user's conversational language & script with 100% precision
   const userLanguage = detectUserLanguage(rawMessage);
   const isAllRequested = /\b(all|every|everyone|sabhi|sabka|sabki|sabke|saare|sare|pura|puri|complete|entire|full list|poora|poori|total list)\b/i.test(rawMessage);
-
-  // Universal Multilingual Translation & Canonicalization Engine:
-  // Automatically translates any language (Hindi, Hinglish, Marathi, Gujarati, Tamil, etc.) into clean standard English
-  const { englishQuery, isTranslated, translationUsage } = await translateToEnglishIfVernacular(rawMessage);
-  if (translationUsage) {
-    totalUsage.prompt_tokens += translationUsage.prompt_tokens || 0;
-    totalUsage.completion_tokens += translationUsage.completion_tokens || 0;
-    totalUsage.total_tokens += translationUsage.total_tokens || 0;
-  }
-
-  console.log("\n=======================================================");
-  console.log("🚀 [AUTOVYN-AI-V6-COPILOT] Original Question:", rawMessage);
-  console.log(`🗣️ [AUTOVYN-AI-V6-COPILOT] Detected User Language: ${userLanguage.label} (${userLanguage.code})`);
-  if (isAllRequested) {
-    console.log("🌐 [AUTOVYN-AI-V6-COPILOT] Complete dataset requested without limit (isAllRequested=true)");
-  }
-  if (isTranslated) {
-    console.log("🌐 [AUTOVYN-AI-V6-COPILOT] Translated English Query:", englishQuery);
-  }
-
   // 1. User Context & Auth
   const userContext = buildUserContext(effectiveReq);
   const conversationId = effectivePayload.conversationId || `conv_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
 
-  // Early Intercept: Greetings, Introductions, ERP Guidance & Conversational Dialogue (Pure Conversational Mode)
-  const earlyConvCheck = detectGreetingOrIntroduction(rawMessage, englishQuery);
+  // Early Intercept: Greetings, Introductions & ERP Guidance (Instant 50ms Return without LLM Translation)
+  const earlyConvCheck = detectGreetingOrIntroduction(rawMessage, rawMessage);
   if (earlyConvCheck.isPureConversational) {
     console.log("👋 [AUTOVYN-AI-V6-COPILOT] Conversational / Guidance inquiry detected. Responding with AI Copilot:", rawMessage);
     const prevMem = MemoryEngineInstance.getContext(conversationId);
@@ -9856,7 +10980,7 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
     const convResult = await handleConversationalAndGuidanceViaAI({
       rawMessage,
-      englishQuery,
+      englishQuery: rawMessage,
       introName: resolvedName,
       convDetails: earlyConvCheck,
       userLanguage,
@@ -9900,6 +11024,18 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       convMem.userName = resolvedName;
       convMem.lastUserName = resolvedName;
       convMem.lastEmployeeName = resolvedName;
+
+      // Persist user's name and preferred language permanently across all sessions
+      try {
+        dbname(effectiveReq, userContext.compcode).then(seq => {
+          if (seq) {
+            MemoryEngineInstance.saveUserProfileMemory(userContext, {
+              userName: resolvedName,
+              preferredLanguage: userLanguage?.code || "en"
+            }, seq);
+          }
+        }).catch(() => {});
+      } catch (_) {}
     }
 
     return {
@@ -9929,6 +11065,36 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       usage: totalUsage,
       responseTimeMs: Date.now() - startedAt
     };
+  }
+
+  // Smart Translation: Check if query has obvious deterministic pattern (e.g. employee code, standard attendance/birthday)
+  const isDirectDeterministic = Boolean(
+    /\b\d{4,10}\b/.test(rawMessage) ||
+    /\b(present|absent|haziri|aaj|today|yesterday|kal)\b/i.test(rawMessage) ||
+    /\b(birthday|bday|janamdin|anniversary|saalgirah|salgirah)\b/i.test(rawMessage)
+  );
+
+  let englishQuery = rawMessage;
+  let isTranslated = false;
+  if (!isDirectDeterministic && userLanguage.code !== "en") {
+    const transRes = await translateToEnglishIfVernacular(rawMessage);
+    englishQuery = transRes.englishQuery || rawMessage;
+    isTranslated = transRes.isTranslated;
+    if (transRes.translationUsage) {
+      totalUsage.prompt_tokens += transRes.translationUsage.prompt_tokens || 0;
+      totalUsage.completion_tokens += transRes.translationUsage.completion_tokens || 0;
+      totalUsage.total_tokens += transRes.translationUsage.total_tokens || 0;
+    }
+  }
+
+  console.log("\n=======================================================");
+  console.log("🚀 [AUTOVYN-AI-V6-COPILOT] Original Question:", rawMessage);
+  console.log(`🗣️ [AUTOVYN-AI-V6-COPILOT] Detected User Language: ${userLanguage.label} (${userLanguage.code})`);
+  if (isAllRequested) {
+    console.log("🌐 [AUTOVYN-AI-V6-COPILOT] Complete dataset requested without limit (isAllRequested=true)");
+  }
+  if (isTranslated) {
+    console.log("🌐 [AUTOVYN-AI-V6-COPILOT] Translated English Query:", englishQuery);
   }
 
   let sequelize = null;
@@ -9993,8 +11159,12 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
     // 3.1 Check Conversation Memory (Anaphora & Multi-Turn Context Resolution)
     await MemoryEngineInstance.ensureContextFromDB(conversationId, sequelize, rawMessage);
+    const userProfile = await MemoryEngineInstance.loadUserProfileMemory(userContext.userCode, userContext.compcode, sequelize);
+    if (userProfile?.User_Name && !userContext.userName) {
+      userContext.userName = userProfile.User_Name;
+    }
     let contextRes = { entities: resolvedEntities, intent: initialClassification.intent, isFollowup: false, previousTurn: null };
-    const isSubsetQuery = /\b(inme\s*se|unme\s*se|isme\s*se|usme\s*se|in\s*sab(?:hi)?\s*(?:me\s*se|ka|ki|ke|ko|se)?|un\s*sab(?:hi)?\s*(?:me\s*se|ka|ki|ke|ko|se)?|in\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|un\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|in\s*karmchari(?:yo)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*employees\s*(?:ka|ki|ke|ko|se|me\s*se)?|among\s*them|out\s*of\s*(?:these|them|those)?|from\s*(?:these|them|those)?|all\s*of\s*(?:these|them|those)?|these\s*employees|their\s*(?:name|details|mobile|pf|salary)?)\b/i.test(normalizeLower(rawMessage)) || Boolean(resolvedEntities.limit);
+    const isSubsetQuery = /\b(inme\s*se|unme\s*se|isme\s*se|usme\s*se|in\s*sab(?:hi)?\s*(?:me\s*se|ka|ki|ke|ko|se)?|un\s*sab(?:hi)?\s*(?:me\s*se|ka|ki|ke|ko|se)?|in\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|un\s*logo\s*(?:me\s*se|ka|ki|ke|ko)?|in\s*karmchari(?:yo)?\s*(?:ka|ki|ke|ko|se|me\s*se)?|in\s*employees\s*(?:ka|ki|ke|ko|se|me\s*se)?|among\s*them|out\s*of\s*(?:these|them|those)?|from\s*(?:these|them|those)?|all\s*of\s*(?:these|them|those)?|these\s*employees|their\s*(?:name|details|mobile|pf|salary)?|sabhi\s*ka|sabka|sabhi\s*ki|sabhi\s*ke|sabhi\s*ko|sabhi\s*ki\s*detail|sabki\s*detail|detail\s*batao|details\s*batao|detail\s*do|details\s*do|detail\s*nikalo|details\s*nikalo|poori\s*list|puri\s*list|full\s*list)\b/i.test(normalizeLower(rawMessage)) || Boolean(resolvedEntities.limit);
     if ((!resolvedEntities.employeeCode && !resolvedEntities.employeeName && !resolvedEntities.isSelf) || isSubsetQuery) {
       contextRes = MemoryEngineInstance.resolveContextualEntities(
         conversationId,
@@ -10248,19 +11418,21 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
         // Freshly format response to prevent stale answers or count misalignments in the user's exact language
         let formattedAnswer = cachedResult.answer;
-        const aiFmt = await formatResponseViaAI({
-          message: rawMessage,
-          englishQuery: englishQuery || rawMessage,
-          intent: initialClassification?.intent,
-          sql: execCachedSql,
-          rows: rows || [],
-          userContext,
-          entities: resolvedEntities,
-          userLanguage
-        });
-        if (aiFmt?.answer) {
-          formattedAnswer = aiFmt.answer;
-        } else {
+        const cachePriorityIntents = new Set([
+          "PRESENT_EMPLOYEE_LIST", "ABSENT_EMPLOYEE_LIST", "PRESENT_COUNT", "ABSENT_COUNT",
+          "BIRTHDAY_TODAY", "BIRTHDAY_BY_DATE", "BIRTHDAYS_MONTH", "WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY",
+          "PF_EMPLOYEE_LIST", "PF_LOOKUP_BY_EMP", "PF_COUNT", "PF_DEDUCTION_COUNT",
+          "SALARY_PF_DEDUCTION", "SALARY_COUNT_AGGREGATE", "SALARY_TOTAL_AGGREGATE",
+          "EMPLOYEE_COUNT", "NAME_SEARCH", "EMPLOYEE_AUDIT_HISTORY_DIFF",
+          "EMPLOYEE_LOOKUP", "EMPLOYEE_PROFILE", "MISPUNCH_LOOKUP_BY_EMP",
+          "MISPUNCH_COUNT", "MISPUNCH_REPORT", "MISPUNCH_EMPLOYEE_TOTAL",
+          "ATTENDANCE_REPORT", "EMPLOYEE_BY_ACCOUNT_NO", "DUPLICATE_BANK_ACCOUNTS",
+          "EMPLOYEE_BY_AADHAAR_NO", "EMPLOYEE_BY_PAN_NO", "EMPLOYEE_BY_MOBILE_NO",
+          "DUPLICATE_AADHAAR_NUMBERS", "DUPLICATE_PAN_NUMBERS", "AADHAAR_VERIFY_LIST",
+          "EMPLOYEE_LEAVE_LOOKUP", "EMPLOYEE_SALARY_HISTORY", "SALARY_REPORT",
+          "HIGHEST_SALARY_RANKING"
+        ]);
+        if (cachePriorityIntents.has(initialClassification?.intent) || rows.length > 50 || resolvedEntities?.isAllRequested) {
           const detFmt = await formatHumanBusinessAnswer({
             message: rawMessage,
             englishQuery: englishQuery || rawMessage,
@@ -10274,6 +11446,35 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
           });
           if (detFmt?.answer) {
             formattedAnswer = detFmt.answer;
+          }
+        } else {
+          const aiFmt = await formatResponseViaAI({
+            message: rawMessage,
+            englishQuery: englishQuery || rawMessage,
+            intent: initialClassification?.intent,
+            sql: execCachedSql,
+            rows: rows || [],
+            userContext,
+            entities: resolvedEntities,
+            userLanguage
+          });
+          if (aiFmt?.answer) {
+            formattedAnswer = aiFmt.answer;
+          } else {
+            const detFmt = await formatHumanBusinessAnswer({
+              message: rawMessage,
+              englishQuery: englishQuery || rawMessage,
+              intent: initialClassification?.intent,
+              entities: resolvedEntities,
+              sql: execCachedSql,
+              rows: rows || [],
+              userContext,
+              sequelize,
+              userLanguage
+            });
+            if (detFmt?.answer) {
+              formattedAnswer = detFmt.answer;
+            }
           }
         }
 
@@ -10487,7 +11688,16 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       "PRESENT_COUNT", "ABSENT_COUNT",
       "BIRTHDAY_TODAY", "BIRTHDAY_BY_DATE", "BIRTHDAYS_MONTH",
       "WORK_ANNIVERSARY", "MARRIAGE_ANNIVERSARY",
-      "PF_EMPLOYEE_LIST", "PF_LOOKUP_BY_EMP", "PF_COUNT"
+      "PF_EMPLOYEE_LIST", "PF_LOOKUP_BY_EMP", "PF_COUNT", "PF_DEDUCTION_COUNT",
+      "SALARY_PF_DEDUCTION", "SALARY_COUNT_AGGREGATE", "SALARY_TOTAL_AGGREGATE",
+      "EMPLOYEE_COUNT", "NAME_SEARCH", "EMPLOYEE_AUDIT_HISTORY_DIFF",
+      "EMPLOYEE_LOOKUP", "EMPLOYEE_PROFILE", "MISPUNCH_LOOKUP_BY_EMP",
+      "MISPUNCH_COUNT", "MISPUNCH_REPORT", "MISPUNCH_EMPLOYEE_TOTAL",
+      "ATTENDANCE_REPORT", "EMPLOYEE_BY_ACCOUNT_NO", "DUPLICATE_BANK_ACCOUNTS",
+      "EMPLOYEE_BY_AADHAAR_NO", "EMPLOYEE_BY_PAN_NO", "EMPLOYEE_BY_MOBILE_NO",
+      "DUPLICATE_AADHAAR_NUMBERS", "DUPLICATE_PAN_NUMBERS", "AADHAAR_VERIFY_LIST",
+      "EMPLOYEE_LEAVE_LOOKUP", "EMPLOYEE_SALARY_HISTORY", "SALARY_REPORT",
+      "HIGHEST_SALARY_RANKING"
     ]);
 
     if (deterministicPriorityIntents.has(effectiveIntent) || dbRows.length > 50 || resolvedEntities?.isAllRequested || isKonKonQuery) {
@@ -10730,7 +11940,42 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
       }
     );
 
-    throw err;
+    // Return clean user-friendly response in detected language instead of crashing or falling back to legacy V1
+    let userFriendlyMsg = `AutoVyn ERP se jankari prapt karne me takneeki samasya aayi hai: ${err.message}`;
+    if (userLanguage?.code === "en") {
+      userFriendlyMsg = `A technical issue occurred while retrieving data from AutoVyn ERP: ${err.message}`;
+    } else if (userLanguage?.code === "hi_deva") {
+      userFriendlyMsg = `ऑटोवाइन ईआरपी से जानकारी प्राप्त करने में एक तकनीकी समस्या आई है: ${err.message}`;
+    }
+
+    return {
+      success: false,
+      data: [],
+      conversationId,
+      answer: userFriendlyMsg,
+      mode: "ERROR",
+      intent: "FAILED_QUERY",
+      isSelfQuery: false,
+      sources: ["AutoVyn ERP System"],
+      query: {
+        sql: null,
+        tablesUsed: [],
+        rowCount: 0,
+        executionTimeMs: responseTimeMs
+      },
+      confidence: { level: "LOW", score: 0.0 },
+      evidence: { canAnswer: false, rows: [] },
+      sqlValidation: { valid: false, sanitized: false },
+      critic: { verified: false, score: 0.0 },
+      isAmbiguous: false,
+      resolvedEntities: {},
+      error: err.message,
+      cached: false,
+      cacheTier: "NONE",
+      model: getModelConfig().primaryModel,
+      usage: totalUsage,
+      responseTimeMs
+    };
   }
 };
 
@@ -10740,6 +11985,9 @@ const askEnterpriseCopilotV6 = async (reqOrMessage, payload = {}) => {
 
 const ensureLearningTablesExist = async (sequelize) => {
   if (!sequelize?.query) return;
+  const getDbKey = (seq) => seq?.config?.database || seq?.options?.database || "default_db";
+  const learningKey = "learning_" + getDbKey(sequelize);
+  if (verifiedDBSets.has(learningKey)) return;
   const ensureTablesSql = `
     IF OBJECT_ID('dbo.AI_SQL_Learning_Tbl', 'U') IS NULL
     BEGIN
@@ -10782,7 +12030,7 @@ const ensureLearningTablesExist = async (sequelize) => {
       );
     END;
   `;
-  await sequelize.query(ensureTablesSql, { type: QueryTypes.RAW }).catch((err) => {
+  await sequelize.query(ensureTablesSql, { type: QueryTypes.RAW }).then(() => { verifiedDBSets.add(learningKey); }).catch((err) => {
     console.warn("[ensureLearningTablesExist] Table check warning:", err?.message || err?.original?.message);
   });
 };
@@ -11009,9 +12257,18 @@ const testSQLQuery = async (reqOrPayload) => {
   }
 };
 
+const verifiedDBSets = new Set();
+let isAuditTblChecked = false;
+
 const ensureAllAITables = async (tenantSequelize, maybeGlobalSequelize = null) => {
   if (!tenantSequelize?.query) return;
+  const getDbKey = (seq) => seq?.config?.database || seq?.options?.database || "default_db";
+  const tenantKey = "tenant_" + getDbKey(tenantSequelize);
   const globalSeq = maybeGlobalSequelize || tenantSequelize;
+  const globalKey = "global_" + getDbKey(globalSeq);
+  if (verifiedDBSets.has(tenantKey) && verifiedDBSets.has(globalKey)) {
+    return;
+  }
 
   // 1. Tenant-isolated Tables (6 tables on tenantSequelize)
   const tenantDdl = `
@@ -11134,9 +12391,66 @@ const ensureAllAITables = async (tenantSequelize, maybeGlobalSequelize = null) =
         [Updated_By] VARCHAR(100) NULL,
         [Updated_At] DATETIME2(7) NULL
       );
+    IF OBJECT_ID('dbo.AI_Session_Context_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_Session_Context_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) NOT NULL,
+        [Conversation_Id] VARCHAR(100) NOT NULL,
+        [User_Code] VARCHAR(50) NULL,
+        [Comp_Code] VARCHAR(50) NULL,
+        [User_Name] NVARCHAR(150) NULL,
+        [Last_Intent] VARCHAR(100) NULL,
+        [Last_Emp_Code] VARCHAR(50) NULL,
+        [Last_Emp_Name] NVARCHAR(150) NULL,
+        [Last_Branch] VARCHAR(100) NULL,
+        [Last_Branches_JSON] NVARCHAR(500) NULL,
+        [Last_Specific_Date] VARCHAR(30) NULL,
+        [Last_Count] INT NULL,
+        [Last_Flag] VARCHAR(10) NULL,
+        [Last_User_Message] NVARCHAR(MAX) NULL,
+        [Last_Assistant_Answer] NVARCHAR(MAX) NULL,
+        [Known_Employees_JSON] NVARCHAR(MAX) NULL,
+        [Last_Entities_JSON] NVARCHAR(MAX) NULL,
+        [Turn_Count] INT NOT NULL DEFAULT 1,
+        [Created_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        [Updated_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        CONSTRAINT [PK_AI_Session_Context_Tbl] PRIMARY KEY CLUSTERED ([Conversation_Id] ASC)
+      );
+
+      IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AI_Session_Context_User' AND object_id = OBJECT_ID('dbo.AI_Session_Context_Tbl'))
+      BEGIN
+        CREATE NONCLUSTERED INDEX [IX_AI_Session_Context_User]
+        ON [dbo].[AI_Session_Context_Tbl] ([User_Code], [Comp_Code], [Updated_At] DESC);
+      END;
+    END;
+
+    IF OBJECT_ID('dbo.AI_User_Profile_Memory_Tbl', 'U') IS NULL
+    BEGIN
+      CREATE TABLE [dbo].[AI_User_Profile_Memory_Tbl] (
+        [UTD] BIGINT IDENTITY(1,1) NOT NULL,
+        [User_Code] VARCHAR(50) NOT NULL,
+        [Comp_Code] VARCHAR(50) NOT NULL,
+        [User_Name] NVARCHAR(150) NULL,
+        [Preferred_Language] VARCHAR(20) NULL DEFAULT 'hi_latn',
+        [Default_Branch] VARCHAR(100) NULL,
+        [Self_Emp_Code] VARCHAR(50) NULL,
+        [Role] VARCHAR(50) NULL,
+        [Recent_Searched_Employees_JSON] NVARCHAR(MAX) NULL,
+        [Custom_Preferences_JSON] NVARCHAR(MAX) NULL,
+        [Total_Interactions] INT NOT NULL DEFAULT 1,
+        [First_Seen_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        [Last_Active_At] DATETIME2(7) NOT NULL DEFAULT SYSDATETIME(),
+        CONSTRAINT [PK_AI_User_Profile_Memory_Tbl] PRIMARY KEY CLUSTERED ([User_Code] ASC, [Comp_Code] ASC)
+      );
+
+      IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AI_User_Profile_Active' AND object_id = OBJECT_ID('dbo.AI_User_Profile_Memory_Tbl'))
+      BEGIN
+        CREATE NONCLUSTERED INDEX [IX_AI_User_Profile_Active]
+        ON [dbo].[AI_User_Profile_Memory_Tbl] ([Last_Active_At] DESC);
+      END;
     END;
   `;
-  await tenantSequelize.query(tenantDdl, { type: QueryTypes.RAW }).catch((err) => {
+  await tenantSequelize.query(tenantDdl, { type: QueryTypes.RAW }).then(() => { verifiedDBSets.add(tenantKey); }).catch((err) => {
     console.warn("[ensureAllAITables:Tenant] Notice during tenant table check:", err?.message || err?.original?.message);
   });
 
@@ -11283,7 +12597,7 @@ const ensureAllAITables = async (tenantSequelize, maybeGlobalSequelize = null) =
       );
     END;
   `;
-  await globalSeq.query(globalDdl, { type: QueryTypes.RAW }).catch((err) => {
+  await globalSeq.query(globalDdl, { type: QueryTypes.RAW }).then(() => { verifiedDBSets.add(globalKey); }).catch((err) => {
     console.warn("[ensureAllAITables:Global] Notice during global table check:", err?.message || err?.original?.message);
   });
 };
@@ -11294,13 +12608,15 @@ const getAuditLogs = async (reqOrPayload, maybeRes) => {
   const sequelize = await dbname(req, userContext.compcode);
 
   const page = Math.max(1, parseInt(req.query?.page || req.body?.page, 10) || 1);
-  const limit = Math.min(Math.max(1, parseInt(req.query?.limit || req.body?.limit, 10) || 20), 200);
+  const limit = Math.min(Math.max(1, parseInt(req.query?.limit || req.body?.limit, 10) || 50), 500);
   const offset = (page - 1) * limit;
   const search = String(req.query?.search || req.body?.search || "").trim();
   const status = String(req.query?.status || req.body?.status || "").trim().toUpperCase();
   const intent = String(req.query?.intent || req.body?.intent || "").trim();
   const startDate = String(req.query?.startDate || req.body?.startDate || "").trim();
   const endDate = String(req.query?.endDate || req.body?.endDate || "").trim();
+  const conversationId = String(req.query?.conversationId || req.body?.conversationId || "").trim();
+  const mode = String(req.query?.mode || req.body?.mode || "").trim().toLowerCase();
 
   await ensureAllAITables(sequelize);
 
@@ -11310,6 +12626,185 @@ const getAuditLogs = async (reqOrPayload, maybeRes) => {
   `, { type: QueryTypes.SELECT }).catch(() => []);
   const hasConvTbl = Boolean(convTableCheck);
 
+  const joinConvSql = hasConvTbl 
+    ? "LEFT JOIN [dbo].[AI_Conversation_Tbl] C WITH (NOLOCK) ON A.[Conversation_Id] = C.[Conversation_Id]"
+    : "";
+
+  // ── CASE 1: SPECIFIC CONVERSATION QUESTIONS (FETCH COMPLETE SESSION) ──
+  if (conversationId) {
+    const sessionRows = await sequelize.query(`
+      SELECT 
+        A.[UTD],
+        A.[Conversation_Id] AS conversationId,
+        ${hasConvTbl ? "ISNULL(C.[Title], '')" : "''"} AS conversationTitle,
+        A.[User_Id] AS userId,
+        A.[Emp_Code] AS empCode,
+        A.[Role] AS role,
+        A.[Comp_Code] AS compCode,
+        A.[User_Query] AS userQuery,
+        A.[Normalized_Query] AS normalizedQuery,
+        A.[Intent] AS intent,
+        A.[Tables_Used] AS tablesUsed,
+        A.[Generated_SQL] AS generatedSql,
+        A.[AI_Response] AS aiResponse,
+        ISNULL(A.[Rows_Returned], 0) AS rowsReturned,
+        ISNULL(A.[Execution_Time_Ms], 0) AS executionTimeMs,
+        ISNULL(A.[Confidence_Score], 0.95) AS confidenceScore,
+        ISNULL(A.[Status_Code], 'SUCCESS') AS statusCode,
+        A.[Error_Message] AS errorMessage,
+        CONVERT(VARCHAR(19), A.[Created_At], 120) AS createdAt
+      FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
+      ${joinConvSql}
+      WHERE A.[Conversation_Id] = :conversationId
+      ORDER BY A.[UTD] ASC
+    `, { replacements: { conversationId }, type: QueryTypes.SELECT }).catch(() => []);
+
+    const resultData = {
+      success: true,
+      data: sessionRows,
+      conversationId,
+      totalQueries: sessionRows.length,
+      pagination: {
+        page: 1,
+        limit: sessionRows.length,
+        totalRecords: sessionRows.length,
+        totalPages: 1,
+        hasMore: false
+      }
+    };
+    if (maybeRes && typeof maybeRes.status === "function") {
+      return maybeRes.status(200).json(resultData);
+    }
+    return resultData;
+  }
+
+  // ── CASE 2: SESSION-WISE PAGINATION (MODE = SESSIONS) ──
+  if (mode === "sessions") {
+    let sessionWhereClauses = ["A.[Conversation_Id] IS NOT NULL", "LTRIM(RTRIM(A.[Conversation_Id])) <> ''"];
+    let sessionReplacements = { limit, offset };
+
+    if (search) {
+      if (hasConvTbl) {
+        sessionWhereClauses.push("(A.User_Query LIKE :search OR A.Normalized_Query LIKE :search OR A.Generated_SQL LIKE :search OR A.Intent LIKE :search OR A.Emp_Code LIKE :search OR A.User_Id LIKE :search OR A.AI_Response LIKE :search OR A.Conversation_Id LIKE :search OR C.Title LIKE :search)");
+      } else {
+        sessionWhereClauses.push("(A.User_Query LIKE :search OR A.Normalized_Query LIKE :search OR A.Generated_SQL LIKE :search OR A.Intent LIKE :search OR A.Emp_Code LIKE :search OR A.User_Id LIKE :search OR A.AI_Response LIKE :search OR A.Conversation_Id LIKE :search)");
+      }
+      sessionReplacements.search = `%${search}%`;
+    }
+
+    if (startDate) {
+      sessionWhereClauses.push("A.Created_At >= :startDate");
+      sessionReplacements.startDate = `${startDate} 00:00:00`;
+    }
+
+    if (endDate) {
+      sessionWhereClauses.push("A.Created_At <= :endDate");
+      sessionReplacements.endDate = `${endDate} 23:59:59`;
+    }
+
+    let havingClause = "";
+    if (status === "SUCCESS") {
+      havingClause = "HAVING SUM(CASE WHEN A.[Status_Code] <> 'SUCCESS' THEN 1 ELSE 0 END) = 0";
+    } else if (status === "FAILED") {
+      havingClause = "HAVING SUM(CASE WHEN A.[Status_Code] <> 'SUCCESS' THEN 1 ELSE 0 END) > 0";
+    }
+
+    const sessionWhereSql = sessionWhereClauses.join(" AND ");
+
+    const countSql = havingClause
+      ? `SELECT COUNT(1) AS TotalSessions FROM (
+           SELECT A.[Conversation_Id] 
+           FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
+           ${joinConvSql}
+           WHERE ${sessionWhereSql}
+           GROUP BY A.[Conversation_Id]
+           ${havingClause}
+         ) SubQ`
+      : `SELECT COUNT(DISTINCT A.[Conversation_Id]) AS TotalSessions 
+         FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
+         ${joinConvSql}
+         WHERE ${sessionWhereSql}`;
+
+    const countRes = await sequelize.query(countSql, { replacements: sessionReplacements, type: QueryTypes.SELECT }).catch(() => [{ TotalSessions: 0 }]);
+    const totalRecords = Number(countRes[0]?.TotalSessions || 0);
+    const totalPages = Math.ceil(totalRecords / limit) || 1;
+
+    const sessionRows = await sequelize.query(`
+      SELECT 
+        A.[Conversation_Id] AS conversationId,
+        ${hasConvTbl ? "ISNULL(MAX(C.[Title]), '')" : "''"} AS conversationTitle,
+        MAX(A.[User_Id]) AS userId,
+        MAX(A.[Emp_Code]) AS empCode,
+        MAX(A.[Role]) AS role,
+        MAX(A.[Comp_Code]) AS compCode,
+        COUNT(1) AS totalQueries,
+        SUM(CASE WHEN A.[Status_Code] = 'SUCCESS' THEN 1 ELSE 0 END) AS successCount,
+        SUM(CASE WHEN A.[Status_Code] <> 'SUCCESS' THEN 1 ELSE 0 END) AS failedCount,
+        AVG(ISNULL(A.[Execution_Time_Ms], 0)) AS avgExecutionTimeMs,
+        SUM(ISNULL(A.[Rows_Returned], 0)) AS totalRows,
+        CONVERT(VARCHAR(19), MAX(A.[Created_At]), 120) AS latestCreatedAt,
+        CONVERT(VARCHAR(19), MIN(A.[Created_At]), 120) AS earliestCreatedAt,
+        (SELECT TOP 1 ISNULL(User_Query, '') FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE Conversation_Id = A.[Conversation_Id] ORDER BY UTD ASC) AS firstQuery,
+        (SELECT TOP 1 ISNULL(User_Query, '') FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK) WHERE Conversation_Id = A.[Conversation_Id] ORDER BY UTD DESC) AS latestQuery
+      FROM [dbo].[AI_Query_Audit_Tbl] A WITH (NOLOCK)
+      ${joinConvSql}
+      WHERE ${sessionWhereSql}
+      GROUP BY A.[Conversation_Id]
+      ${havingClause}
+      ORDER BY MAX(A.[Created_At]) DESC
+      OFFSET :offset ROWS
+      FETCH NEXT :limit ROWS ONLY
+    `, { replacements: sessionReplacements, type: QueryTypes.SELECT }).catch(() => []);
+
+    const statsResult = await sequelize.query(`
+      SELECT 
+        COUNT(1) AS totalQueries,
+        SUM(CASE WHEN Status_Code = 'SUCCESS' THEN 1 ELSE 0 END) AS successQueries,
+        SUM(CASE WHEN Status_Code = 'FAILED' THEN 1 ELSE 0 END) AS failedQueries,
+        AVG(ISNULL(Execution_Time_Ms, 0)) AS avgExecutionTimeMs,
+        COUNT(DISTINCT User_Id) AS activeUsersCount,
+        SUM(CASE WHEN CAST(Created_At AS DATE) = CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS todayQueriesCount
+      FROM [dbo].[AI_Query_Audit_Tbl] WITH (NOLOCK)
+    `, { type: QueryTypes.SELECT }).catch(() => [{}]);
+
+    const globalStats = statsResult[0] || {};
+    const tot = Number(globalStats.totalQueries || 0);
+    const succ = Number(globalStats.successQueries || 0);
+    const successRate = tot > 0 ? ((succ / tot) * 100).toFixed(1) + "%" : "100%";
+
+    const resultData = {
+      success: true,
+      mode: "sessions",
+      data: sessionRows.map(r => ({
+        ...r,
+        title: r.conversationTitle || r.firstQuery || `Session • ${String(r.conversationId).slice(0, 8)}...`,
+        queries: []
+      })),
+      pagination: {
+        page,
+        limit,
+        totalRecords,
+        totalPages,
+        hasMore: page < totalPages
+      },
+      stats: {
+        totalQueries: tot,
+        successQueries: succ,
+        failedQueries: Number(globalStats.failedQueries || 0),
+        successRate,
+        avgExecutionTimeMs: Math.round(Number(globalStats.avgExecutionTimeMs || 0)),
+        activeUsersCount: Number(globalStats.activeUsersCount || 0),
+        todayQueriesCount: Number(globalStats.todayQueriesCount || 0)
+      }
+    };
+
+    if (maybeRes && typeof maybeRes.status === "function") {
+      return maybeRes.status(200).json(resultData);
+    }
+    return resultData;
+  }
+
+  // ── CASE 3: STANDARD FLAT QUERY LOGS (FOR FLAT TABLE VIEW) ──
   let whereClauses = ["1=1"];
   let replacements = { limit, offset };
 
@@ -11343,10 +12838,6 @@ const getAuditLogs = async (reqOrPayload, maybeRes) => {
   }
 
   const whereSql = whereClauses.join(" AND ");
-
-  const joinConvSql = hasConvTbl 
-    ? "LEFT JOIN [dbo].[AI_Conversation_Tbl] C WITH (NOLOCK) ON A.[Conversation_Id] = C.[Conversation_Id]"
-    : "";
 
   const countResult = await sequelize.query(`
     SELECT COUNT(1) AS TotalRecords 
