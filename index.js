@@ -28,6 +28,8 @@ const defaultMst = require("./api/miscApi");
 const employeeImport = require("./api/employeeImport"); 
 const employeeReRunAPI = require("./api/employeeReRunAPI")
 const AttendancePolicyAPI = require("./api/AttendancePolicyAPI")
+const CEO_HRMS_Dashboard = require("./api/CO_DashboardAPI")
+const hrmsreports = require("./api/hrmsreportAPI")
 
 
 
@@ -134,8 +136,8 @@ app.use("/service-appointment", serviceReminder);
 app.use("/backend/service-appointment", serviceReminder);
 app.use("/backend/Crm", serviceReminder);
 app.use("/excel",excelrouter);
-app.use("/employee",faceData);
-app.use("/employeeImport",employeeImport);
+// app.use("/employee",faceData);
+// app.use("/employeeImport",employeeImport);
 // app.use("/call",GetCallRecordings)
 app.use("/ai", aiRoutes);
 app.use("/ai/image", aiImageApi);
@@ -147,6 +149,13 @@ app.use("/eicher", eicherRoute);
 app.use("/misc", defaultMst);
 app.use("/attendance",employeeReRunAPI)
 app.use("/admin",AttendancePolicyAPI)
+app.use("/employee",CEO_HRMS_Dashboard);
+app.use("/dashboards",CEO_HRMS_Dashboard);
+app.use("/hrmsreport",hrmsreports);
+
+
+
+
 
 
 

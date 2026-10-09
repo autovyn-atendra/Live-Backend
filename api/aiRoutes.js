@@ -202,6 +202,14 @@ router.post("/test-sql", AI.testSQLQuery);
 router.post("/debug/sql", AI.testSQLQuery);
 
 // ============================================================
+// HYBRID RAG QUERY PATTERN KNOWLEDGE API (Requirement 24)
+// POST /knowledge/query-patterns, GET /knowledge/query-patterns, DELETE /knowledge/query-patterns/:id
+// ============================================================
+router.post("/knowledge/query-patterns", AI.asyncHandler(AI.trainQueryPattern));
+router.get("/knowledge/query-patterns", AI.asyncHandler(AI.getQueryPatterns));
+router.delete("/knowledge/query-patterns/:id", AI.asyncHandler(AI.deleteQueryPattern));
+
+// ============================================================
 // KNOWLEDGE DOCUMENTS MANAGEMENT API
 // GET /knowledge/documents, POST /knowledge/documents/:id/process, GET /status, PATCH /deactivate
 // ============================================================
