@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { dbname } = require("../utils/dbconfig");
+const { getAttendancePool } = require("../utils/attendancePool");
 const SchedulerLogger = require("../utils/schedulerLogger");
 
 function writeDailySchedulerLog(logData) {
@@ -28,6 +28,7 @@ function toSqlDate(d) {
     return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
+
 async function getCustomMonthDynamic(sequelize, date) {
     if (!date) {
         throw new Error("Date is required");
@@ -38,9 +39,10 @@ async function getCustomMonthDynamic(sequelize, date) {
     }
     const formattedDate = d.toISOString().split("T")[0];
     const query = `
-SELECT Misc_Code, Misc_Dtl1, Misc_Dtl2
+SELECT Misc_Code, Misc_Dtl1, Misc_Dtl2, Misc_Abbr
 FROM Misc_Mst
 WHERE Misc_Type = 25
+AND ISNULL(Export_Type, 0) < 3
 AND TRY_CONVERT(DATE, Misc_Dtl1, 103) <= :date
 AND TRY_CONVERT(DATE, Misc_Dtl2, 103) >= :date
 `;
@@ -50,8 +52,7 @@ AND TRY_CONVERT(DATE, Misc_Dtl2, 103) >= :date
     if (rows.length > 0) {
         const row = rows[0];
         const customMonth = row.Misc_Code.toString().padStart(2, "0");
-        const [, , year] = row.Misc_Dtl2.split("/");
-        const customYear = parseInt(year);
+        const customYear = row.Misc_Abbr ? parseInt(row.Misc_Abbr) : (row.Misc_Dtl2 ? parseInt(row.Misc_Dtl2.split("/")[2]) : d.getFullYear());
         return { customMonth, customYear };
     } else {
         const month = d.getMonth() + 1;
@@ -69,7 +70,7 @@ HELPER: active attendance policies
 async function getActiveAttendancePolicies(sequelize) {
     const [policies] = await sequelize.query(`
 SELECT * FROM attendance_policies_table
-WHERE export_type < 3
+WHERE ISNULL(export_type, 0) < 3
 AND is_active = 1
 AND CAST(GETDATE() AS DATE) BETWEEN effective_from AND effective_to
 `);
@@ -95,6 +96,8 @@ AND sr.export_type < 3
 /* ==========================================================================
 LOCATION LOCK CHECK
 ========================================================================== */
+
+//TEST THIS FUNCTION
 async function isLocationLocked(sequelize, location, Month, Year) {
     const [miscRow] = await sequelize.query(`
 SELECT Join_Date FROM misc_mst
@@ -141,8 +144,11 @@ function mapEmployeeTypesToCodes(employeeTypesStr) {
         .map(t => EMP_TYPE_MAP[t] || t)
         .join(",");
 }
-async function getFilteredAtnEmployees(sequelize, policy, location, month, year) {
+async function getFilteredAtnEmployees(sequelize, policy, location, month, year, startDate, endDate) {
     const employeeTypeCodes = mapEmployeeTypesToCodes(policy.employee_types);
+    const startDateSql = toSqlDate(startDate);
+    const endDateSql = toSqlDate(endDate);
+
     const [employees] = await sequelize.query(`
 SELECT DISTINCT
 ea.Emp_Code AS EMPCODE,
@@ -157,22 +163,24 @@ em.WEEKLYOFF,
 em.DIVISION
 FROM emp_atnrun ea
 INNER JOIN EMPLOYEEMASTER em
-ON em.EMPCODE COLLATE database_default =
+ON em.EMPCODE COLLATE database_default = 
 ea.Emp_Code COLLATE database_default
 WHERE (ea.Rerun = :month OR ISNULL(em.ISRW, 0) = 0)
 -- ⭐ single location now (locked/unlocked per location)
 AND em.LOCATION = :location
 AND (',' + :employeeTypeCodes + ',')
 LIKE '%,' + CAST(em.EMPTYPE AS VARCHAR) + ',%'
-AND CAST(em.CURRENTJOINDATE AS DATE)
-<= EOMONTH(DATEFROMPARTS(:year, :month, 1))
 AND (
-em.LASTWOR_DATE IS NULL
-OR CAST(em.LASTWOR_DATE AS DATE)
->= DATEFROMPARTS(:year, :month, 1)
+    (:endDateSql IS NOT NULL AND CAST(em.CURRENTJOINDATE AS DATE) <= :endDateSql)
+    OR (:endDateSql IS NULL AND CAST(em.CURRENTJOINDATE AS DATE) <= EOMONTH(DATEFROMPARTS(:year, :month, 1)))   -- TEST THIS
+)
+AND (
+    em.LASTWOR_DATE IS NULL
+    OR (:startDateSql IS NOT NULL AND CAST(em.LASTWOR_DATE AS DATE) >= :startDateSql)
+    OR (:startDateSql IS NULL AND CAST(em.LASTWOR_DATE AS DATE) >= DATEFROMPARTS(:year, :month, 1)) -- TEST THIS
 )
 `, {
-        replacements: { month, year, location, employeeTypeCodes }
+        replacements: { month, year, location, employeeTypeCodes, startDateSql, endDateSql }
     });
     return employees;
 }
@@ -193,21 +201,92 @@ WHERE Misc_Type = 90
     }
     return shiftMap;
 }
-function normalizeShiftTime(value) {
-    if (value === null || value === undefined) return null;
-    let str = String(value).trim();
+function parseShiftTime(val) {
+    if (val === null || val === undefined || val === '') return null;
+    let str = String(val).trim();
     if (!str) return null;
-    if (str.includes(".")) {
-        const parts = str.split(".");
-        const hh = String(parts[0]).padStart(2, "0");
-        const mm = String(parts[1] || "0").padStart(2, "0");
-        return `${hh}:${mm}`;
+    if (str.includes(':')) {
+        const [h, m = '0'] = str.split(':');
+        const hours = parseInt(h, 10);
+        const minutes = parseInt(m, 10) || 0;
+        return {
+            hours,
+            minutes,
+            timeStr: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
+            totalMinutes: hours * 60 + minutes
+        };
     }
-    if (str.includes(":")) {
-        const [hh, mm = "0"] = str.split(":");
-        return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    if (str.includes('.')) {
+        const [hPart, mPart] = str.split('.');
+        const hours = parseInt(hPart, 10);
+        const minutes = mPart.length === 1 ? parseInt(mPart, 10) * 10 : parseInt(mPart.slice(0, 2), 10);
+        return {
+            hours,
+            minutes,
+            timeStr: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
+            totalMinutes: hours * 60 + minutes
+        };
     }
-    return `${String(str).padStart(2, "0")}:00`;
+    const hours = parseInt(str, 10);
+    return {
+        hours,
+        minutes: 0,
+        timeStr: `${String(hours).padStart(2, '0')}:00`,
+        totalMinutes: hours * 60
+    };
+}
+
+function normalizeShiftTime(value) {
+    const parsed = parseShiftTime(value);
+    return parsed ? parsed.timeStr : null;
+}
+
+function calculateShiftAndWorkDuration(dateStr, sStart, sEnd, in1, out1) {
+    if (!sStart || !sEnd) return null;
+    const shiftStartDate = new Date(`${dateStr}T${sStart.timeStr}:00`);
+    let shiftEndDate = new Date(`${dateStr}T${sEnd.timeStr}:00`);
+    let isNight = false;
+    if (shiftEndDate <= shiftStartDate || sStart.hours >= 15) {
+        if (shiftEndDate <= shiftStartDate) {
+            shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+        }
+        isNight = true;
+    }
+    const shiftTotalMinutes = Math.floor((shiftEndDate - shiftStartDate) / 60000);
+    let workMinutes = 0;
+    let lateMinutes = 0;
+    let earlyMinutes = 0;
+
+    if (in1) {
+        const inTime = new Date(in1);
+        if (inTime > shiftStartDate) {
+            lateMinutes = Math.floor((inTime - shiftStartDate) / 60000);
+        }
+    }
+    if (in1 && out1) {
+        const inTime = new Date(in1);
+        const outTime = new Date(out1);
+        if (inTime.getTime() !== outTime.getTime()) {
+            workMinutes = Math.max(0, Math.floor((outTime - inTime) / 60000));
+            if (outTime < shiftEndDate) {
+                earlyMinutes = Math.floor((shiftEndDate - outTime) / 60000);
+            }
+        }
+    }
+
+    return {
+        shiftStart: sStart.timeStr,
+        shiftEnd: sEnd.timeStr,
+        shiftStartDate,
+        shiftEndDate,
+        isNightShift: isNight,
+        shiftDurationMinutes: shiftTotalMinutes,
+        shiftDurationHours: Number((shiftTotalMinutes / 60).toFixed(2)),
+        workMinutes,
+        workHoursDecimal: Number((workMinutes / 60).toFixed(2)),
+        lateMinutes,
+        earlyMinutes
+    };
 }
 function isWeeklyOff(date, weeklyOff) {
     if (weeklyOff === null || weeklyOff === undefined || String(weeklyOff) === "7") {
@@ -263,11 +342,13 @@ function checkEmployeeHolidayInMemory(holidays, employee, dateStr) {
 }
 function isBeforeJoiningDate(dateStr, joiningDate) {
     if (!joiningDate) return false;
-    return new Date(dateStr) < new Date(joiningDate);
+    const jStr = fmtDate(joiningDate);
+    return jStr ? dateStr < jStr : false;
 }
 function isAfterLastWorkingDate(dateStr, lastWorkingDate) {
     if (!lastWorkingDate) return false;
-    return new Date(dateStr) > new Date(lastWorkingDate);
+    const lStr = fmtDate(lastWorkingDate);
+    return lStr ? dateStr > lStr : false;
 }
 /* ==========================================================================
 HELPER: raw punch data (machine + face) for an employee for a month
@@ -322,21 +403,46 @@ ORDER BY CAST(officepunch AS DATE)
 CORE LOGIC: match punch-in/out against policy status_rules
 ========================================================================== */
 function resolveStatusForDay(punchRow, shiftStart, shiftEnd, statusRules) {
+    const absentRule = statusRules.find(r => r.desc_code === 'A');
+    const absentCode = absentRule?.desc_code || 'A';
+    const presentRule = statusRules.find(r => r.Present === 1 || r.Present === true || r.desc_code === 'P');
+    const presentCode = presentRule?.desc_code || 'P';
+
+    // 1. Agar koi punch nahi mila -> Absent (A)
     if (!punchRow || !punchRow.in1) {
-        const absentRule = statusRules.find(r => r.desc_code === 'A');
-        return { status: absentRule?.desc_code || 'A', remark: 'No punch recorded' };
+        return { status: absentCode, remark: 'No punch recorded' };
     }
+
     const inTime = new Date(punchRow.in1);
     const outTime = punchRow.out1 ? new Date(punchRow.out1) : null;
-    const lateMinutes = Math.floor((inTime - shiftStart) / 60000);
-    const earlyMinutes = outTime ? Math.floor((shiftEnd - outTime) / 60000) : 0;
+
+    // 2. Single Punch Check: Out punch missing ho ya sirf 1 hi punch hua ho -> Absent (A)
+    const isSinglePunch = !outTime || 
+                          (punchRow.punch_count && Number(punchRow.punch_count) <= 1) || 
+                          inTime.getTime() === outTime.getTime();
+
+    if (isSinglePunch) {
+        return { status: absentCode, remark: 'Single punch only (Punch-out missing) - Marked Absent' };
+    }
+
+    // 3. Perfect Attendance: Shift se pehle/time par aaye AND shift ke baad/time par gaye -> Direct P
+    if (inTime <= shiftStart && outTime >= shiftEnd) {
+        return { status: presentCode, remark: 'On time full shift' };
+    }
+
+    // 4. Late Arrival aur Early Departure Policy Evaluation
+    const lateMinutes = Math.max(0, Math.floor((inTime - shiftStart) / 60000));
+    const earlyMinutes = Math.max(0, Math.floor((shiftEnd - outTime) / 60000));
+
     const sortedRules = [...statusRules].sort(
         (a, b) => (parseInt(a.priority_code) || 99) - (parseInt(b.priority_code) || 99)
     );
+
     for (const rule of sortedRules) {
         const lateAllowed = parseInt(rule.late_come) || 0;
         const earlyAllowed = parseInt(rule.early_go) || 0;
         const halfThreshold = parseInt(rule.half_val) || 0;
+
         if (halfThreshold > 0 && (lateMinutes > halfThreshold || earlyMinutes > halfThreshold)) {
             if (rule.HalfDay || rule.half) {
                 return {
@@ -345,16 +451,17 @@ function resolveStatusForDay(punchRow, shiftStart, shiftEnd, statusRules) {
                 };
             }
         }
+
         if (lateMinutes <= lateAllowed && earlyMinutes <= earlyAllowed && rule.Present) {
             return {
                 status: rule.desc_code,
-                remark: `On time (late:${lateMinutes}m, early:${earlyMinutes}m)`
+                remark: `On time within grace (late:${lateMinutes}m, early:${earlyMinutes}m)`
             };
         }
     }
-    const presentRule = statusRules.find(r => r.Present === 1 || r.Present === true);
+
     return {
-        status: presentRule?.desc_code || 'P',
+        status: presentCode,
         remark: `Fallback present (late:${lateMinutes}m, early:${earlyMinutes}m) - no rule matched`
     };
 }
@@ -401,8 +508,71 @@ GROUP BY cardno, CAST(officepunch AS DATE)
     return punchMap;
 }
 
+/* ==========================================================================
+HELPER: bulk raw punch data for NIGHT-SHIFT employees in 1 single query
+========================================================================== */
+async function getBulkNightRawPunches(sequelize, payCodes, startDate, endDate) {
+    if (!payCodes || !payCodes.length) return new Map();
+    const payCodesList = payCodes.map(p => `'${String(p).trim()}'`).join(',');
+    const [rows] = await sequelize.query(`
+SELECT
+    RTRIM(cardno) AS cardno,
+    officepunch
+FROM (
+    SELECT cardno, officepunch
+    FROM machinerawpunch
+    WHERE cardno IN (${payCodesList})
+      AND officepunch >= :startDate
+      AND officepunch < DATEADD(DAY, 2, :endDate)
+    UNION ALL
+    SELECT cardno, officepunch
+    FROM facemachinerawpunch
+    WHERE cardno IN (${payCodesList})
+      AND officepunch >= :startDate
+      AND officepunch < DATEADD(DAY, 2, :endDate)
+) AS P
+ORDER BY officepunch ASC
+`, {
+        replacements: {
+            startDate: toSqlDate(startDate),
+            endDate: toSqlDate(endDate)
+        }
+    });
+
+    const map = new Map();
+    for (const r of rows) {
+        if (!map.has(r.cardno)) map.set(r.cardno, []);
+        map.get(r.cardno).push(new Date(r.officepunch));
+    }
+    return map;
+}
+
+function resolveNightShiftPunchInMemory(timestamps, shiftStart, shiftEnd) {
+    if (!timestamps || !timestamps.length) return { in1: null, out1: null, punch_count: 0, NightShift: 1 };
+    let minTime = null;
+    let maxTime = null;
+    let count = 0;
+    const startMs = shiftStart.getTime();
+    const endMs = shiftEnd.getTime();
+    for (const dt of timestamps) {
+        const ms = dt.getTime();
+        if (ms >= startMs && ms < endMs) {
+            count++;
+            if (!minTime || ms < minTime.getTime()) minTime = dt;
+            if (!maxTime || ms > maxTime.getTime()) maxTime = dt;
+        }
+    }
+    return {
+        in1: minTime ? minTime.toISOString() : null,
+        out1: maxTime ? maxTime.toISOString() : null,
+        punch_count: count,
+        NightShift: 1
+    };
+}
+
 async function ensureAttendanceIndex(sequelize) {
     try {
+        // 1. attendancetable index
         const [idxRows] = await sequelize.query(`
             SELECT name FROM sys.indexes 
             WHERE name = 'IX_attendancetable_Emp_dateoffice' AND object_id = OBJECT_ID('attendancetable')
@@ -411,37 +581,117 @@ async function ensureAttendanceIndex(sequelize) {
             console.log("⚡ Auto-creating index on attendancetable(Emp_Code, dateoffice)...");
             await sequelize.query(`
                 CREATE NONCLUSTERED INDEX IX_attendancetable_Emp_dateoffice 
-                ON attendancetable (Emp_Code, dateoffice)
+                ON attendancetable (Emp_Code, dateoffice) include(status, presentvalue, absentvalue, holiday_value, wo_value, leavevalue, in1, out1)
             `);
             console.log("⚡ Index IX_attendancetable_Emp_dateoffice created successfully!");
         }
+
+        // 2. machinerawpunch index (CRITICAL for scanning 6M+ rows in milliseconds)
+        const [mIdxRows] = await sequelize.query(`
+            SELECT name FROM sys.indexes 
+            WHERE name = 'IX_machinerawpunch_cardno_officepunch' AND object_id = OBJECT_ID('machinerawpunch')
+        `);
+        if (mIdxRows.length === 0) {
+            console.log("⚡ Auto-creating index on machinerawpunch(cardno, officepunch)...");
+            await sequelize.query(`
+                CREATE NONCLUSTERED INDEX IX_machinerawpunch_cardno_officepunch 
+                ON machinerawpunch (cardno, officepunch)
+            `);
+            console.log("⚡ Index IX_machinerawpunch_cardno_officepunch created successfully!");
+        }
+
+        // 3. facemachinerawpunch index
+        const [fIdxRows] = await sequelize.query(`
+            SELECT name FROM sys.indexes 
+            WHERE name = 'IX_facemachinerawpunch_cardno_officepunch' AND object_id = OBJECT_ID('facemachinerawpunch')
+        `);
+        if (fIdxRows.length === 0) {
+            console.log("⚡ Auto-creating index on facemachinerawpunch(cardno, officepunch)...");
+            await sequelize.query(`
+                CREATE NONCLUSTERED INDEX IX_facemachinerawpunch_cardno_officepunch 
+                ON facemachinerawpunch (cardno, officepunch)
+            `);
+            console.log("⚡ Index IX_facemachinerawpunch_cardno_officepunch created successfully!");
+        }
     } catch (err) {
         // Non-fatal if index already exists or permission restricted
+        console.error("Index ensure warning:", err.message);
     }
 }
 
 /* ==========================================================================
-BATCH UPDATE: attendancetable in1/out1/status/NightShift for an employee (all dates at once)
+HELPER: Concurrent Worker Pool for processing items with limit
 ========================================================================== */
-async function batchUpdateAttendanceForEmployee(sequelize, empCode, dayUpdates, transaction) {
-    if (!dayUpdates || !dayUpdates.length) return;
-    function toSqlDateTime(isoString) {
-        if (!isoString) return null;
-        const d = new Date(isoString);
-        if (isNaN(d.getTime())) return null;
-        const pad = n => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    }
+async function runWithConcurrency(items, limit, asyncFn) {
+    if (!items || !items.length) return;
+    let index = 0;
+    const workerCount = Math.min(limit, items.length);
+    const workers = new Array(workerCount).fill(0).map(async () => {
+        while (index < items.length) {
+            const currentIndex = index++;
+            await asyncFn(items[currentIndex], currentIndex);
+        }
+    });
+    await Promise.all(workers);
+}
 
-    const statements = dayUpdates.map(u => {
+/* ==========================================================================
+BATCH STATEMENTS GENERATOR: attendancetable updates for an employee
+========================================================================== */
+function toSqlDateTime(isoString) {
+    if (!isoString) return null;
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return null;
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function generateEmployeeUpdateStatements(empCode, dayUpdates) {
+    if (!dayUpdates || !dayUpdates.length) return [];
+    return dayUpdates.map(u => {
         const in1Sql = u.in1 ? `'${toSqlDateTime(u.in1)}'` : 'NULL';
         const out1Sql = u.out1 ? `'${toSqlDateTime(u.out1)}'` : 'NULL';
         const statusSql = `'${(u.status || '').replace(/'/g, "''")}'`;
         const nightShiftSql = u.nightShift ? 1 : 0;
-        return `UPDATE attendancetable SET in1 = ${in1Sql}, out1 = ${out1Sql}, status = ${statusSql}, NightShift = ${nightShiftSql} WHERE Emp_Code = '${empCode}' AND dateoffice = '${u.dateStr}';`;
-    }).join('\n');
+        const hoursWorkedSql = u.hoursWorked != null ? u.hoursWorked : 'NULL';
+        const lateArrivalSql = u.lateArrival != null ? u.lateArrival : '0';
+        const earlyDepartureSql = u.earlyDeparture != null ? u.earlyDeparture : '0';
+        const totalLossHrsSql = u.totalLossHrs != null ? u.totalLossHrs : '0';
+        return `UPDATE attendancetable SET in1 = ${in1Sql}, out1 = ${out1Sql}, status = ${statusSql}, NightShift = ${nightShiftSql}, hoursworked = ${hoursWorkedSql}, latearrival = ${lateArrivalSql}, earlydeparture = ${earlyDepartureSql}, totallosshrs = ${totalLossHrsSql} WHERE Emp_Code = '${empCode}' AND dateoffice = '${u.dateStr}';`;
+    });
+}
 
-    await sequelize.query(statements, { transaction });
+async function getBulkAttendanceShifts(sequelize, empCodes, startDate, endDate) {
+    if (!empCodes || !empCodes.length) return new Map();
+    const empCodesList = empCodes.map(e => `'${String(e).trim()}'`).join(',');
+    const [rows] = await sequelize.query(`
+SELECT 
+    LTRIM(RTRIM(Emp_Code)) AS Emp_Code,
+    CAST(dateoffice AS DATE) AS dateoffice,
+    shiftstarttime,
+    shiftendtime
+FROM attendancetable
+WHERE Emp_Code IN (${empCodesList})
+  AND CAST(dateoffice AS DATE) >= :startDate
+  AND CAST(dateoffice AS DATE) <= :endDate
+`, {
+        replacements: {
+            startDate: toSqlDate(startDate),
+            endDate: toSqlDate(endDate)
+        }
+    });
+
+    const atnShiftMap = new Map();
+    for (const r of rows) {
+        const dStr = typeof r.dateoffice === 'string' && r.dateoffice.length >= 10
+            ? r.dateoffice.slice(0, 10)
+            : fmtDate(r.dateoffice);
+        atnShiftMap.set(`${r.Emp_Code}_${dStr}`, {
+            shiftstarttime: r.shiftstarttime,
+            shiftendtime: r.shiftendtime
+        });
+    }
+    return atnShiftMap;
 }
 function isNightShift(shiftStart, shiftEnd) {
     if (!shiftStart || !shiftEnd) return false;
@@ -455,24 +705,32 @@ function isNightShift(shiftStart, shiftEnd) {
 }
 async function getMonthDates(sequelize, year, month) {
     console.log(`Fetching month dates for ${year}-${month} from misc_mst...`);
+    const yearStr = year ? String(year) : null;
     const [rows] = await sequelize.query(`
 SELECT TOP 1
 TRY_CONVERT(DATE, Misc_Dtl1, 103) AS Month_Start_Date,
-TRY_CONVERT(DATE, Misc_Dtl2, 103) AS Month_End_Date
-FROM misc_mst
+TRY_CONVERT(DATE, Misc_Dtl2, 103) AS Month_End_Date,
+Misc_Dtl1,
+Misc_Dtl2,
+Misc_Code,
+Misc_Abbr
+FROM Misc_Mst
 WHERE Misc_Type = 25
+AND ISNULL(Export_Type, 0) < 3
 AND Misc_Code = :month
+AND (Misc_Abbr = :yearStr OR Misc_Abbr IS NULL OR :yearStr IS NULL)
 AND TRY_CONVERT(DATE, Misc_Dtl1, 103) IS NOT NULL
 AND TRY_CONVERT(DATE, Misc_Dtl2, 103) IS NOT NULL
 ORDER BY 
     CASE 
-        WHEN YEAR(TRY_CONVERT(DATE, Misc_Dtl2, 103)) = :year THEN 0
-        WHEN YEAR(TRY_CONVERT(DATE, Misc_Dtl1, 103)) = :year THEN 0
-        ELSE 1 
+        WHEN Misc_Abbr = :yearStr THEN 0
+        WHEN YEAR(TRY_CONVERT(DATE, Misc_Dtl2, 103)) = :year THEN 1
+        WHEN YEAR(TRY_CONVERT(DATE, Misc_Dtl1, 103)) = :year THEN 1
+        ELSE 2 
     END,
     TRY_CONVERT(DATE, Misc_Dtl2, 103) DESC
 `, {
-        replacements: { month, year }
+        replacements: { month, year, yearStr }
     });
     console.log(rows, "rows for month dates");
     let startDate;
@@ -511,7 +769,8 @@ ORDER BY
     return {
         monthDates,
         startDate,
-        endDate: effectiveEndDate
+        endDate: effectiveEndDate,
+        cycleEndDate: endDate
     };
 }
 /* ==========================================================================
@@ -557,34 +816,46 @@ WHERE cardno = :payCode AND officepunch >= :shiftStart AND officepunch < :shiftE
 /* ==========================================================================
 MAIN SCHEDULER: GenerateAttendanceStatus
 ========================================================================== */
-async function GenerateAttendanceStatus() {
+async function GenerateAttendanceStatus(options = {}) {
     console.log("Running scheduled job for attendance status generation...");
     const results = [];
-    const sequelize1 = await dbname(
-        { query: "", headers: { compcode: "DBCON", name: "schedualer" } },
-        "DBCON"
-    );
+    const sequelize1 = await getAttendancePool("DBCON");
     const Dlr_data = [{ "Dlr_Id": "devteam" }];
     for (const dealer of Dlr_data) {
         const compcode = dealer.Dlr_Id;
         const logger = new SchedulerLogger(sequelize1, "attendancepolicy", compcode);
         let sequelize;
         try {
-            sequelize = await dbname(
-                { query: "", headers: { compcode, name: "schedualer" } },
-                compcode
-            );
-            const refDate = new Date();
-            const { customMonth, customYear } = await getCustomMonthDynamic(sequelize, refDate);
-            const currentMonth = Number(customMonth);
-            const currentYear = Number(customYear);
-            console.log(`Dealer: ${compcode} | Custom Month: ${currentMonth} | Custom Year: ${currentYear}`);
+            sequelize = await getAttendancePool(compcode);
+
+            let currentMonth;
+            let currentYear;
+
+            // Mode 1: Agar explicitly month & year aaye (e.g. Misc_Code = 9, Misc_Abbr = '2026')
+            const inputMonth = options?.Misc_Code || options?.month || options?.customMonth;
+            const inputYear = options?.Misc_Abbr || options?.year || options?.customYear;
+
+            if (inputMonth && inputYear) {
+                currentMonth = Number(inputMonth);
+                currentYear = Number(inputYear);
+                console.log(`Dealer: ${compcode} | Explicit params -> Misc_Code: ${currentMonth} | Misc_Abbr: ${currentYear}`);
+            } else {
+                // Mode 2: Agar na aaye, to current date (refDate) se dynamically lena
+                const refDate = options?.date || options?.refDate ? new Date(options?.date || options?.refDate) : new Date();
+                const { customMonth, customYear } = await getCustomMonthDynamic(sequelize, refDate);
+                currentMonth = Number(customMonth);
+                currentYear = Number(customYear);
+                console.log(`Dealer: ${compcode} | Dynamic current date -> Custom Month: ${currentMonth} | Custom Year: ${currentYear}`);
+            }
+
+            console.log(`Dealer: ${compcode} | Final Month: ${currentMonth} | Final Year: ${currentYear}`);
 
             // ⭐ OPTIMIZATION 1: Pre-fetch month dates ONCE per run
             const {
                 monthDates,
                 startDate,
-                endDate
+                endDate,
+                cycleEndDate
             } = await getMonthDates(
                 sequelize,
                 currentYear,
@@ -646,7 +917,7 @@ async function GenerateAttendanceStatus() {
                             console.log(`🔒 Location ${location} locked for ${currentMonth}/${currentYear} - skipping`);
                             continue;
                         }
-                        const employees = await getFilteredAtnEmployees(sequelize, policy, location, currentMonth, currentYear);
+                        const employees = await getFilteredAtnEmployees(sequelize, policy, location, currentMonth, currentYear, startDate, cycleEndDate || endDate);
                         if (!employees.length) {
                             logger.addSkip(1);
                             continue;
@@ -658,21 +929,57 @@ async function GenerateAttendanceStatus() {
                         const CHUNK_SIZE = 100;
                         for (let b = 0; b < employees.length; b += CHUNK_SIZE) {
                             const empChunk = employees.slice(b, b + CHUNK_SIZE);
+                            const empCodesChunk = empChunk.map(e => String(e.EMPCODE).trim());
+
+                            // ⭐ Fetch exact daily shifts directly from attendancetable
+                            const attendanceShiftsMap = await getBulkAttendanceShifts(
+                                sequelize,
+                                empCodesChunk,
+                                startDate,
+                                endDate
+                            );
 
                             const dayShiftPayCodes = [];
+                            const nightShiftPayCodes = [];
                             for (const emp of empChunk) {
                                 if (Number(emp.ISRW) !== 0 || !emp.PAY_CODE) continue;
-                                const shift = shiftMap.get(String(emp.EMP_SHIFT));
-                                if (!shift) continue;
-                                const sStart = normalizeShiftTime(shift.start);
-                                const sEnd = normalizeShiftTime(shift.end);
-                                if (!sStart || !sEnd) continue;
-                                if (!isNightShift(sStart, sEnd)) {
+                                const empCodeTrimmed = String(emp.EMPCODE).trim();
+
+                                // Check if employee has night shift from attendancetable or master
+                                let hasNight = false;
+                                for (const dStr of monthDates) {
+                                    const atnShift = attendanceShiftsMap.get(`${empCodeTrimmed}_${dStr}`);
+                                    if (atnShift && atnShift.shiftstarttime != null && atnShift.shiftendtime != null) {
+                                        const s1 = parseShiftTime(atnShift.shiftstarttime);
+                                        const s2 = parseShiftTime(atnShift.shiftendtime);
+                                        if (s1 && s2 && (s1.totalMinutes > 0 || s2.totalMinutes > 0)) {
+                                            if (isNightShift(s1.timeStr, s2.timeStr)) {
+                                                hasNight = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (!hasNight) {
+                                    const mShift = shiftMap.get(String(emp.EMP_SHIFT));
+                                    if (mShift) {
+                                        const sStart = normalizeShiftTime(mShift.start);
+                                        const sEnd = normalizeShiftTime(mShift.end);
+                                        if (sStart && sEnd && isNightShift(sStart, sEnd)) {
+                                            hasNight = true;
+                                        }
+                                    }
+                                }
+
+                                if (hasNight) {
+                                    nightShiftPayCodes.push(emp.PAY_CODE);
+                                } else {
                                     dayShiftPayCodes.push(emp.PAY_CODE);
                                 }
                             }
 
-                            // 1 single query fetches all punches for all 100 employees in this chunk
+                            // 1 single query fetches all punches for all day-shift employees in this chunk
                             const bulkPunches = await getBulkRawPunches(
                                 sequelize,
                                 [...new Set(dayShiftPayCodes)],
@@ -680,40 +987,73 @@ async function GenerateAttendanceStatus() {
                                 endDate
                             );
 
-                            for (const employee of empChunk) {
+                            // 1 single query fetches raw punch timestamps for night-shift employees in this chunk
+                            const bulkNightPunches = nightShiftPayCodes.length > 0
+                                ? await getBulkNightRawPunches(sequelize, [...new Set(nightShiftPayCodes)], startDate, endDate)
+                                : new Map();
+
+                            // ⭐ OPTIMIZATION: Process in-memory & execute in 1 single Chunk Transaction
+                            const chunkStartTime = Date.now();
+                            const chunkStatements = [];
+                            const chunkProcessedEmpCodes = [];
+
+                            await runWithConcurrency(empChunk, 10, async (employee) => {
                                 try {
                                     if (Number(employee.ISRW) !== 0) {
                                         logger.addSkip(1);
-                                        continue;
+                                        return;
                                     }
                                     if (!employee.PAY_CODE) {
                                         logger.addSkip(1);
-                                        continue;
+                                        return;
                                     }
-                                    const shift = shiftMap.get(String(employee.EMP_SHIFT));
-                                    if (!shift) {
-                                        logger.addSkip(1);
-                                        continue;
-                                    }
-                                    const shiftStartStr = normalizeShiftTime(shift.start);
-                                    const shiftEndStr = normalizeShiftTime(shift.end);
-                                    if (!shiftStartStr || !shiftEndStr) {
-                                        logger.addSkip(1);
-                                        continue;
-                                    }
-                                    const nightShift = isNightShift(shiftStartStr, shiftEndStr);
+
+                                    const empCodeTrimmed = String(employee.EMPCODE).trim();
                                     const empPayCodeTrimmed = String(employee.PAY_CODE).trim();
+                                    const mShift = shiftMap.get(String(employee.EMP_SHIFT));
+                                    const fallbackStart = mShift ? parseShiftTime(mShift.start) : null;
+                                    const fallbackEnd = mShift ? parseShiftTime(mShift.end) : null;
 
                                     const dayUpdates = [];
                                     for (const dateStr of monthDates) {
+                                        // 1. Shift Time from attendancetable (fallback to Misc_Mst)
+                                        const atnShift = attendanceShiftsMap.get(`${empCodeTrimmed}_${dateStr}`);
+                                        let sStart = null;
+                                        let sEnd = null;
+
+                                        if (atnShift && atnShift.shiftstarttime != null && atnShift.shiftendtime != null) {
+                                            const p1 = parseShiftTime(atnShift.shiftstarttime);
+                                            const p2 = parseShiftTime(atnShift.shiftendtime);
+                                            if (p1 && p2 && (p1.totalMinutes > 0 || p2.totalMinutes > 0)) {
+                                                sStart = p1;
+                                                sEnd = p2;
+                                            }
+                                        }
+
+                                        if (!sStart || !sEnd) {
+                                            sStart = fallbackStart;
+                                            sEnd = fallbackEnd;
+                                        }
+
+                                        if (!sStart || !sEnd) {
+                                            continue;
+                                        }
+
+                                        const nightShift = isNightShift(sStart.timeStr, sEnd.timeStr);
+
                                         let punch = null;
                                         if (nightShift) {
-                                            punch = await getNightShiftPunchForDate(
-                                                sequelize, employee.PAY_CODE, dateStr, shiftStartStr, shiftEndStr
-                                            );
+                                            const shiftStart = new Date(`${dateStr}T${sStart.timeStr}:00`);
+                                            let shiftEnd = new Date(`${dateStr}T${sEnd.timeStr}:00`);
+                                            if (shiftEnd <= shiftStart) {
+                                                shiftEnd.setDate(shiftEnd.getDate() + 1);
+                                            }
+                                            const rawTimes = bulkNightPunches.get(empPayCodeTrimmed) || [];
+                                            punch = resolveNightShiftPunchInMemory(rawTimes, shiftStart, shiftEnd);
                                         } else {
                                             punch = bulkPunches.get(`${empPayCodeTrimmed}_${dateStr}`) || null;
                                         }
+
                                         if (employee.CURRENTJOINDATE && isBeforeJoiningDate(dateStr, employee.CURRENTJOINDATE)) {
                                             continue;
                                         }
@@ -728,49 +1068,68 @@ async function GenerateAttendanceStatus() {
                                         if (holiday) {
                                             continue;
                                         }
-                                        const shiftStart = new Date(`${dateStr}T${shiftStartStr}:00`);
-                                        let shiftEnd = new Date(`${dateStr}T${shiftEndStr}:00`);
-                                        if (nightShift && shiftEnd <= shiftStart) {
-                                            shiftEnd.setDate(shiftEnd.getDate() + 1);
-                                        }
-                                        const statusResult = resolveStatusForDay(punch, shiftStart, shiftEnd, statusRules);
+
+                                        // ⭐ Calculate exact shift duration and actual work duration
+                                        const durationInfo = calculateShiftAndWorkDuration(
+                                            dateStr,
+                                            sStart,
+                                            sEnd,
+                                            punch?.in1,
+                                            punch?.out1
+                                        );
+
+                                        const statusResult = resolveStatusForDay(
+                                            punch,
+                                            durationInfo.shiftStartDate,
+                                            durationInfo.shiftEndDate,
+                                            statusRules
+                                        );
+
                                         dayUpdates.push({
                                             dateStr,
                                             in1: punch?.in1 || null,
                                             out1: punch?.out1 || null,
                                             status: statusResult.status,
-                                            nightShift
+                                            nightShift: durationInfo.isNightShift,
+                                            hoursWorked: durationInfo.workHoursDecimal,
+                                            lateArrival: durationInfo.lateMinutes,
+                                            earlyDeparture: durationInfo.earlyMinutes,
+                                            totalLossHrs: Number(((durationInfo.lateMinutes + durationInfo.earlyMinutes) / 60).toFixed(2))
                                         });
                                         logger.addImpact("ATTENDANCE_UPDATED", employee.EMPCODE, statusResult.status);
                                     }
 
-                                    // ⭐ Fast indexed batch update per employee
+                                    // Collect update statements for single batch execution
                                     if (dayUpdates.length > 0) {
-                                        const empTx = await sequelize.transaction();
-                                        try {
-                                            await batchUpdateAttendanceForEmployee(
-                                                sequelize,
-                                                employee.EMPCODE,
-                                                dayUpdates,
-                                                empTx
-                                            );
-                                            await sequelize.query(`
-UPDATE EMPLOYEEMASTER SET ISRW = 1 WHERE EMPCODE = :empCode
-`, { replacements: { empCode: employee.EMPCODE }, transaction: empTx });
-                                            await empTx.commit();
-                                            locationEmpCount++;
-                                            totalProcessedEmployees++;
-                                            console.log(`✅ ${employee.EMPCODE} (Loc ${location}) → ${dayUpdates.length} dates updated → ISRW = 1`);
-                                        } catch (txErr) {
-                                            if (!empTx.finished) await empTx.rollback();
-                                            throw txErr;
-                                        }
+                                        const empStmts = generateEmployeeUpdateStatements(employee.EMPCODE, dayUpdates);
+                                        chunkStatements.push(...empStmts);
+                                        chunkProcessedEmpCodes.push(`'${employee.EMPCODE}'`);
                                     }
                                 } catch (empErr) {
                                     console.log(`❌ Failed EMP:${employee.EMPCODE} Policy:${policy.UTD} - ${empErr.message}`);
                                     logger.setError(empErr);
                                 }
+                            });
+
+                            // ⭐ ULTRA-FAST: Execute all updates for the entire chunk in 1 Single Transaction
+                            if (chunkStatements.length > 0) {
+                                chunkStatements.push(`UPDATE EMPLOYEEMASTER SET ISRW = 1 WHERE EMPCODE IN (${chunkProcessedEmpCodes.join(',')});`);
+                                const chunkTx = await sequelize.transaction();
+                                try {
+                                    await sequelize.query(chunkStatements.join('\n'), { transaction: chunkTx });
+                                    await chunkTx.commit();
+                                    locationEmpCount += chunkProcessedEmpCodes.length;
+                                    totalProcessedEmployees += chunkProcessedEmpCodes.length;
+                                } catch (txErr) {
+                                    if (!chunkTx.finished) await chunkTx.rollback();
+                                    console.error(`❌ Batch update failed for chunk in Loc ${location}:`, txErr.message);
+                                    logger.setError(txErr);
+                                }
                             }
+
+                            // ⭐ Chunk Progress Logging
+                            const chunkDuration = Date.now() - chunkStartTime;
+                            console.log(`📍 [Loc ${location}] Batch ${Math.min(b + CHUNK_SIZE, employees.length)}/${employees.length} done (${chunkProcessedEmpCodes.length} updated in ${chunkDuration}ms)`);
                         }
                     }
                 }
