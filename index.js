@@ -137,7 +137,7 @@ app.use("/backend/service-appointment", serviceReminder);
 app.use("/backend/Crm", serviceReminder);
 app.use("/excel",excelrouter);
 // app.use("/employee",faceData);
-// app.use("/employeeImport",employeeImport);
+app.use("/employeeImport",employeeImport);
 // app.use("/call",GetCallRecordings)
 app.use("/ai", aiRoutes);
 app.use("/ai/image", aiImageApi);

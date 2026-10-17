@@ -19,7 +19,7 @@ const monthMap = {
   feb: 2, "feb.": 2, february: 2,
   mar: 3, "mar.": 3, march: 3,
   apr: 4, "apr.": 4, april: 4,
-  may: 5,
+  may: 5, 
   jun: 6, "jun.": 6, june: 6,
   jul: 7, "jul.": 7, july: 7,
   aug: 8, "aug.": 8, august: 8,
@@ -53,62 +53,24 @@ function formatResultDate(yyyy, mm, dd) {
 }
 
 /**
- * Resolves a 2-digit year using a 100-year window ending at the current date.
- * If 2000 + yy is in the future compared to today, it belongs to the previous century (1900 + yy).
- * If 2000 + yy is today or in the past, it belongs to 2000 + yy.
- * Example (Assuming current date is 02/10/2026):
- * - 01/07/26 -> 01/07/2026 (July 2026 is before October 2026)
- * - 02/12/26 -> 02/12/1926 (December 2026 is after October 2026 -> future -> 1926)
- * - 01/07/27 -> 01/07/1927 (2027 is after 2026 -> future -> 1927)
- * - 15/08/98 -> 15/08/1998 (2098 is future -> 1998)
- * - 10/05/15 -> 10/05/2015 (2015 is past -> 2015)
+ * Resolves a 2-digit year (e.g. 26 -> 2026, 98 -> 1998):
+ * - 00 to 49 -> 2000 to 2049
+ * - 50 to 99 -> 1950 to 1999
  */
-function resolveTwoDigitYear(twoDigitYear, month, day) {
+function resolveTwoDigitYear(twoDigitYear) {
   const numYear = parseInt(twoDigitYear, 10);
   if (isNaN(numYear)) return null;
   if (numYear >= 100) return numYear; // Already 4 digits
-
-  const now = new Date();
-  const currentFullYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1; // 1 to 12
-  const currentDay = now.getDate();
-
-  const candidateYear2000 = 2000 + numYear;
-
-  // 1. Candidate year is strictly in the future -> 1900s
-  if (candidateYear2000 > currentFullYear) {
-    return 1900 + numYear;
-  }
-
-  // 2. Candidate year is strictly in the past -> 2000s
-  if (candidateYear2000 < currentFullYear) {
-    return candidateYear2000;
-  }
-
-  // 3. Candidate year is the current year (e.g. 26 when current is 2026):
-  const m = parseInt(month, 10) || 1;
-  const d = parseInt(day, 10) || 1;
-
-  if (m > currentMonth) {
-    // Month is in future -> 1900s
-    return 1900 + numYear;
-  } else if (m < currentMonth) {
-    // Month is in past -> 2000s
-    return candidateYear2000;
+  if (numYear <= 49) {
+    return 2000 + numYear;
   } else {
-    // Same month -> compare day
-    if (d > currentDay) {
-      // Day is in future -> 1900s
-      return 1900 + numYear;
-    } else {
-      // Day is today or past -> 2000s
-      return candidateYear2000;
-    }
+    return 1900 + numYear;
   }
 }
 
 // Comprehensive date parsing: accepts DD/MM/YYYY, DD/MM/YY, DD-MM-YYYY, DD-MM-YY,
-// YYYY-MM-DD, YYYY/MM/DD, Excel serial numbers, text months (01-Jan-26, 15-Apr-98), and JS Date objects
+// YYYY-MM-DD, YYYY/MM/DD, Excel serial numbers, text months (01-Jan-26, 15-Apr-98), and JS Date objects.
+// Always prioritizes DD / MM / YYYY as the standard date format.
 function parseExcelDate(value) {
   if (value === null || value === undefined || value === "") {
     return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: false };
@@ -136,7 +98,7 @@ function parseExcelDate(value) {
   const cleanLower = strWithoutTime.toLowerCase().trim();
   const withoutSeparators = cleanLower.replace(/[\s\-_.\/\\]/g, "");
   if (
-    !withoutSeparators ||
+    !withoutSeparators ||  
     /^0+$/.test(withoutSeparators) ||
     ["na", "n/a", "null", "nil", "none", "nan", "undefined", "notavailable", "notapplicable", "01011900", "19000101", "111900", "010100", "1100"].includes(cleanLower) ||
     ["na", "n/a", "null", "nil", "none", "nan", "undefined", "01011900", "19000101", "111900", "010100", "1100"].includes(withoutSeparators)
@@ -145,18 +107,25 @@ function parseExcelDate(value) {
   }
 
   // 2. Excel numeric serial date (e.g. 45427 or 45427.0 or 32998, 0 or 1 = 01/01/1900)
-  if (!isNaN(strOriginal) && !/[a-zA-Z]/.test(strOriginal) && !strOriginal.includes("/") && !strOriginal.includes("-")) {
+  if (!isNaN(strOriginal) && !/[a-zA-Z]/.test(strOriginal) && !strOriginal.includes("/") && !strOriginal.includes("-") && !strOriginal.includes(".")) {
     const num = parseFloat(strOriginal);
     if (num <= 1) {
       // Excel 0 or 1 represents 01/01/1900 -> treat as null
       return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
     }
     if (num > 1 && num < 100000) {
-      // 25569 = days between 1900-01-01 and 1970-01-01
-      const date = new Date(Math.round((num - 25569) * 86400 * 1000));
-      const fy = date.getUTCFullYear();
-      const fm = date.getUTCMonth() + 1;
-      const fd = date.getUTCDate();
+      const p = (xlsx && xlsx.SSF && xlsx.SSF.parse_date_code) ? xlsx.SSF.parse_date_code(num) : null;
+      let fy, fm, fd;
+      if (p && p.y) {
+        fy = p.y;
+        fm = p.m;
+        fd = p.d;
+      } else {
+        const date = new Date(Math.round((num - 25569) * 86400 * 1000));
+        fy = date.getUTCFullYear();
+        fm = date.getUTCMonth() + 1;
+        fd = date.getUTCDate();
+      }
       if (fy <= 1900) {
         return { date: null, displayDate: null, displayShort: null, invalid: false, is1900: true };
       }
@@ -180,43 +149,25 @@ function parseExcelDate(value) {
       mm = monthMap[mKey1];
       dd = parseInt(p0, 10);
       let rawY = parseInt(p2, 10);
-      yyyy = rawY > 1000 ? rawY : resolveTwoDigitYear(rawY, mm, dd);
+      yyyy = rawY > 1000 ? rawY : resolveTwoDigitYear(rawY);
     } else if (monthMap[mKey0]) {
       // e.g. Jan-01-26 or Jan-01-2026
       mm = monthMap[mKey0];
       dd = parseInt(p1, 10);
       let rawY = parseInt(p2, 10);
-      yyyy = rawY > 1000 ? rawY : resolveTwoDigitYear(rawY, mm, dd);
-    } else if (p0.length === 4) {
+      yyyy = rawY > 1000 ? rawY : resolveTwoDigitYear(rawY);
+    } else if (p0.length === 4 && parseInt(p0, 10) > 1000) {
       // YYYY-MM-DD
       yyyy = parseInt(p0, 10);
       mm = parseInt(p1, 10);
       dd = parseInt(p2, 10);
     } else {
-      // DD-MM-YYYY, DD-MM-YY, MM-DD-YYYY, MM-DD-YY
-      let v0 = parseInt(p0, 10);
-      let v1 = parseInt(p1, 10);
-      let v2 = parseInt(p2, 10);
-
-      // Determine day and month
-      if (v0 > 12 && v1 <= 12) {
-        dd = v0;
-        mm = v1;
-      } else if (v0 <= 12 && v1 > 12) {
-        dd = v1;
-        mm = v0;
-      } else {
-        // Standard Indian / UK format: DD/MM
-        dd = v0;
-        mm = v1;
-      }
-
-      // Determine year (preserving 4-digit years or applying 100-year sliding window for 2-digit years)
-      if (v2 > 1000) {
-        yyyy = v2;
-      } else {
-        yyyy = resolveTwoDigitYear(v2, mm, dd);
-      }
+      // Always DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY, 1/9/26, 01/9/26, 01/10/2026, 01-01-26, 01-10-2026 etc.
+      // 1st part is ALWAYS DD, 2nd part is ALWAYS MM, 3rd part is ALWAYS YYYY / YY
+      dd = parseInt(p0, 10);
+      mm = parseInt(p1, 10);
+      let rawY = parseInt(p2, 10);
+      yyyy = rawY > 1000 ? rawY : resolveTwoDigitYear(rawY);
     }
 
     if (yyyy <= 1900) {
@@ -473,13 +424,38 @@ exports.excelimportFinal = async function (req, res) {
       const cellAddress = xlsx.utils.encode_cell({ r: i, c: colIdx });
       const cell = sheet ? sheet[cellAddress] : null;
 
-      const isDateValue = cell && cell.w && /^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}/.test(String(cell.w).trim());
-
-      // For date columns or formatted date values: ALWAYS prefer formatted text (cell.w) from Excel
-      // (e.g. '10/1/1996', '15/06/26', '10/8/2025', '1/2/2023') to prevent Excel's internal numeric serial conversion
-      // from swapping Day and Month when regional settings differ.
-      if ((isDateCol || isDateValue) && cell && cell.w !== undefined && String(cell.w).trim() !== "") {
-        rowObj[h] = String(cell.w).trim();
+      if (cell) {
+        // If it's a date column or cell with date number format, and Excel stored numeric serial:
+        if (cell.t === "n" && (isDateCol || (cell.z && xlsx.SSF && xlsx.SSF.is_date(cell.z)))) {
+          const num = Number(cell.v);
+          if (!isNaN(num) && num > 1 && num < 100000) {
+            const p = xlsx.SSF && xlsx.SSF.parse_date_code ? xlsx.SSF.parse_date_code(num) : null;
+            if (p && p.y) {
+              const pad = (n) => String(n).padStart(2, "0");
+              const fmt = String(cell.z || "").toLowerCase().replace(/\[[^\]]*\]/g, "");
+              // If cell has an explicit custom format where month is before day (e.g. mm/dd/yy or mm-dd-yy):
+              // In Excel, p.m is displayed first and p.d second. User rule: visible 1st number is ALWAYS Day, 2nd is Month!
+              const isCustomUSFormat = fmt && fmt !== "m/d/yy" && /m+[^d]*d+/.test(fmt);
+              if (isCustomUSFormat) {
+                rowObj[h] = `${pad(p.m)}/${pad(p.d)}/${p.y}`;
+              } else {
+                rowObj[h] = `${pad(p.d)}/${pad(p.m)}/${p.y}`;
+              }
+            } else {
+              rowObj[h] = cell.v;
+            }
+          } else if (num <= 1) {
+            rowObj[h] = "01/01/1900";
+          } else {
+            rowObj[h] = cell.v;
+          }
+        } else if (cell.w !== undefined && String(cell.w).trim() !== "") {
+          rowObj[h] = String(cell.w).trim();
+        } else if (cell.v !== undefined && cell.v !== null) {
+          rowObj[h] = String(cell.v).trim();
+        } else {
+          rowObj[h] = row[colIdx] !== undefined ? row[colIdx] : "";
+        }
       } else {
         rowObj[h] = row[colIdx] !== undefined ? row[colIdx] : "";
       }
@@ -530,7 +506,15 @@ exports.excelimportFinal = async function (req, res) {
 
     const EmployeeMaster = _Employeemaster(sequelize, DataTypes);
     const { user, branch } = req.body;
-    const locCode = branch ?? user?.branch ?? 1;
+    const branchVal = branch ?? user?.branch;
+    const branchList = String(branchVal || "")
+      .split(",")
+      .map((b) => b.trim())
+      .filter(Boolean);
+    if (branchList.length > 1 || (Array.isArray(branchVal) && branchVal.length > 1)) {
+      return res.status(400).send({ Message: "Select only one branch" });
+    }
+    const locCode = branchList[0] || branchVal || 1;
     const changedByUser = req.headers?.name || user?.name || "SYSTEM";
 
     // Determine logged-in User_Code

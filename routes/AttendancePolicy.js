@@ -1,5 +1,124 @@
 const { dbname } = require("../utils/dbconfig");
 
+/**
+ * Automatically resolves and deactivates any existing active policies that overlap on the same location & employee_types
+ * ensuring only 1 policy remains active per location and employee_type combination without blocking the user.
+ */
+async function handlePolicyOverlap(sequelize, t, {
+  policyId = null,
+  companyCode,
+  locations = [],
+  employeeTypes = [],
+  effectiveFrom,
+  effectiveTo,
+  user = 'SYSTEM'
+}) {
+  const normNewLocs = (Array.isArray(locations) ? locations : String(locations || "").split(","))
+    .map((l) => String(l).trim())
+    .filter(Boolean);
+  const normNewTypes = (Array.isArray(employeeTypes) ? employeeTypes : String(employeeTypes || "").split(","))
+    .map((t) => String(t).trim().toLowerCase())
+    .filter(Boolean);
+
+  if (normNewLocs.length === 0) return;
+
+  const [existingPolicies] = await sequelize.query(
+    `
+    SELECT UTD, policy_name, location, employee_types, effective_from, effective_to
+    FROM attendance_policies_table
+    WHERE company_code = :companyCode
+      AND ISNULL(export_type, 0) < 3
+      AND is_active = 1
+      AND (:policyId IS NULL OR UTD != :policyId)
+  `,
+    {
+      replacements: {
+        companyCode,
+        policyId: policyId ? Number(policyId) : null,
+      },
+      transaction: t,
+    }
+  );
+
+  for (const existing of existingPolicies) {
+    const existLocs = (existing.location || "")
+      .split(",")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const existTypes = (existing.employee_types || "")
+      .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean);
+
+    // Common locations
+    const overlapLocs = normNewLocs.filter((loc) => existLocs.includes(loc));
+    if (overlapLocs.length === 0) continue;
+
+    // Check employee types overlap
+    let hasTypeOverlap = false;
+    if (normNewTypes.length === 0 || existTypes.length === 0) {
+      hasTypeOverlap = true;
+    } else {
+      hasTypeOverlap = normNewTypes.some((t) => existTypes.includes(t));
+    }
+
+    if (!hasTypeOverlap) continue;
+
+    const remainingLocs = existLocs.filter((loc) => !overlapLocs.includes(loc));
+
+    if (remainingLocs.length === 0) {
+      // Entire existing policy is overridden for all locations -> deactivate it
+      await sequelize.query(
+        `
+        UPDATE attendance_policies_table
+        SET export_type = 33,
+            is_active = 0,
+            updated_by = :user,
+            updated_at = GETDATE()
+        WHERE UTD = :utd
+      `,
+        {
+          replacements: { utd: existing.UTD, user },
+          transaction: t,
+        }
+      );
+
+      await sequelize.query(
+        `
+        UPDATE attendance_status_rules_table
+        SET export_type = 33,
+            updated_by = :user,
+            updated_at = GETDATE()
+        WHERE policy_utd = :utd AND (export_type IS NULL OR export_type < 3)
+      `,
+        {
+          replacements: { utd: existing.UTD, user },
+          transaction: t,
+        }
+      );
+    } else {
+      // Partial locations overridden -> update existing policy with remaining locations
+      await sequelize.query(
+        `
+        UPDATE attendance_policies_table
+        SET location = :newLocStr,
+            updated_by = :user,
+            updated_at = GETDATE()
+        WHERE UTD = :utd
+      `,
+        {
+          replacements: {
+            utd: existing.UTD,
+            newLocStr: remainingLocs.join(","),
+            user,
+          },
+          transaction: t,
+        }
+      );
+    }
+  }
+}
+
 exports.saveAttendancePolicy = async function (req, res) {
   let sequelize;
   let t;
@@ -22,6 +141,12 @@ exports.saveAttendancePolicy = async function (req, res) {
 
     if (!formData.effectiveFrom || !formData.effectiveTo) {
       return res.status(400).json({ success: false, message: "Effective dates are required" });
+    }
+
+    if (formData.effectiveFrom > formData.effectiveTo) {
+      const tmp = formData.effectiveFrom;
+      formData.effectiveFrom = formData.effectiveTo;
+      formData.effectiveTo = tmp;
     }
 
     if (!formData.shiftCode) {
@@ -59,6 +184,18 @@ exports.saveAttendancePolicy = async function (req, res) {
 
     sequelize = await dbname(req, companyCode);
     t = await sequelize.transaction();
+
+    // Auto-resolve overlapping active policies for same location & employee_types
+    // (Old overlapping policy is automatically archived so only 1 policy stays active per location & employee_type)
+    await handlePolicyOverlap(sequelize, t, {
+      policyId: null,
+      companyCode,
+      locations: formData.location || [],
+      employeeTypes: formData.employeeTypes || [],
+      effectiveFrom: formData.effectiveFrom,
+      effectiveTo: formData.effectiveTo,
+      user,
+    });
 
 
 
@@ -178,12 +315,22 @@ VALUES (
 
     // ===== INSERT STATUS RULES =====
     if (statusRules.length > 0) {
+      const [cols] = await sequelize.query(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'attendance_status_rules_table'
+      `, { transaction: t });
+      const colNames = cols.map(c => c.COLUMN_NAME.toLowerCase());
+      const earlyCol = colNames.includes('early_go') ? 'early_go' : (colNames.includes('early_') ? 'early_' : 'early_go');
+      const hasPresentVal = colNames.includes('presentvalue');
+      const hasAbsentVal = colNames.includes('absentvalue');
+
       const statusRulesValues = statusRules.map(rule => {
         const desc = (rule.Desc || '').replace(/'/g, "''");
         const region = (rule.Region || '').replace(/'/g, "''");
-        const half = (rule.HALF || '').replace(/'/g, "''");
         const absent = (rule.ABSENT || '').replace(/'/g, "''");
         const wef = rule.WEF || new Date().toISOString().split('T')[0];
+        const presentValSql = (rule.PresentValue != null && rule.PresentValue !== '') ? Number(rule.PresentValue) : 'NULL';
+        const absentValSql = (rule.AbsentValue != null && rule.AbsentValue !== '') ? Number(rule.AbsentValue) : 'NULL';
 
         return `(
           ${policyUTD},
@@ -194,8 +341,8 @@ VALUES (
           ${rule.Allow_Days ? `'${rule.Allow_Days}'` : 'NULL'},
           ${rule.Priority_Code ? `'${rule.Priority_Code}'` : 'NULL'},
           '${region}',
-          '${half}',
-          ${rule.HALF_VAL ? `'${rule.HALF_VAL}'` : 'NULL'},
+          ${hasPresentVal ? presentValSql + ',' : ''}
+          ${hasAbsentVal ? absentValSql + ',' : ''}
           '${wef}',
           '${absent}',
           '${user}',
@@ -204,12 +351,10 @@ VALUES (
         )`;
       });
 
-      const [cols] = await sequelize.query(`
-        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_NAME = 'attendance_status_rules_table'
-      `, { transaction: t });
-      const colNames = cols.map(c => c.COLUMN_NAME.toLowerCase());
-      const earlyCol = colNames.includes('early_go') ? 'early_go' : (colNames.includes('early_') ? 'early_' : 'early_go');
+      const extraCols = [];
+      if (hasPresentVal) extraCols.push('PresentValue');
+      if (hasAbsentVal) extraCols.push('AbsentValue');
+      const extraColsSql = extraCols.length > 0 ? extraCols.join(',') + ',' : '';
 
       const insertStatusRulesQuery = `
         INSERT INTO attendance_status_rules_table (
@@ -221,8 +366,7 @@ VALUES (
           allow_days,
           priority_code,
           region,
-          half,
-          half_val,
+          ${extraColsSql}
           wef,
           absent,
           created_by,
@@ -299,8 +443,25 @@ exports.updateAttendancePolicy = async function (req, res) {
       });
     }
 
+    if (formData.effectiveFrom && formData.effectiveTo && formData.effectiveFrom > formData.effectiveTo) {
+      const tmp = formData.effectiveFrom;
+      formData.effectiveFrom = formData.effectiveTo;
+      formData.effectiveTo = tmp;
+    }
+
     sequelize = await dbname(req, companyCode);
     t = await sequelize.transaction();
+
+    // Auto-resolve overlapping active policies for same location & employee_types
+    await handlePolicyOverlap(sequelize, t, {
+      policyId,
+      companyCode,
+      locations: formData.location || [],
+      employeeTypes: formData.employeeTypes || [],
+      effectiveFrom: formData.effectiveFrom,
+      effectiveTo: formData.effectiveTo,
+      user,
+    });
 
     // ==========================================
     // MARK OLD PARENT RECORD AS 33
@@ -488,13 +649,22 @@ exports.updateAttendancePolicy = async function (req, res) {
     // ==========================================
 
     if (statusRules.length > 0) {
+      const [cols] = await sequelize.query(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'attendance_status_rules_table'
+      `, { transaction: t });
+      const colNames = cols.map(c => c.COLUMN_NAME.toLowerCase());
+      const earlyCol = colNames.includes('early_go') ? 'early_go' : (colNames.includes('early_') ? 'early_' : 'early_go');
+      const hasPresentVal = colNames.includes('presentvalue');
+      const hasAbsentVal = colNames.includes('absentvalue');
+
       const statusRulesValues = statusRules.map((rule) => {
         const desc = (rule.Desc || "").replace(/'/g, "''");
         const region = (rule.Region || "").replace(/'/g, "''");
-        const half = (rule.HALF || "").replace(/'/g, "''");
         const absent = (rule.ABSENT || "").replace(/'/g, "''");
-        const wef =
-          rule.WEF || new Date().toISOString().split("T")[0];
+        const wef = rule.WEF || new Date().toISOString().split("T")[0];
+        const presentValSql = (rule.PresentValue != null && rule.PresentValue !== '') ? Number(rule.PresentValue) : 'NULL';
+        const absentValSql = (rule.AbsentValue != null && rule.AbsentValue !== '') ? Number(rule.AbsentValue) : 'NULL';
 
         return `(
           ${newPolicyUTD},
@@ -517,11 +687,8 @@ exports.updateAttendancePolicy = async function (req, res) {
             : "NULL"
           },
           '${region}',
-          '${half}',
-          ${rule.HALF_VAL
-            ? `'${rule.HALF_VAL}'`
-            : "NULL"
-          },
+          ${hasPresentVal ? presentValSql + ',' : ''}
+          ${hasAbsentVal ? absentValSql + ',' : ''}
           '${wef}',
           '${absent}',
           '${user}',
@@ -530,12 +697,10 @@ exports.updateAttendancePolicy = async function (req, res) {
         )`;
       });
 
-      const [cols] = await sequelize.query(`
-        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_NAME = 'attendance_status_rules_table'
-      `, { transaction: t });
-      const colNames = cols.map(c => c.COLUMN_NAME.toLowerCase());
-      const earlyCol = colNames.includes('early_go') ? 'early_go' : (colNames.includes('early_') ? 'early_' : 'early_go');
+      const extraCols = [];
+      if (hasPresentVal) extraCols.push('PresentValue');
+      if (hasAbsentVal) extraCols.push('AbsentValue');
+      const extraColsSql = extraCols.length > 0 ? extraCols.join(',') + ',' : '';
 
       const insertStatusRulesQuery = `
         INSERT INTO attendance_status_rules_table (
@@ -547,8 +712,7 @@ exports.updateAttendancePolicy = async function (req, res) {
           allow_days,
           priority_code,
           region,
-          half,
-          half_val,
+          ${extraColsSql}
           wef,
           absent,
           created_by,
@@ -684,6 +848,8 @@ exports.getAttendancePolicyById = async function (req, res) {
     `);
     const colNames = cols.map(c => c.COLUMN_NAME.toLowerCase());
     const earlyCol = colNames.includes('early_go') ? 'early_go' : (colNames.includes('early_') ? 'early_' : 'early_go');
+    const hasPresentVal = colNames.includes('presentvalue');
+    const hasAbsentVal = colNames.includes('absentvalue');
 
     const statusRulesQuery = `
       SELECT
@@ -693,8 +859,8 @@ exports.getAttendancePolicyById = async function (req, res) {
         allow_days AS Allow_Days,
         priority_code AS Priority_Code,
         region AS Region,
-        half AS HALF,
-        half_val AS HALF_VAL,
+        ${hasPresentVal ? 'PresentValue,' : ''}
+        ${hasAbsentVal ? 'AbsentValue,' : ''}
         wef AS WEF,
         absent AS ABSENT
       FROM attendance_status_rules_table
@@ -1128,5 +1294,135 @@ exports.getShifts = async function (req, res) {
     });
   } finally {
     await sequelize.close();
+  }
+};
+
+exports.checkPolicyExists = async function (req, res) {
+  let sequelize;
+  try {
+    const companyCode = req.headers.compcode;
+    const { locations = [], employeeTypes = [], policyId = null } = req.body;
+
+    if (!companyCode) {
+      return res.status(400).json({ success: false, message: "Company code is required" });
+    }
+
+    const normLocs = (Array.isArray(locations) ? locations : String(locations || "").split(","))
+      .map((l) => String(l).trim())
+      .filter(Boolean);
+    const normTypes = (Array.isArray(employeeTypes) ? employeeTypes : String(employeeTypes || "").split(","))
+      .map((t) => String(t).trim().toLowerCase())
+      .filter(Boolean);
+
+    if (normLocs.length === 0 || normTypes.length === 0) {
+      return res.status(200).json({
+        success: true,
+        exists: false,
+        conflicts: [],
+        conflictingLocations: [],
+        locationLabels: [],
+        message: "",
+      });
+    }
+
+    sequelize = await dbname(req, companyCode);
+
+    const [existingPolicies] = await sequelize.query(
+      `
+      SELECT UTD, policy_name, location, employee_types, effective_from, effective_to
+      FROM attendance_policies_table
+      WHERE company_code = :companyCode
+        AND ISNULL(export_type, 0) < 3
+        AND is_active = 1
+        AND (:policyId IS NULL OR UTD != :policyId)
+    `,
+      {
+        replacements: {
+          companyCode,
+          policyId: policyId ? Number(policyId) : null,
+        },
+      }
+    );
+
+    const conflicts = [];
+    const allCommonLocs = new Set();
+
+    for (const existing of existingPolicies) {
+      const existLocs = (existing.location || "")
+        .split(",")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const existTypes = (existing.employee_types || "")
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean);
+
+      const overlapLocs = normLocs.filter((loc) => existLocs.includes(loc));
+      if (overlapLocs.length === 0) continue;
+
+      // Check employee types overlap only against selected types
+      const matchedTypes = normTypes.filter((t) => existTypes.includes(t));
+      if (matchedTypes.length === 0) continue;
+
+      overlapLocs.forEach((l) => allCommonLocs.add(l));
+
+      conflicts.push({
+        policyId: existing.UTD,
+        policyName: existing.policy_name,
+        locations: overlapLocs,
+        employeeTypes: matchedTypes,
+        effectiveFrom: existing.effective_from,
+        effectiveTo: existing.effective_to,
+      });
+    }
+
+    let locationLabels = [...allCommonLocs];
+    if (locationLabels.length > 0) {
+      try {
+        const [locNames] = await sequelize.query(
+          `
+          SELECT Misc_Code, Misc_Name FROM Misc_Mst
+          WHERE Misc_Type = 85 AND Misc_Code IN (:locCodes)
+        `,
+          { replacements: { locCodes: locationLabels } }
+        );
+        if (locNames && locNames.length > 0) {
+          const map = new Map(
+            locNames.map((r) => [String(r.Misc_Code), r.Misc_Name])
+          );
+          locationLabels = locationLabels.map((code) =>
+            map.has(code) ? `${map.get(code)} (${code})` : code
+          );
+        }
+      } catch (e) {
+        // fallback
+      }
+    }
+
+    await sequelize.close();
+
+    const exists = conflicts.length > 0;
+    let message = "";
+    if (exists) {
+      const p = conflicts[0];
+      message = `Active policy "${p.policyName}"  already exists for Location [${locationLabels.join(", ")}] with Employee Type [${p.employeeTypes.join(", ")}].`;
+    }
+
+    return res.status(200).json({
+      success: true,
+      exists,
+      conflicts,
+      conflictingLocations: [...allCommonLocs],
+      locationLabels,
+      message,
+    });
+  } catch (error) {
+    if (sequelize) await sequelize.close();
+    console.error("❌ Error in checkPolicyExists:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to check policy existence",
+      error: error.message,
+    });
   }
 };

@@ -11,6 +11,7 @@ router.post("/getAttendancePolicies", admin.getAttendancePolicies)
 router.post("/getAttendancePolicyHistory", admin.getAttendancePolicyHistory)
 router.post("/all", admin.findAll);
 router.post("/getShifts", admin.getShifts);
+router.post("/checkPolicyExists", admin.checkPolicyExists);
 
 
 module.exports = router;
